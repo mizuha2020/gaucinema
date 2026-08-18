@@ -55,7 +55,7 @@ export const MyListView: React.FC<MyListViewProps> = ({
       </div>
 
       {myList.length > 0 ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 sm:gap-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-5 sm:gap-7 lg:gap-8">
           {myList.map((item) => (
             <div
               key={item.movieSlug}

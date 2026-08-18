@@ -77,7 +77,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
       </div>
 
       {history.length > 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5 sm:gap-7 lg:gap-8">
           {history.map((item) => (
             <div
               key={item.movieSlug}

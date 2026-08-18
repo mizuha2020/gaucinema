@@ -6,39 +6,24 @@ service cloud.firestore {
       return id is string && id.size() > 0 && id.size() <= 128;
     }
 
-    // Accounts collection
-    match /accounts/{accountId} {
-      allow get, list: if true;
-      allow create, update, delete: if isValidId(accountId);
-
-      // Subcollection: Profiles (up to 5 per account)
-      match /profiles/{profileId} {
-        allow get, list: if true;
-        allow create, update, delete: if isValidId(profileId);
-
-        // Subcollection: My List (Watchlist per profile)
-        match /myList/{movieSlug} {
-          allow get, list: if true;
-          allow create, update, delete: if isValidId(movieSlug);
-        }
-
-        // Subcollection: Watch History per profile
-        match /history/{historyId} {
-          allow get, list: if true;
-          allow create, update, delete: if isValidId(historyId);
-        }
-      }
+    // Accounts collection and all subcollections (profiles, myList, history)
+    match /accounts/{document=**} {
+      allow read, write: if true;
     }
 
     // Custom Avatars collection
     match /customAvatars/{avatarId} {
-      allow get, list: if true;
-      allow create, update, delete: if isValidId(avatarId);
+      allow read, write: if true;
     }
 
     // Global configurations (e.g. tv_config)
     match /global/{configId} {
-      allow get, list, create, update: if true;
+      allow read, write: if true;
+    }
+    
+    // Default deny for any other collections
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

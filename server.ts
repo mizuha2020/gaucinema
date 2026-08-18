@@ -267,17 +267,50 @@ async function startServer() {
   // 3. TV & Sports M3U Playlist Parser Endpoint
   app.get("/api/tv/channels", async (req, res) => {
     try {
-      const resM3u = await fetch("https://bit.ly/tinhlagitivi", {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        },
-      });
-      if (!resM3u.ok) {
-        throw new Error(`Failed to fetch playlist: ${resM3u.status}`);
-      }
-      const text = await resM3u.text();
+      const preferredUrl = "https://bit.ly/tinhlagitivi";
+      const fallbackUrl = "https://iptv-org.github.io/iptv/countries/vn.m3u";
 
-      const lines = text.split(/\r?\n/);
+      let text = "";
+      let sourceUsed = "";
+
+      // Try preferred first
+      try {
+        const resPref = await fetch(preferredUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          },
+          redirect: "follow",
+        });
+        
+        if (resPref.ok) {
+          const content = await resPref.text();
+          // Check if it's actually an M3U or JSON (starts with { and has channels)
+          if (content.includes("#EXTM3U") || (content.trim().startsWith("{") && content.includes("channels"))) {
+            text = content;
+            sourceUsed = preferredUrl;
+          }
+        }
+      } catch (e) {
+        console.error("Preferred IPTV source failed:", e);
+      }
+
+      // Fallback if preferred failed or returned invalid content (e.g. suspended page HTML)
+      if (!text) {
+        const resFall = await fetch(fallbackUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          },
+        });
+        if (resFall.ok) {
+          text = await resFall.text();
+          sourceUsed = fallbackUrl;
+        }
+      }
+
+      if (!text) {
+        throw new Error("Failed to fetch any IPTV playlist");
+      }
+
       const channels: Array<{
         name: string;
         logo: string;
@@ -285,6 +318,19 @@ async function startServer() {
         url: string;
       }> = [];
 
+      // Handle JSON source (common for some bit.ly redirects)
+      if (text.trim().startsWith("{")) {
+        try {
+          const data = JSON.parse(text);
+          if (data.channels && Array.isArray(data.channels)) {
+            return res.json({ success: true, count: data.channels.length, channels: data.channels, source: sourceUsed });
+          }
+        } catch (e) {
+          // Fall through to M3U parser if it's not valid JSON
+        }
+      }
+
+      const lines = text.split(/\r?\n/);
       let currentGroup = "Truyền Hình";
       let currentLogo = "";
       let currentName = "";
@@ -305,7 +351,7 @@ async function startServer() {
             currentName = line.substring(commaIndex + 1).trim();
           }
         } else if (line && !line.startsWith("#")) {
-          if (currentName && !line.includes('.mpd')) {
+          if (currentName) {
             channels.push({
               name: currentName,
               logo: currentLogo || "https://images.unsplash.com/photo-1593784991095-a205069470b6?w=100&auto=format&fit=crop&q=60",
@@ -318,7 +364,7 @@ async function startServer() {
         }
       }
 
-      res.json({ success: true, count: channels.length, channels });
+      res.json({ success: true, count: channels.length, channels, source: sourceUsed });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -340,7 +386,7 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🎬 QTB Cinema Web server running on http://0.0.0.0:${PORT}`);
+    console.log(`🎬 Gấu Cine Web server running on http://0.0.0.0:${PORT}`);
   });
 }
 

@@ -14,10 +14,9 @@ import {
   Signal,
   X,
   Radio,
-  ShieldAlert,
 } from 'lucide-react';
 import Hls from 'hls.js';
-import dashjs from 'dashjs';
+import * as dashjs from 'dashjs';
 import { Account } from '../types';
 import { firestoreStorage } from '../services/firestoreStorage';
 
@@ -39,7 +38,6 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
   const [selectedGroup, setSelectedGroup] = useState<string>('Tất cả');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
-  const [hiddenChannelUrls, setHiddenChannelUrls] = useState<string[]>([]);
   const [showControls, setShowControls] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -79,19 +77,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
 
   useEffect(() => {
     fetchChannels();
-    fetchHiddenChannels();
   }, []);
-
-  const fetchHiddenChannels = async () => {
-    try {
-      const hidden = await firestoreStorage.getHiddenChannels();
-      if (hidden && Array.isArray(hidden)) {
-        setHiddenChannelUrls(hidden);
-      }
-    } catch (e) {
-      console.error('Error fetching hidden channels from Firestore:', e);
-    }
-  };
 
   const fetchChannels = async () => {
     try {
@@ -101,9 +87,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       const data = await res.json();
       if (data.success && data.channels) {
         setChannels(data.channels);
-        const visibleChannels = data.channels.filter((c: Channel) => !hiddenChannelUrls.includes(c.url));
-        if (visibleChannels.length > 0 && !activeChannel) {
-          setActiveChannel(visibleChannels[0]);
+        if (data.channels.length > 0 && !activeChannel) {
+          setActiveChannel(data.channels[0]);
         }
       } else {
         setError('Không thể tải danh sách kênh truyền hình.');
@@ -115,28 +100,10 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     }
   };
 
-  const handleHideChannel = async (url: string) => {
-    if (!currentAccount || currentAccount.role !== 'admin') {
-      alert('Chức năng ẩn kênh trực tuyến chỉ dành cho Quản trị viên (Admin).');
-      return;
-    }
-    const updated = [...hiddenChannelUrls, url];
-    setHiddenChannelUrls(updated);
-    try {
-      await firestoreStorage.saveHiddenChannels(updated);
-      const next = filteredChannels.find((c) => c.url !== url);
-      setActiveChannel(next || null);
-      setStreamError(null);
-    } catch (err) {
-      console.error('Error saving hidden channels:', err);
-    }
-  };
+  // Extract unique groups
+  const groups = ['Tất cả', ...Array.from(new Set(channels.map((c) => c.group || 'Khác')))];
 
-  // Extract unique groups excluding hidden channels
-  const visibleChannelsAll = channels.filter((c) => !hiddenChannelUrls.includes(c.url));
-  const groups = ['Tất cả', ...Array.from(new Set(visibleChannelsAll.map((c) => c.group || 'Khác')))];
-
-  const filteredChannels = visibleChannelsAll.filter((c) => {
+  const filteredChannels = channels.filter((c) => {
     const matchesGroup = selectedGroup === 'Tất cả' || c.group === selectedGroup;
     const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesGroup && matchesSearch;
@@ -310,14 +277,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
               </span>
               <span className="bg-blue-600/20 text-sky-300 border border-blue-500/30 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">
                 <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-                {visibleChannelsAll.length} Kênh HD
+                {channels.length} Kênh HD
               </span>
-              {currentAccount?.role === 'admin' && (
-                <span className="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-extrabold px-2.5 py-1 rounded-full flex items-center gap-1">
-                  <ShieldAlert className="w-3 h-3" />
-                  Admin Mode (Có quyền ẩn kênh)
-                </span>
-              )}
             </div>
             <h1 className="text-2xl sm:text-4xl font-black tracking-tight text-white">
               Truyền Hình & Thể Thao Trực Tuyến
@@ -388,25 +349,16 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                       >
                         Thử lại
                       </button>
-                      {currentAccount?.role === 'admin' ? (
-                        <button
-                          onClick={() => handleHideChannel(activeChannel.url)}
-                          className="bg-rose-600/30 hover:bg-rose-600/50 text-rose-200 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border border-rose-500/50"
-                        >
-                          Ẩn kênh này đối với tất cả user (Admin)
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            const next = filteredChannels.find((c) => c.url !== activeChannel.url);
-                            setActiveChannel(next || null);
-                            setStreamError(null);
-                          }}
-                          className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border border-slate-700"
-                        >
-                          Chuyển kênh khác
-                        </button>
-                      )}
+                      <button
+                        onClick={() => {
+                          const next = filteredChannels.find((c) => c.url !== activeChannel.url);
+                          setActiveChannel(next || null);
+                          setStreamError(null);
+                        }}
+                        className="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border border-slate-700"
+                      >
+                        Chuyển kênh khác
+                      </button>
                     </div>
                   </div>
                 )}
@@ -522,15 +474,6 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
               </div>
 
               <div className="flex items-center gap-2">
-                {currentAccount?.role === 'admin' && (
-                  <button
-                    onClick={() => handleHideChannel(activeChannel.url)}
-                    className="bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 text-xs font-bold px-3 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
-                    title="Ẩn kênh này đối với tất cả tài khoản"
-                  >
-                    <span>Ẩn kênh này (Admin)</span>
-                  </button>
-                )}
                 <span className="bg-rose-500/20 text-rose-300 border border-rose-500/40 text-xs font-bold px-3 py-1 rounded-xl flex items-center gap-1">
                   <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
                   LIVE HD
@@ -627,18 +570,6 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0">
-                        {currentAccount?.role === 'admin' && (
-                          <span
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleHideChannel(ch.url);
-                            }}
-                            className="text-slate-500 hover:text-rose-400 p-1.5 rounded-lg transition-colors"
-                            title="Ẩn kênh này (Admin)"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </span>
-                        )}
                         {isActive ? (
                           <span className="bg-blue-600 text-white p-1.5 rounded-lg shadow">
                             <Play className="w-3 h-3 fill-white" />

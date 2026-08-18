@@ -108,7 +108,7 @@ export const MovieRow: React.FC<MovieRowProps> = ({
         <div
           ref={rowRef}
           onScroll={onScrollCheck}
-          className="flex items-center gap-3 sm:gap-4 overflow-x-auto scrollbar-none scroll-smooth pb-4 pt-2 -mx-2 px-2"
+          className="flex items-center gap-4 sm:gap-6 overflow-x-auto scrollbar-none scroll-smooth pb-4 pt-2 -mx-2 px-2"
           style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
         >
           {movies.slice(0, 15).map((movie, index) => (

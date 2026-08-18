@@ -551,7 +551,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     };
   }, [duration, onSaveProgress]);
 
-  // Auto-hide controls
+  // Auto-hide controls (2s timer)
   const resetControlsTimer = useCallback(() => {
     setShowControls(true);
     if (controlsTimeoutRef.current) {
@@ -570,7 +570,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       ) {
         setShowControls(false);
       }
-    }, 3500);
+    }, 2000);
   }, [
     isPlaying,
     isEpisodeDrawerOpen,
@@ -581,6 +581,26 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     isEnhanceMenuOpen,
     isAspectRatioOpen,
   ]);
+
+  // Force fullscreen and initial controls auto-hide on mount
+  useEffect(() => {
+    const container = playerContainerRef.current;
+    if (container) {
+      const req =
+        container.requestFullscreen ||
+        (container as any).webkitRequestFullscreen ||
+        (container as any).mozRequestFullScreen ||
+        (container as any).msRequestFullscreen;
+      if (req) {
+        req.call(container).catch(console.error);
+        setIsFullscreen(true);
+      }
+    }
+    
+    // Initial show and auto-hide
+    setShowControls(true);
+    resetControlsTimer();
+  }, [resetControlsTimer]);
 
   // Fullscreen state sync listener (standard + webkit + moz + ms)
   useEffect(() => {
@@ -917,12 +937,17 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         lastTapRef.current = null;
       } else {
         lastTapRef.current = { time: now, x: touchX };
-        // Single tap: toggle controls (Show if hidden, Hide if shown) - Never pause on single tap!
+        // Single tap: toggle controls (Show if hidden, Hide if shown)
         setShowControls((prev) => {
           const next = !prev;
           if (next) resetControlsTimer();
           return next;
         });
+      }
+      
+      // Prevent synthesized click events on touch devices to avoid double-toggling
+      if (e.cancelable) {
+        e.preventDefault();
       }
     }
     touchStartRef.current = null;
@@ -988,7 +1013,11 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       className="fixed inset-0 z-50 bg-black flex items-center justify-center select-none overflow-hidden touch-none m-0 p-0 border-0 outline-none"
       onMouseMove={resetControlsTimer}
       onClick={(e) => {
-        if (e.target === e.currentTarget || (e.target as HTMLElement)?.tagName?.toLowerCase() === 'video') {
+        // Toggle controls only if clicking the container or video element itself, not inside a menu/overlay
+        const target = e.target as HTMLElement;
+        const isPlayerSurface = target.id === 'qtb-custom-player-container' || target.tagName.toLowerCase() === 'video';
+        
+        if (isPlayerSurface) {
           setShowControls((prev) => {
             const next = !prev;
             if (next) resetControlsTimer();

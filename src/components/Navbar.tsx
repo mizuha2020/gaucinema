@@ -233,7 +233,10 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 key={item.tab}
                 id={`nav-link-${item.tab}`}
-                onClick={() => onTabChange(item.tab)}
+                onClick={(e) => {
+                  e.preventDefault();
+                  onTabChange(item.tab);
+                }}
                 className={`transition-all cursor-pointer whitespace-nowrap px-1.5 py-1 rounded text-xs lg:text-sm shrink-0 ${
                   activeTab === item.tab
                     ? 'text-sky-300 font-bold border-b-2 border-blue-500 drop-shadow-[0_0_8px_rgba(56,189,248,0.5)]'

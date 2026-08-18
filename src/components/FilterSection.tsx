@@ -83,7 +83,7 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
         } else if (movieType === 'tv-shows') {
           res = await movieApi.getTvShows(currentPage, 24, selectedSource);
         } else {
-          res = await movieApi.getNewUpdated(currentPage, selectedSource);
+          res = await movieApi.getNewUpdated(currentPage, 24, selectedSource);
         }
 
         if (isMounted) {
@@ -353,7 +353,7 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
         </div>
       ) : movies.length > 0 ? (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 sm:gap-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-5 sm:gap-7 lg:gap-8">
             {movies.map((movie, idx) => (
               <div key={movie.slug || movie._id || idx} className="flex justify-center">
                 <MovieCard

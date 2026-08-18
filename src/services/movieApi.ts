@@ -284,9 +284,9 @@ export const movieApi = {
   },
 
   // 1. Phim mới cập nhật
-  async getNewUpdated(page = 1, sourceOverride?: ApiSource): Promise<MovieListResponse> {
+  async getNewUpdated(page = 1, limit = 24, sourceOverride?: ApiSource): Promise<MovieListResponse> {
     const source = sourceOverride || getActiveApiSource();
-    const cacheKey = `new-updated:${source}:${page}`;
+    const cacheKey = `new-updated:${source}:${page}:${limit}`;
 
     return cachedFetch(cacheKey, async () => {
       if (source === 'kkphim') {
@@ -328,7 +328,7 @@ export const movieApi = {
         items: merged,
         pagination: {
           totalItems: merged.length * 20,
-          totalItemsPerPage: 24,
+          totalItemsPerPage: limit,
           currentPage: page,
           totalPages: 50,
         },
@@ -428,17 +428,34 @@ export const movieApi = {
         return normalizeMovieList(raw, 'nguonc');
       }
 
-      const [kk, op] = await Promise.allSettled([
+      const [kk, op, nc] = await Promise.allSettled([
         fetchKKPhim<any>('v1/api/danh-sach/hoat-hinh', { page, limit }),
         fetchOPhim<any>('v1/api/danh-sach/hoat-hinh', { page, limit }),
+        fetchNguonC<any>('films/danh-sach/hoat-hinh', { page }),
       ]);
       const kkList = kk.status === 'fulfilled' ? normalizeMovieList(kk.value, 'kkphim').items : [];
       const opList = op.status === 'fulfilled' ? normalizeMovieList(op.value, 'ophim').items : [];
+      const ncList = nc.status === 'fulfilled' ? normalizeMovieList(nc.value, 'nguonc').items : [];
+
       const map = new Map<string, Movie>();
-      for (const m of [...kkList, ...opList]) {
-        if (!map.has(m.slug)) map.set(m.slug, m);
+      const maxLen = Math.max(kkList.length, opList.length, ncList.length);
+      for (let i = 0; i < maxLen; i++) {
+        if (kkList[i] && !map.has(kkList[i].slug)) map.set(kkList[i].slug, kkList[i]);
+        if (opList[i] && !map.has(opList[i].slug)) map.set(opList[i].slug, opList[i]);
+        if (ncList[i] && !map.has(ncList[i].slug)) map.set(ncList[i].slug, ncList[i]);
       }
-      return { status: true, items: Array.from(map.values()) };
+      
+      const merged = Array.from(map.values());
+      return { 
+        status: true, 
+        items: merged,
+        pagination: {
+          totalItems: merged.length * 20,
+          totalItemsPerPage: limit,
+          currentPage: page,
+          totalPages: 50,
+        }
+      };
     });
   },
 
@@ -461,17 +478,34 @@ export const movieApi = {
         return normalizeMovieList(raw, 'nguonc');
       }
 
-      const [kk, op] = await Promise.allSettled([
+      const [kk, op, nc] = await Promise.allSettled([
         fetchKKPhim<any>('v1/api/danh-sach/tv-shows', { page, limit }),
         fetchOPhim<any>('v1/api/danh-sach/tv-shows', { page, limit }),
+        fetchNguonC<any>('films/danh-sach/tv-shows', { page }),
       ]);
       const kkList = kk.status === 'fulfilled' ? normalizeMovieList(kk.value, 'kkphim').items : [];
       const opList = op.status === 'fulfilled' ? normalizeMovieList(op.value, 'ophim').items : [];
+      const ncList = nc.status === 'fulfilled' ? normalizeMovieList(nc.value, 'nguonc').items : [];
+
       const map = new Map<string, Movie>();
-      for (const m of [...kkList, ...opList]) {
-        if (!map.has(m.slug)) map.set(m.slug, m);
+      const maxLen = Math.max(kkList.length, opList.length, ncList.length);
+      for (let i = 0; i < maxLen; i++) {
+        if (kkList[i] && !map.has(kkList[i].slug)) map.set(kkList[i].slug, kkList[i]);
+        if (opList[i] && !map.has(opList[i].slug)) map.set(opList[i].slug, opList[i]);
+        if (ncList[i] && !map.has(ncList[i].slug)) map.set(ncList[i].slug, ncList[i]);
       }
-      return { status: true, items: Array.from(map.values()) };
+      
+      const merged = Array.from(map.values());
+      return { 
+        status: true, 
+        items: merged,
+        pagination: {
+          totalItems: merged.length * 20,
+          totalItemsPerPage: limit,
+          currentPage: page,
+          totalPages: 50,
+        }
+      };
     });
   },
 

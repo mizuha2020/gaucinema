@@ -703,6 +703,7 @@ export default function App() {
           {activeTab === 'series' && (
             <div className="pt-20">
               <FilterSection
+                key="tab-series"
                 fixedType="series"
                 onOpenDetail={(m) => setSelectedMovieForDetail(m)}
                 onSelectMovie={(m) => setSelectedMovieForDetail(m)}
@@ -718,6 +719,7 @@ export default function App() {
           {activeTab === 'single' && (
             <div className="pt-20">
               <FilterSection
+                key="tab-single"
                 fixedType="single"
                 onOpenDetail={(m) => setSelectedMovieForDetail(m)}
                 onSelectMovie={(m) => setSelectedMovieForDetail(m)}
@@ -733,7 +735,8 @@ export default function App() {
           {activeTab === 'anime' && (
             <div className="pt-20">
               <FilterSection
-                fixedType="hoathinh"
+                key="tab-anime"
+                fixedType="anime"
                 onOpenDetail={(m) => setSelectedMovieForDetail(m)}
                 onSelectMovie={(m) => setSelectedMovieForDetail(m)}
                 onPlay={handlePlayMovie}
@@ -748,7 +751,8 @@ export default function App() {
           {activeTab === 'tv-shows' && (
             <div className="pt-20">
               <FilterSection
-                fixedType="tvshows"
+                key="tab-tv-shows"
+                fixedType="tv-shows"
                 onOpenDetail={(m) => setSelectedMovieForDetail(m)}
                 onSelectMovie={(m) => setSelectedMovieForDetail(m)}
                 onPlay={handlePlayMovie}
