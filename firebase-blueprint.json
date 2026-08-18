@@ -1,0 +1,110 @@
+{
+  "entities": {
+    "Account": {
+      "title": "Account",
+      "description": "User account created by Admin with login credentials and role",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string", "minLength": 2, "maxLength": 64 },
+        "password": { "type": "string", "minLength": 4, "maxLength": 64 },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "status": { "type": "string", "enum": ["active", "blocked"] },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["username", "password", "role", "displayName", "status", "createdAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Profile associated with an account (up to 5 profiles per account)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "avatar": { "type": "string", "maxLength": 2048 },
+        "color": { "type": "string", "maxLength": 32 },
+        "isKid": { "type": "boolean" },
+        "pin": { "type": "string", "maxLength": 8 },
+        "isPrimary": { "type": "boolean" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "name", "avatar", "color", "createdAt"]
+    },
+    "MyListItem": {
+      "title": "MyListItem",
+      "description": "A saved movie item in user profile's private watchlist",
+      "type": "object",
+      "properties": {
+        "movieSlug": { "type": "string", "maxLength": 128 },
+        "movieName": { "type": "string", "maxLength": 256 },
+        "movieOriginName": { "type": "string", "maxLength": 256 },
+        "movieThumb": { "type": "string", "maxLength": 2048 },
+        "moviePoster": { "type": "string", "maxLength": 2048 },
+        "year": { "type": "number" },
+        "quality": { "type": "string", "maxLength": 64 },
+        "lang": { "type": "string", "maxLength": 64 },
+        "episode_current": { "type": "string", "maxLength": 64 },
+        "addedAt": { "type": "number" }
+      },
+      "required": ["movieSlug", "movieName", "movieThumb", "addedAt"]
+    },
+    "WatchHistoryItem": {
+      "title": "WatchHistoryItem",
+      "description": "Playback progress and watch history record for a profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 256 },
+        "movieSlug": { "type": "string", "maxLength": 128 },
+        "movieName": { "type": "string", "maxLength": 256 },
+        "movieOriginName": { "type": "string", "maxLength": 256 },
+        "movieThumb": { "type": "string", "maxLength": 2048 },
+        "moviePoster": { "type": "string", "maxLength": 2048 },
+        "episodeName": { "type": "string", "maxLength": 128 },
+        "episodeSlug": { "type": "string", "maxLength": 128 },
+        "serverName": { "type": "string", "maxLength": 128 },
+        "linkM3u8": { "type": "string", "maxLength": 2048 },
+        "currentTime": { "type": "number" },
+        "duration": { "type": "number" },
+        "progressPercent": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "movieSlug", "movieName", "movieThumb", "episodeName", "episodeSlug", "serverName", "currentTime", "duration", "progressPercent", "updatedAt"]
+    },
+    "CustomAvatar": {
+      "title": "CustomAvatar",
+      "description": "Custom avatar uploaded and managed by Admin for users to choose",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "url": { "type": "string", "maxLength": 2048 },
+        "name": { "type": "string", "maxLength": 100 },
+        "addedBy": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "url", "name", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/accounts/{accountId}": {
+      "schema": "Account",
+      "description": "User accounts with credentials, role and status"
+    },
+    "/accounts/{accountId}/profiles/{profileId}": {
+      "schema": "UserProfile",
+      "description": "User profiles under each account (max 5 per account)"
+    },
+    "/accounts/{accountId}/profiles/{profileId}/myList/{movieSlug}": {
+      "schema": "MyListItem",
+      "description": "Watchlist specific to a single profile"
+    },
+    "/accounts/{accountId}/profiles/{profileId}/history/{historyId}": {
+      "schema": "WatchHistoryItem",
+      "description": "Watch history specific to a single profile"
+    },
+    "/customAvatars/{avatarId}": {
+      "schema": "CustomAvatar",
+      "description": "Gallery of custom avatars managed by admin"
+    }
+  }
+}
