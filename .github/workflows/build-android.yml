@@ -45,14 +45,14 @@ jobs:
         run: |
           # The files in assets/resources are actually JPEGs with .png extensions.
           # We need to convert them to real PNGs for @capacitor/assets to work.
-          # Imagemagick is pre-installed on ubuntu-latest runners.
+          # ffmpeg is pre-installed on most GitHub Actions runners.
           
           echo "Checking assets before conversion:"
           ls -l assets/resources/
           
           for file in assets/resources/*.png; do
-            echo "Converting $file to real PNG..."
-            convert "$file" "${file}.tmp.png"
+            echo "Converting $file to real PNG using ffmpeg..."
+            ffmpeg -i "$file" "${file}.tmp.png" -y
             mv "${file}.tmp.png" "$file"
           done
           
