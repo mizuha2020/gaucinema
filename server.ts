@@ -41,9 +41,11 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Enable CORS for Android app
+  // Enable CORS for Android app and other origins
   app.use(cors({
-    origin: ["https://localhost", "http://localhost", /^https:\/\/.*\.run\.app$/],
+    origin: ["https://localhost", "http://localhost", "capacitor://localhost", "http://localhost:3000", /^https:\/\/.*\.run\.app$/],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
     credentials: true
   }));
 
@@ -302,7 +304,8 @@ async function startServer() {
       }
 
       // Fallback if preferred failed or returned invalid content (e.g. suspended page HTML)
-      if (!text) {
+      if (!text || text.length < 100) {
+        console.log("Preferred IPTV source failed or returned short content, trying fallback...");
         const resFall = await fetch(fallbackUrl, {
           headers: {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -314,8 +317,9 @@ async function startServer() {
         }
       }
 
-      if (!text) {
-        throw new Error("Failed to fetch any IPTV playlist");
+      if (!text || text.length < 50) {
+        // Safe empty response instead of throwing to prevent 500
+        return res.json({ success: true, count: 0, channels: [], message: "No channels found from upstreams" });
       }
 
       const channels: Array<{

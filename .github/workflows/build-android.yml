@@ -43,6 +43,23 @@ jobs:
 
       - name: Generate Android Assets
         run: |
+          # The files in assets/resources are actually JPEGs with .png extensions.
+          # We need to convert them to real PNGs for @capacitor/assets to work.
+          sudo apt-get update && sudo apt-get install -y imagemagick
+          
+          echo "Checking assets before conversion:"
+          ls -l assets/resources/
+          
+          for file in assets/resources/*.png; do
+            echo "Converting $file to real PNG..."
+            convert "$file" "${file}.tmp.png"
+            mv "${file}.tmp.png" "$file"
+          done
+          
+          echo "Checking assets after conversion:"
+          ls -l assets/resources/
+          file assets/resources/*.png
+          
           # Use the correct path to resources folder where icon.png and splash.png are located
           npx @capacitor/assets generate --android --assetPath assets/resources
           npx cap copy android
