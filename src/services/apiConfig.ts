@@ -9,12 +9,17 @@ export const getApiBaseUrl = (): string => {
   // If we're on a browser and not localhost, use the current origin
   if (typeof window !== 'undefined') {
     const { hostname, origin } = window.location;
-    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    
+    // In Capacitor, hostname might be 'localhost'
+    const isCapacitor = (window as any).Capacitor || (window as any).webkit?.messageHandlers?.bridge;
+    
+    if (hostname !== 'localhost' && hostname !== '127.0.0.1' && !isCapacitor) {
       return origin;
     }
   }
 
   // Use the environment variable if provided (MUST be prefixed with VITE_)
+  // For Capacitor builds, this is the most reliable way to point to the remote server.
   const envUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_APP_URL;
   
   if (envUrl) {
@@ -23,9 +28,13 @@ export const getApiBaseUrl = (): string => {
     return cleanUrl;
   }
 
+  // Fallback for AI Studio specifically - try to derive it from the window location if we are in an iframe
+  // or if we can find a hint in the environment.
+  if (typeof window !== 'undefined' && window.location.origin.includes('run.app')) {
+    return window.location.origin;
+  }
+
   console.warn('API Base URL is EMPTY. Native app connectivity will fail.');
-  // Fallback: If on native platform and no URL provided, we might be in trouble
-  // but we can try to return empty string for browser-based localhost dev
   return '';
 };
 

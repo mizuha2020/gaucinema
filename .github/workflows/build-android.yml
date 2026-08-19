@@ -40,7 +40,8 @@ jobs:
 
       - name: Generate Android Assets
         run: |
-          npx @capacitor/assets generate --android --assetPath assets
+          # Use the correct path to resources folder where icon.png and splash.png are located
+          npx @capacitor/assets generate --android --assetPath assets/resources
           npx cap sync android
 
       - name: Build Android APK with Gradle
@@ -53,5 +54,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: QTB-Cinema-Android-App
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/debug/gaucine.apk
           retention-days: 14
