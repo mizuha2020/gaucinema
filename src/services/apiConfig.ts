@@ -15,12 +15,16 @@ export const getApiBaseUrl = (): string => {
     return cleanUrl;
   }
 
-  // Priority 2: If we're on a browser and not localhost, use the current origin
+  // Priority 2: Hardcoded fallback for this specific deployment
+  // This ensures that even if Vite env fails, the app still works.
+  const fallbackUrl = "https://ais-pre-vnvd2uudmu6l2atxxr7h75-18391378124.asia-southeast1.run.app";
+  
+  // Priority 3: If we're on a browser and not localhost, use the current origin
   if (typeof window !== 'undefined') {
     const { hostname, origin } = window.location;
     
     // In Capacitor, hostname might be 'localhost'
-    const isCapacitor = (window as any).Capacitor || (window as any).webkit?.messageHandlers?.bridge;
+    const isCapacitor = (window as any).Capacitor || (window as any).webkit?.messageHandlers?.bridge || Capacitor.isNativePlatform();
     
     if (hostname !== 'localhost' && hostname !== '127.0.0.1' && !isCapacitor) {
       return origin;
@@ -30,10 +34,13 @@ export const getApiBaseUrl = (): string => {
     if (origin.includes('run.app')) {
       return origin;
     }
+
+    if (isCapacitor) {
+      return fallbackUrl;
+    }
   }
 
-  console.warn('API Base URL is EMPTY. This will likely cause failures on native platforms.');
-  return '';
+  return fallbackUrl;
 };
 
 export const API_BASE_URL = getApiBaseUrl();

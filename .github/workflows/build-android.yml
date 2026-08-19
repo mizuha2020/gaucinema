@@ -37,13 +37,14 @@ jobs:
 
       - name: Initialize Android Project (Capacitor)
         run: |
-          npx cap add android || true
-          npx cap copy android
+          # Remove existing android folder to ensure a clean build and fresh resource generation
+          rm -rf android
+          npx cap add android
           npx cap sync android
 
       - name: Generate Android Assets
         run: |
-          # Use the correct path to resources folder where icon.png and splash.png are located
+          # Generate assets and explicitly copy them to the android project
           npx @capacitor/assets generate --android --assetPath assets/resources
           npx cap copy android
           npx cap sync android

@@ -43,7 +43,14 @@ async function startServer() {
 
   // Enable CORS for Android app and other origins
   app.use(cors({
-    origin: ["https://localhost", "http://localhost", "capacitor://localhost", "http://localhost:3000", /^https:\/\/.*\.run\.app$/],
+    origin: (origin, callback) => {
+      // Allow any origin for native apps or dev environments
+      if (!origin || origin === 'null' || origin.includes('localhost') || origin.includes('capacitor://') || origin.includes('run.app')) {
+        callback(null, true);
+      } else {
+        callback(null, true); // Fallback to allow all for now to debug
+      }
+    },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
     credentials: true

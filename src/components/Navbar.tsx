@@ -243,8 +243,21 @@ export const Navbar: React.FC<NavbarProps> = ({
                 referrerPolicy="no-referrer"
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
-                  if (target.src !== '/app_logo.jpg') {
-                    target.src = '/app_logo.jpg';
+                  // Try various fallbacks if the primary API URL fails
+                  const fallbacks = [
+                    '/app_logo.jpg',
+                    'https://ais-pre-vnvd2uudmu6l2atxxr7h75-18391378124.asia-southeast1.run.app/app_logo.jpg',
+                    '/icon.jpg'
+                  ];
+                  
+                  const currentSrc = target.getAttribute('src');
+                  const nextIndex = fallbacks.indexOf(currentSrc || '') + 1;
+                  
+                  if (nextIndex < fallbacks.length) {
+                    target.src = fallbacks[nextIndex];
+                  } else {
+                    // Final fallback to a generic icon if all else fails
+                    target.src = 'https://images.unsplash.com/photo-1593784991095-a205069470b6?w=100&auto=format&fit=crop&q=60';
                   }
                 }}
               />
