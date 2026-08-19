@@ -45,7 +45,7 @@ jobs:
         run: |
           # The files in assets/resources are actually JPEGs with .png extensions.
           # We need to convert them to real PNGs for @capacitor/assets to work.
-          sudo apt-get update && sudo apt-get install -y imagemagick
+          # Imagemagick is pre-installed on ubuntu-latest runners.
           
           echo "Checking assets before conversion:"
           ls -l assets/resources/
