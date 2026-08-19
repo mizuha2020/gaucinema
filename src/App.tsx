@@ -844,7 +844,7 @@ export default function App() {
                 />
 
                 <CinematicCarousel
-                  title="Mãn nhãn phim chiếu rạp 🍿"
+                  title="Mãn Nhãn Phim Chiếu Rạp"
                   movies={theaterList}
                   onOpenDetail={(m) => openDetailModal(m)}
                   onPlay={handlePlayMovie}

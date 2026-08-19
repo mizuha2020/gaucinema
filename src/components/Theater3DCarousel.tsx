@@ -59,11 +59,6 @@ export const Theater3DCarousel: React.FC<Theater3DCarouselProps> = ({ title, mov
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-200 to-slate-400">
             {title}
           </span>
-          <div className="hidden sm:flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 shadow-lg shadow-orange-500/20">
-            <svg viewBox="0 0 24 24" className="w-6 h-6 text-white fill-current">
-              <path d="M17.507 6.748a.5.5 0 01.493.5v12.004a.5.5 0 01-.5.5H6.493a.5.5 0 01-.5-.5V7.248a.5.5 0 01.5-.5h11.014zm-5.507 2.252l-2.5 3.5h5l-2.5-3.5zm3.5 5.25h-7a.25.25 0 00-.25.25v2.5c0 .138.112.25.25.25h7a.25.25 0 00.25-.25v-2.5a.25.25 0 00-.25-.25z" />
-            </svg>
-          </div>
         </h2>
         <div className="h-1 w-24 bg-gradient-to-r from-orange-500 to-transparent mt-2 rounded-full" />
       </div>
