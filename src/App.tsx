@@ -344,6 +344,22 @@ export default function App() {
     return myList.some((item) => item.movieSlug === slug);
   };
 
+  // Prevent body scroll when overlay is open
+  useEffect(() => {
+    const shouldLock = playingMovie || selectedMovieForDetail || showProfileSelector || showAdminDashboard;
+    if (shouldLock) {
+      document.body.style.overflow = 'hidden';
+      document.body.style.height = '100vh';
+    } else {
+      document.body.style.overflow = 'unset';
+      document.body.style.height = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+      document.body.style.height = 'unset';
+    };
+  }, [playingMovie, selectedMovieForDetail, showProfileSelector, showAdminDashboard]);
+
   // Unified History/Back Button Manager
   useEffect(() => {
     const handlePopState = (e: PopStateEvent) => {

@@ -140,6 +140,22 @@ export const Navbar: React.FC<NavbarProps> = ({
     };
   }, []);
 
+  // Prevent body scroll when search or mobile menu is open
+  useEffect(() => {
+    const shouldLock = isSearchOpen || isMobileMenuOpen;
+    if (shouldLock) {
+      document.body.style.overflow = 'hidden';
+      document.body.style.height = '100vh';
+    } else {
+      document.body.style.overflow = 'unset';
+      document.body.style.height = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+      document.body.style.height = 'unset';
+    };
+  }, [isSearchOpen, isMobileMenuOpen]);
+
   // Debounced search
   useEffect(() => {
     if (!searchQuery.trim()) {

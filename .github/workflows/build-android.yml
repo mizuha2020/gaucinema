@@ -29,6 +29,8 @@ jobs:
         run: npm ci || npm install
 
       - name: Build Web App (Vite)
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
         run: npm run build
 
       - name: Initialize Android Project (Capacitor)

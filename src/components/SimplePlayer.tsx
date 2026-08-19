@@ -17,6 +17,7 @@ import {
   Minimize,
   Settings,
   SkipForward,
+  List,
   X,
   AlertCircle,
   Server,
@@ -32,7 +33,7 @@ interface SimplePlayerProps {
   onSelectEpisode: (ep: MovieEpisode, server: EpisodeServer, currentTime?: number) => void;
   onSaveProgress: (currentTime: number, duration: number) => void;
   initialTime?: number;
-  autoFullscreen?: boolean; 
+  autoFullscreen?: boolean; // 👈 Thêm prop này, mặc định true
 }
 
 function getMirrorUrls(originalUrl: string): string[] {
@@ -69,7 +70,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
   onSelectEpisode,
   onSaveProgress,
   initialTime = 0,
-  autoFullscreen = true,
+  autoFullscreen = false, // 👈 Mặc định bật
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -107,6 +108,8 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [useEmbed, setUseEmbed] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isServerMenuOpen, setIsServerMenuOpen] = useState(false);
+  const [isEpisodesOpen, setIsEpisodesOpen] = useState(false);
 
   const [hud, setHud] = useState<{ type: 'volume' | 'brightness'; value: number } | null>(null);
   const hudTimer = useRef<NodeJS.Timeout | null>(null);
@@ -153,6 +156,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     }
   }, [isMuted, volume, changeVolume]);
 
+  // 👇 Hàm togglePlay có auto fullscreen
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
     const container = containerRef.current;
@@ -160,7 +164,9 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
 
     if (video.paused) {
       video.play().catch(() => {});
+      // Tự động fullscreen nếu chưa fullscreen và autoFullscreen=true
       if (autoFullscreen && !document.fullscreenElement) {
+        // iOS Safari
         if (video.webkitEnterFullscreen) {
           video.webkitEnterFullscreen();
         } else if (container?.requestFullscreen) {
@@ -211,12 +217,47 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     }
   }, [nextEpisode, currentServer, onSelectEpisode]);
 
+  const switchServer = useCallback(
+    (targetServer: EpisodeServer) => {
+      const currentIdx = currentServer.server_data.findIndex((e) => e.slug === currentEpisode.slug);
+      let matched = targetServer.server_data.find(
+        (e) => e.slug === currentEpisode.slug || e.name === currentEpisode.name
+      );
+      if (!matched && currentIdx >= 0 && currentIdx < targetServer.server_data.length) {
+        matched = targetServer.server_data[currentIdx];
+      }
+      if (!matched) matched = targetServer.server_data[0];
+      if (matched) {
+        const time = Math.max(0, (videoRef.current?.currentTime || 0) - 1);
+        onSelectEpisode(matched, targetServer, time);
+        setIsServerMenuOpen(false);
+      }
+    },
+    [currentServer, currentEpisode, onSelectEpisode]
+  );
+
   const resetControlsTimer = useCallback(() => {
     setShowControls(true);
     if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
     controlsTimeout.current = setTimeout(() => {
-      setShowControls(false);
+      if (!isSettingsOpen && !isServerMenuOpen && !isEpisodesOpen) {
+        setShowControls(false);
+      }
     }, 3000);
+  }, [isSettingsOpen, isServerMenuOpen, isEpisodesOpen]);
+
+  // Close menus on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.player-menu-btn') && !target.closest('.player-menu-content')) {
+        setIsSettingsOpen(false);
+        setIsServerMenuOpen(false);
+        setIsEpisodesOpen(false);
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
   }, []);
 
   useEffect(() => {
@@ -225,6 +266,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     return () => document.removeEventListener('fullscreenchange', onFsChange);
   }, []);
 
+  // Khởi tạo HLS (giống như cũ)
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !currentEpisode.link_m3u8 || useEmbed) return;
@@ -337,6 +379,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     };
   }, [duration, onSaveProgress]);
 
+  // Phím tắt (giữ nguyên)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const video = videoRef.current;
@@ -403,6 +446,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     resetControlsTimer,
   ]);
 
+  // Touch gesture (giữ nguyên)
   const handleTouchStart = (e: React.TouchEvent) => {
     const target = e.target as HTMLElement;
     if (target.closest('button, input, .controls-area')) return;
@@ -660,13 +704,17 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
 
                   <div className="relative">
                     <button
-                      onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-                      className="text-white hover:text-blue-400 p-1"
+                      onClick={() => {
+                        setIsSettingsOpen(!isSettingsOpen);
+                        setIsServerMenuOpen(false);
+                        setIsEpisodesOpen(false);
+                      }}
+                      className="text-white hover:text-blue-400 p-1 player-menu-btn"
                     >
                       <Settings className="w-5 h-5" />
                     </button>
                     {isSettingsOpen && (
-                      <div className="absolute right-0 bottom-10 bg-gray-900 rounded-lg shadow-xl p-3 w-48 z-50">
+                      <div className="absolute right-0 bottom-10 bg-gray-900 rounded-lg shadow-xl p-3 w-48 z-50 player-menu-content">
                         <div className="mb-3">
                           <p className="text-gray-400 text-xs uppercase font-bold mb-1">Tốc độ</p>
                           <div className="grid grid-cols-3 gap-1">
@@ -735,14 +783,73 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                     <div className="relative">
                       <button
                         onClick={() => {
+                          setIsServerMenuOpen(!isServerMenuOpen);
+                          setIsSettingsOpen(false);
+                          setIsEpisodesOpen(false);
                         }}
-                        className="text-white hover:text-blue-400 p-1 flex items-center gap-1"
+                        className="text-white hover:text-blue-400 p-1 flex items-center gap-1 player-menu-btn"
                       >
                         <Server className="w-5 h-5" />
                         <span className="text-xs hidden sm:inline">{currentServer.server_name}</span>
                       </button>
+                      {isServerMenuOpen && (
+                        <div className="absolute right-0 bottom-10 bg-gray-900/95 backdrop-blur-md rounded-lg shadow-2xl p-2 w-56 z-50 player-menu-content overflow-y-auto max-h-60 border border-white/10">
+                          {allServers.map((srv) => (
+                            <button
+                              key={srv.server_name}
+                              onClick={() => switchServer(srv)}
+                              className={`w-full text-left px-3 py-2.5 rounded text-xs mb-1 last:mb-0 transition-colors ${
+                                srv.server_name === currentServer.server_name
+                                  ? 'bg-blue-600 text-white font-bold'
+                                  : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+                              }`}
+                            >
+                              {srv.server_name}
+                              {srv.sourceLabel && <span className="opacity-60 ml-1">({srv.sourceLabel})</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
+
+                  <div className="relative">
+                    <button
+                      onClick={() => {
+                        setIsEpisodesOpen(!isEpisodesOpen);
+                        setIsSettingsOpen(false);
+                        setIsServerMenuOpen(false);
+                      }}
+                      className="text-white hover:text-blue-400 p-1 flex items-center gap-1 player-menu-btn"
+                      title="Danh sách tập"
+                    >
+                      <List className="w-5 h-5" />
+                      <span className="text-xs hidden sm:inline">Tập phim</span>
+                    </button>
+                    {isEpisodesOpen && (
+                      <div className="absolute right-0 bottom-10 bg-gray-900/95 backdrop-blur-md rounded-lg shadow-2xl p-3 w-64 z-50 player-menu-content overflow-y-auto max-h-64 custom-scrollbar border border-white/10">
+                        <p className="text-gray-400 text-[10px] uppercase font-bold mb-3 px-1 tracking-wider">Danh sách tập</p>
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {currentServer.server_data.map((ep) => (
+                            <button
+                              key={ep.slug}
+                              onClick={() => {
+                                onSelectEpisode(ep, currentServer);
+                                setIsEpisodesOpen(false);
+                              }}
+                              className={`text-[11px] py-2 rounded text-center truncate transition-colors ${
+                                ep.slug === currentEpisode.slug
+                                  ? 'bg-blue-600 text-white font-bold shadow-lg shadow-blue-600/30'
+                                  : 'bg-gray-800/50 text-gray-300 hover:bg-gray-700 hover:text-white'
+                              }`}
+                            >
+                              {ep.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
                   <button
                     onClick={toggleFullscreen}

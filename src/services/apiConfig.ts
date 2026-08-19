@@ -16,10 +16,14 @@ export const getApiBaseUrl = (): string => {
 
   // Use the environment variable if provided (MUST be prefixed with VITE_)
   const envUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_APP_URL;
+  
   if (envUrl) {
-    return envUrl.replace(/\/$/, '');
+    const cleanUrl = envUrl.replace(/\/$/, '');
+    console.log('API Base URL set from environment:', cleanUrl);
+    return cleanUrl;
   }
 
+  console.warn('API Base URL is EMPTY. Native app connectivity will fail.');
   // Fallback: If on native platform and no URL provided, we might be in trouble
   // but we can try to return empty string for browser-based localhost dev
   return '';
