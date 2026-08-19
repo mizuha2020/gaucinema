@@ -146,6 +146,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     setIsAspectRatioOpen(false);
     setIsEnhanceMenuOpen(false);
     setIsVolumeOpen(false);
+    setIsEpisodeDrawerOpen(false);
   }, []);
 
   // Brightness Control (20% to 200%, default 100%)
@@ -647,7 +648,10 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         target.closest('#player-aspect-ratio-btn') ||
         target.closest('#player-enhance-menu') ||
         target.closest('#player-enhance-btn') ||
-        target.closest('#gpu-upscale-modal')
+        target.closest('#gpu-upscale-modal') ||
+        target.closest('#player-episodes-drawer') ||
+        target.closest('#player-episodes-drawer-fallback') ||
+        target.closest('#player-episodes-drawer-btn')
       );
 
       if (!isInsideMenu) {
@@ -870,6 +874,9 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
 
   // Touch Gesture Handling for Mobile / iPad (Swipe Left = Brightness, Swipe Right = Volume, Tap = Toggle Controls, Double Tap = Skip/Play)
   const handleTouchStart = (e: React.TouchEvent) => {
+    const target = e.target as HTMLElement;
+    if (target && target.closest('button, input')) return;
+
     if (e.touches.length !== 1) return;
     const touch = e.touches[0];
     const container = playerContainerRef.current;
@@ -909,6 +916,12 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
+    const target = e.target as HTMLElement;
+    if (target && target.closest('button, input')) {
+      touchStartRef.current = null;
+      return;
+    }
+
     if (!touchStartRef.current) return;
     const touchDuration = Date.now() - touchStartRef.current.time;
     const touchX = touchStartRef.current.x;
@@ -1113,7 +1126,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
           {isEpisodeDrawerOpen && (
             <div
               id="player-episodes-drawer-fallback"
-              className="absolute right-0 top-0 bottom-0 w-80 sm:w-96 bg-[#0b1329]/95 border-l border-blue-900/60 p-5 shadow-2xl z-50 flex flex-col backdrop-blur-md animate-in slide-in-from-right duration-300 pointer-events-auto"
+              className="absolute right-0 sm:right-6 top-1/2 -translate-y-1/2 w-80 sm:w-96 max-h-[90vh] sm:max-h-[80vh] bg-[#0b1329]/95 border border-blue-900/60 rounded-l-2xl sm:rounded-2xl p-5 shadow-2xl z-50 flex flex-col backdrop-blur-md animate-in slide-in-from-right duration-300 pointer-events-auto"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between pb-4 border-b border-slate-800">
@@ -1134,9 +1147,11 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                 {currentServer.server_data.length} tập)
               </div>
 
-              <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 mt-2 overscroll-contain">
+              <div className="flex-1 min-h-0 overflow-y-auto pr-1 mt-2 overscroll-contain">
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                 {currentServer.server_data.map((ep, idx) => {
                   const isActive = ep.slug === currentEpisode.slug;
+                  const epName = ep.name.replace(/^Tập\s*/i, '');
                   return (
                     <button
                       key={ep.slug || idx}
@@ -1144,22 +1159,21 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                         onSelectEpisode(ep, currentServer);
                         setIsEpisodeDrawerOpen(false);
                       }}
-                      className={`w-full flex items-center justify-between p-3 rounded-xl text-left text-xs transition-all cursor-pointer ${
+                      className={`flex flex-col items-center justify-center p-2 min-h-[50px] rounded-xl text-center transition-all cursor-pointer ${
                         isActive
-                          ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold shadow-lg shadow-blue-600/30'
+                          ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold shadow-lg shadow-blue-600/30 border border-blue-400/50'
                           : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-800'
                       }`}
+                      title={ep.name}
                     >
-                      <div className="flex items-center gap-2.5 truncate">
-                        <Play className={`w-3.5 h-3.5 ${isActive ? 'fill-white' : 'text-slate-400'}`} />
-                        <span className="truncate">
-                          {ep.name.startsWith('Tập') ? ep.name : `Tập ${ep.name}`}
-                        </span>
-                      </div>
-                      {isActive && <span className="text-[10px] uppercase font-bold tracking-widest text-sky-200">Đang phát</span>}
+                      <span className="text-[11px] sm:text-xs font-semibold line-clamp-2 leading-tight">
+                        {epName}
+                      </span>
+                      {isActive && <div className="w-1 h-1 bg-white rounded-full mt-1.5 animate-pulse" />}
                     </button>
                   );
                 })}
+                </div>
               </div>
             </div>
           )}
@@ -1566,12 +1580,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                   <div className="relative flex items-center gap-1.5 group/volume">
                     <button
                       id="player-volume-toggle"
-                      onClick={() => {
-                        setIsVolumeOpen(!isVolumeOpen);
-                        setIsBrightnessOpen(false);
-                        setIsSettingsOpen(false);
-                        setIsEnhanceMenuOpen(false);
-                      }}
+                      onClick={() => toggleMute()}
                       className="text-slate-300 hover:text-white cursor-pointer p-1 transition-transform hover:scale-110 active:scale-95"
                       title="Âm lượng (M để tắt/bật)"
                     >
@@ -1583,76 +1592,18 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                         <Volume2 className="w-4 h-4 sm:w-5 sm:h-5" />
                       )}
                     </button>
-                    <input
-                      id="player-volume-slider-inline"
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      value={isMuted ? 0 : volume}
-                      onChange={(e) => changeVolume(parseFloat(e.target.value))}
-                      className="hidden md:inline-block w-14 lg:w-20 h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"
-                    />
-
-                    {/* Volume Slider Popup */}
-                    {isVolumeOpen && (
-                      <div
-                        id="player-volume-popup"
-                        className="absolute bottom-10 left-0 bg-[#0f172a]/95 backdrop-blur-xl border border-blue-900/80 rounded-2xl p-3.5 shadow-2xl z-50 flex flex-col items-center gap-2.5 w-36 animate-in fade-in zoom-in-95 duration-150"
-                      >
-                        <div className="flex items-center justify-between w-full border-b border-slate-800 pb-1.5">
-                          <span className="text-[10px] font-bold uppercase text-slate-400">Âm lượng</span>
-                          <span className="text-xs font-black text-sky-400">
-                            {isMuted ? 'Tắt tiếng' : `${Math.round(volume * 100)}%`}
-                          </span>
-                        </div>
-
-                        <input
-                          id="player-volume-slider-popup"
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          value={isMuted ? 0 : volume}
-                          onChange={(e) => changeVolume(parseFloat(e.target.value))}
-                          className="w-28 h-1.5 bg-slate-700 rounded-lg accent-sky-400 cursor-pointer my-1"
-                        />
-
-                        {/* Quick Presets & Mute button */}
-                        <div className="grid grid-cols-3 gap-1 w-full pt-1">
-                          <button
-                            onClick={toggleMute}
-                            className={`py-1 px-1 text-[10px] font-bold rounded cursor-pointer transition-colors ${
-                              isMuted || volume === 0
-                                ? 'bg-sky-600 text-white'
-                                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                            }`}
-                          >
-                            Tắt
-                          </button>
-                          <button
-                            onClick={() => changeVolume(0.5)}
-                            className={`py-1 px-1 text-[10px] font-bold rounded cursor-pointer transition-colors ${
-                              !isMuted && volume === 0.5
-                                ? 'bg-sky-600 text-white'
-                                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                            }`}
-                          >
-                            50%
-                          </button>
-                          <button
-                            onClick={() => changeVolume(1.0)}
-                            className={`py-1 px-1 text-[10px] font-bold rounded cursor-pointer transition-colors ${
-                              !isMuted && volume === 1.0
-                                ? 'bg-sky-600 text-white'
-                                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                            }`}
-                          >
-                            100%
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                    <div className="w-0 overflow-hidden opacity-0 group-hover/volume:w-16 sm:group-hover/volume:w-20 group-hover/volume:opacity-100 group-hover/volume:ml-1 transition-all duration-300 ease-in-out flex items-center origin-left">
+                      <input
+                        id="player-volume-slider-inline"
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={isMuted ? 0 : volume}
+                        onChange={(e) => changeVolume(parseFloat(e.target.value))}
+                        className="w-full h-1 bg-slate-700 rounded-lg accent-blue-500 cursor-pointer"
+                      />
+                    </div>
                   </div>
 
                   {/* Time Counter */}
@@ -2014,7 +1965,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
           {isEpisodeDrawerOpen && (
             <div
               id="player-episodes-drawer"
-              className="absolute right-0 top-0 bottom-0 w-80 sm:w-96 bg-[#0b1329]/95 border-l border-blue-900/60 p-5 shadow-2xl z-50 flex flex-col backdrop-blur-md animate-in slide-in-from-right duration-300 pointer-events-auto"
+              className="absolute right-0 sm:right-6 top-1/2 -translate-y-1/2 w-80 sm:w-96 max-h-[90vh] sm:max-h-[80vh] bg-[#0b1329]/95 border border-blue-900/60 rounded-l-2xl sm:rounded-2xl p-5 shadow-2xl z-50 flex flex-col backdrop-blur-md animate-in slide-in-from-right duration-300 pointer-events-auto"
               onClick={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
               onTouchMove={(e) => e.stopPropagation()}
@@ -2040,13 +1991,15 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
               </div>
 
               <div
-                className="flex-1 overflow-y-auto space-y-1.5 pr-1 mt-2 overscroll-contain"
+                className="flex-1 min-h-0 overflow-y-auto pr-1 mt-2 overscroll-contain"
                 onTouchStart={(e) => e.stopPropagation()}
                 onTouchMove={(e) => e.stopPropagation()}
                 onTouchEnd={(e) => e.stopPropagation()}
               >
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                 {currentServer.server_data.map((ep, idx) => {
                   const isActive = ep.slug === currentEpisode.slug;
+                  const epName = ep.name.replace(/^Tập\s*/i, '');
                   return (
                     <button
                       key={ep.slug || idx}
@@ -2055,22 +2008,21 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                         onSelectEpisode(ep, currentServer);
                         setIsEpisodeDrawerOpen(false);
                       }}
-                      className={`w-full flex items-center justify-between p-3 rounded-xl text-left text-xs transition-all cursor-pointer ${
+                      className={`flex flex-col items-center justify-center p-2 min-h-[50px] rounded-xl text-center transition-all cursor-pointer ${
                         isActive
-                          ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold shadow-lg shadow-blue-600/30'
+                          ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold shadow-lg shadow-blue-600/30 border border-blue-400/50'
                           : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-800'
                       }`}
+                      title={ep.name}
                     >
-                      <div className="flex items-center gap-2.5 truncate">
-                        <Play className={`w-3.5 h-3.5 ${isActive ? 'fill-white' : 'text-slate-400'}`} />
-                        <span className="truncate">
-                          {ep.name.startsWith('Tập') ? ep.name : `Tập ${ep.name}`}
-                        </span>
-                      </div>
-                      {isActive && <span className="text-[10px] uppercase font-bold tracking-widest text-sky-200">Đang phát</span>}
+                      <span className="text-[11px] sm:text-xs font-semibold line-clamp-2 leading-tight">
+                        {epName}
+                      </span>
+                      {isActive && <div className="w-1 h-1 bg-white rounded-full mt-1.5 animate-pulse" />}
                     </button>
                   );
                 })}
+                </div>
               </div>
             </div>
           )}

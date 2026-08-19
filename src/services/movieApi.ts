@@ -639,7 +639,92 @@ export const movieApi = {
     });
   },
 
-  // 9. Chi tiết phim + Danh sách tập (Hỗ trợ đổi nguồn & gộp Server phát)
+  // 9. Top Trending (Movies with most views)
+  async getTrending(limit = 10, type?: 'series' | 'single'): Promise<MovieListResponse> {
+    const source = getActiveApiSource();
+    const cacheKey = `trending:${source}:${limit}:${type || 'all'}`;
+
+    return cachedFetch(cacheKey, async () => {
+      // Fetch data based on type
+      let p1: any, p2: any;
+      if (type === 'series') {
+        [p1, p2] = await Promise.allSettled([
+          this.getSeries(1, 24),
+          this.getSeries(2, 24),
+        ]);
+      } else if (type === 'single') {
+        [p1, p2] = await Promise.allSettled([
+          this.getSingleMovies(1, 24),
+          this.getSingleMovies(2, 24),
+        ]);
+      } else {
+        [p1, p2] = await Promise.allSettled([
+          this.getNewUpdated(1, 24),
+          this.getNewUpdated(2, 24),
+        ]);
+      }
+      
+      let items: Movie[] = [];
+      if (p1.status === 'fulfilled') items = [...items, ...p1.value.items];
+      if (p2.status === 'fulfilled') items = [...items, ...p2.value.items];
+
+      if (items.length === 0) return { status: false, items: [] };
+
+      // Sort by views
+      const sorted = items
+        .filter((m, index, self) => self.findIndex(t => t.slug === m.slug) === index) // Unique
+        .sort((a, b) => (b.view || 0) - (a.view || 0));
+      
+      if (sorted[0]?.view === sorted[sorted.length - 1]?.view) {
+        // Fallback if APIs don't return view counts: 
+        // Pick from page 2 (index 20+) so it doesn't overlap with the start of page 1.
+        return {
+          status: true,
+          items: items.slice(20, 20 + limit),
+        };
+      }
+
+      return {
+        status: true,
+        items: sorted.slice(0, limit),
+      };
+    });
+  },
+
+  // 10. Phim Chiếu Rạp
+  async getTheaterMovies(page = 1, limit = 24, sourceOverride?: ApiSource): Promise<MovieListResponse> {
+    const source = sourceOverride || getActiveApiSource();
+    const cacheKey = `theater:${source}:${page}:${limit}`;
+
+    return cachedFetch(cacheKey, async () => {
+      if (source === 'kkphim') {
+        const raw = await fetchKKPhim<any>('v1/api/danh-sach/phim-chieu-rap', { page, limit });
+        return normalizeMovieList(raw, 'kkphim');
+      }
+      if (source === 'ophim') {
+        const raw = await fetchOPhim<any>('v1/api/danh-sach/phim-chieu-rap', { page, limit });
+        return normalizeMovieList(raw, 'ophim');
+      }
+      if (source === 'nguonc') {
+        const raw = await fetchNguonC<any>('films/danh-sach/phim-chieu-rap', { page });
+        return normalizeMovieList(raw, 'nguonc');
+      }
+
+      const [kk, op] = await Promise.allSettled([
+        fetchKKPhim<any>('v1/api/danh-sach/phim-chieu-rap', { page, limit }),
+        fetchOPhim<any>('v1/api/danh-sach/phim-chieu-rap', { page, limit }),
+      ]);
+      const kkList = kk.status === 'fulfilled' ? normalizeMovieList(kk.value, 'kkphim').items : [];
+      const opList = op.status === 'fulfilled' ? normalizeMovieList(op.value, 'ophim').items : [];
+      const map = new Map<string, Movie>();
+      for (const m of [...kkList, ...opList]) {
+        if (!map.has(m.slug)) map.set(m.slug, m);
+      }
+      return { status: true, items: Array.from(map.values()) };
+    });
+  },
+
+  // 11. Chi tiết phim + Danh sách tập (Hỗ trợ đổi nguồn & gộp Server phát)
   async getMovieDetail(slug: string, preferredSource?: ApiSource): Promise<MovieDetailResponse> {
     if (!slug) throw new Error('Mã phim không hợp lệ');
     const cacheKey = `detail:${slug}:${preferredSource || 'any'}`;

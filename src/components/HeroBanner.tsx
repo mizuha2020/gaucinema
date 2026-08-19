@@ -87,6 +87,9 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           <img
             src={getImageUrl(currentMovie.poster_url || currentMovie.thumb_url)}
             alt={currentMovie.name}
+            loading="eager"
+            decoding="async"
+            fetchPriority="high"
             className="w-full h-full object-cover object-top filter brightness-85"
             onError={(e) => {
               (e.target as HTMLImageElement).src =

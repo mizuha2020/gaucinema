@@ -1,14 +1,16 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef } from 'react';
 import { Movie } from '../types';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { getImageUrl } from '../services/movieApi';
 
 interface Top10CarouselProps {
+  title: string;
   movies: Movie[];
   onOpenDetail: (movie: Movie) => void;
   onPlay: (movie: Movie) => void;
 }
 
-export const Top10Carousel: React.FC<Top10CarouselProps> = ({ movies, onOpenDetail, onPlay }) => {
+export const Top10Carousel: React.FC<Top10CarouselProps> = ({ title, movies, onOpenDetail, onPlay }) => {
   const rowRef = useRef<HTMLDivElement>(null);
   const top10Movies = movies.slice(0, 10);
 
@@ -28,7 +30,7 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({ movies, onOpenDeta
 
   return (
     <div className="bg-black py-8 px-4 sm:px-8">
-      <h2 className="text-white text-2xl font-bold mb-6">Top 10 Phim Hot Nhất</h2>
+      <h2 className="text-white text-2xl font-bold mb-6">{title}</h2>
       
       <div className="relative group">
         <button
@@ -63,23 +65,18 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({ movies, onOpenDeta
                 className="relative z-10 ml-16 w-48 h-72 rounded-lg overflow-hidden cursor-pointer shadow-2xl transition-transform hover:scale-105"
                 onClick={() => onOpenDetail(movie)}
               >
-                <img src={movie.poster_url} alt={movie.name} className="w-full h-full object-cover" />
+                <img 
+                  src={getImageUrl(movie.thumb_url || movie.poster_url)} 
+                  alt={movie.name} 
+                  className="w-full h-full object-cover" 
+                  loading="lazy"
+                  decoding="async"
+                />
                 
                 {/* Text Overlay */}
                 <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black to-transparent">
                   <p className="text-white font-bold truncate">{movie.name}</p>
                 </div>
-
-                {/* Specific Tags */}
-                {index === 0 && (
-                  <div className="absolute bottom-2 left-2 bg-red-600 text-white text-[10px] px-2 py-1 rounded">Recently Added</div>
-                )}
-                {index === 1 && (
-                  <div className="absolute bottom-2 left-2 flex flex-col gap-1">
-                    <div className="bg-red-600 text-white text-[10px] px-2 py-1 rounded">New Episode</div>
-                    <div className="bg-white text-black text-[10px] px-2 py-1 rounded">Watch Now</div>
-                  </div>
-                )}
               </div>
             </div>
           ))}
@@ -95,3 +92,4 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({ movies, onOpenDeta
     </div>
   );
 };
+

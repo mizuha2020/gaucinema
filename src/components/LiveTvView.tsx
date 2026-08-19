@@ -41,6 +41,16 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
   const [showControls, setShowControls] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  // Player state
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const dashPlayerRef = useRef<dashjs.MediaPlayerClass | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [volume, setVolume] = useState(1.0);
+  const [isLoadingStream, setIsLoadingStream] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
+
   useEffect(() => {
     const handleFullscreenChange = () => {
       const isFs = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
@@ -48,6 +58,9 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       if (!isFs) {
         if (screen.orientation && (screen.orientation as any).unlock) {
           try { (screen.orientation as any).unlock(); } catch (e) {}
+        }
+        if (window.history.state && window.history.state.liveTvFs) {
+          window.history.back();
         }
       }
     };
@@ -65,15 +78,46 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     };
   }, []);
 
-  // Player state
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const hlsRef = useRef<Hls | null>(null);
-  const dashPlayerRef = useRef<dashjs.MediaPlayerClass | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
-  const [volume, setVolume] = useState(1.0);
-  const [isLoadingStream, setIsLoadingStream] = useState(false);
-  const [streamError, setStreamError] = useState<string | null>(null);
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      if (isFullscreen && !(e.state && e.state.liveTvFs)) {
+        setIsFullscreen(false);
+        const isNativeFs = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
+        if (isNativeFs) {
+          if (document.exitFullscreen) document.exitFullscreen().catch(()=>{});
+          else if ((document as any).webkitExitFullscreen) (document as any).webkitExitFullscreen();
+        }
+        if (videoRef.current && (videoRef.current as any).webkitExitFullscreen) {
+          try { (videoRef.current as any).webkitExitFullscreen(); } catch (e) {}
+        }
+        if (screen.orientation && (screen.orientation as any).unlock) {
+          try { (screen.orientation as any).unlock(); } catch (e) {}
+        }
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const onWebkitEndFullscreen = () => {
+      setIsFullscreen(false);
+      if (window.history.state && window.history.state.liveTvFs) {
+        window.history.back();
+      }
+      if (screen.orientation && (screen.orientation as any).unlock) {
+        try { (screen.orientation as any).unlock(); } catch (e) {}
+      }
+    };
+
+    video.addEventListener('webkitendfullscreen', onWebkitEndFullscreen);
+    return () => {
+      video.removeEventListener('webkitendfullscreen', onWebkitEndFullscreen);
+    };
+  }, [activeChannel]);
 
   useEffect(() => {
     fetchChannels();
@@ -133,14 +177,20 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       try {
         const player = dashjs.MediaPlayer().create();
         dashPlayerRef.current = player;
+        
+        // Suppress Dash.js internal logs to prevent AI Studio error catcher from triggering
+        player.updateSettings({ debug: { logLevel: dashjs.Debug.LOG_LEVEL_NONE } });
+        
         player.initialize(video, streamUrl, true);
         player.on(dashjs.MediaPlayer.events.CAN_PLAY, () => {
           setIsLoadingStream(false);
           video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
         });
         player.on(dashjs.MediaPlayer.events.ERROR, (e) => {
-          console.error('DashJS error:', e);
-          const errMsg = e?.error?.message || '';
+          console.warn('DashJS error:', e);
+          const errMsg = typeof e?.error === 'object' && e?.error !== null && 'message' in e.error 
+            ? String(e.error.message) 
+            : String(e?.error || '');
           if (errMsg.includes('DRM') || errMsg.includes('NotSupportedError') || errMsg.includes('key request')) {
             setStreamError('Kênh này sử dụng mã hóa bản quyền DRM (Widevine/Clearkey) không được trình duyệt web hỗ trợ.');
           } else {
@@ -233,6 +283,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
 
     if (!isNativeFs && !isFullscreen) {
       setIsFullscreen(true);
+      window.history.pushState({ liveTvFs: true, tab: 'tv-live' }, '', '');
       if (videoContainer) {
         if (videoContainer.requestFullscreen) {
           videoContainer.requestFullscreen().then(() => {
@@ -249,12 +300,16 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         }
       }
     } else {
-      setIsFullscreen(false);
       if (isNativeFs) {
         if (document.exitFullscreen) {
           document.exitFullscreen().catch(() => {});
         } else if ((document as any).webkitExitFullscreen) {
           (document as any).webkitExitFullscreen();
+        }
+      } else {
+        setIsFullscreen(false);
+        if (window.history.state && window.history.state.liveTvFs) {
+          window.history.back();
         }
       }
       if (screen.orientation && (screen.orientation as any).unlock) {

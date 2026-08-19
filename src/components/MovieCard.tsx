@@ -40,7 +40,7 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
     }
   };
 
-  const imgUrl = getImageUrl(movie.poster_url || movie.thumb_url);
+  const imgUrl = getImageUrl(movie.thumb_url || movie.poster_url);
 
   // Generate a realistic match percentage
   const matchPercentage = Math.floor(92 + (((movie.year || 2024) * 7 + (movie.name.length * 3)) % 8));
@@ -48,11 +48,20 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
   return (
     <div
       id={`movie-card-${movie.slug || movie._id}`}
-      className={`relative group shrink-0 select-none transition-all duration-300 ${
+      tabIndex={0}
+      className={`relative group shrink-0 select-none transition-all duration-300 focus:outline-none focus:ring-4 focus:ring-blue-500 focus:z-10 focus:scale-105 ${
         isTop10 ? 'w-44 sm:w-56 h-64 sm:h-80' : 'w-36 sm:w-48 md:w-52'
       }`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      onFocus={() => setIsHovered(true)}
+      onBlur={() => setIsHovered(false)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleOpenDetail();
+        }
+      }}
     >
       {/* Top 10 Layout with Giant SVG / Stylized Numbers */}
       {isTop10 && rank !== undefined && (
@@ -79,8 +88,9 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
         <img
           src={imgUrl}
           alt={movie.name}
-          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 group-focus:scale-105"
           loading="lazy"
+          decoding="async"
           onError={(e) => {
             (e.target as HTMLImageElement).src =
               'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400&auto=format&fit=crop&q=80';

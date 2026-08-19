@@ -17,6 +17,8 @@ import { AdminDashboard } from './components/AdminDashboard';
 import { Navbar } from './components/Navbar';
 import { HeroBanner } from './components/HeroBanner';
 import { Top10Carousel } from './components/Top10Carousel';
+import { Theater3DCarousel } from './components/Theater3DCarousel';
+import { CinematicCarousel } from './components/CinematicCarousel';
 import { MovieRow } from './components/MovieRow';
 import { MovieDetailModal } from './components/MovieDetailModal';
 import { NetflixPlayer } from './components/NetflixPlayer';
@@ -61,11 +63,17 @@ export default function App() {
 
   // Movie collections for Home
   const [newUpdated, setNewUpdated] = useState<Movie[]>([]);
+  const [topHotAll, setTopHotAll] = useState<Movie[]>([]);
+  const [topSeries, setTopSeries] = useState<Movie[]>([]);
+  const [topSingle, setTopSingle] = useState<Movie[]>([]);
+  const [theaterList, setTheaterList] = useState<Movie[]>([]);
   const [seriesList, setSeriesList] = useState<Movie[]>([]);
   const [singleList, setSingleList] = useState<Movie[]>([]);
   const [animeList, setAnimeList] = useState<Movie[]>([]);
   const [actionList, setActionList] = useState<Movie[]>([]);
   const [romanceList, setRomanceList] = useState<Movie[]>([]);
+  const [horrorList, setHorrorList] = useState<Movie[]>([]);
+  const [sciFiList, setSciFiList] = useState<Movie[]>([]);
   const [koreanList, setKoreanList] = useState<Movie[]>([]);
   const [isLoadingHome, setIsLoadingHome] = useState<boolean>(true);
 
@@ -169,10 +177,36 @@ export default function App() {
 
     const loadHomeData = async () => {
       try {
-        const newRes = await movieApi.getNewUpdated(1).catch(() => null);
-        if (isMounted && newRes?.items?.length) {
-          setNewUpdated(newRes.items);
-          setIsLoadingHome(false);
+        const [newRes, trendingAllRes, topSeriesRes, topSingleRes, theaterRes] = await Promise.all([
+          movieApi.getNewUpdated(1, 36).catch(() => null),
+          movieApi.getTrending(12).catch(() => null),
+          movieApi.getTrending(10, 'series').catch(() => null),
+          movieApi.getTrending(10, 'single').catch(() => null),
+          movieApi.getTheaterMovies(1, 10).catch(() => null),
+        ]);
+
+        if (isMounted) {
+          const trendingItems = trendingAllRes?.items || [];
+          if (trendingItems.length) setTopHotAll(trendingItems);
+
+          if (theaterRes?.items?.length) setTheaterList(theaterRes.items);
+
+          if (newRes?.items?.length) {
+            // Lọc bỏ các phim đã có trong Top Hot (All, Series, Single) để tránh trùng lặp
+            const hotSlugs = new Set([
+              ...trendingItems.map((m: any) => m.slug),
+              ...(topSeriesRes?.items || []).map((m: any) => m.slug),
+              ...(topSingleRes?.items || []).map((m: any) => m.slug)
+            ]);
+            const filteredNew = newRes.items.filter((m: any) => !hotSlugs.has(m.slug));
+            setNewUpdated(filteredNew);
+          }
+
+          if (topSeriesRes?.items?.length) setTopSeries(topSeriesRes.items);
+          if (topSingleRes?.items?.length) setTopSingle(topSingleRes.items);
+          if (newRes?.items?.length || trendingItems.length || topSeriesRes?.items?.length || topSingleRes?.items?.length) {
+            setIsLoadingHome(false);
+          }
         }
 
         const [
@@ -181,13 +215,17 @@ export default function App() {
           animeRes,
           actionRes,
           romanceRes,
+          horrorRes,
+          sciFiRes,
           koreanRes,
         ] = await Promise.allSettled([
-          movieApi.getSeries(1, 16),
-          movieApi.getSingleMovies(1, 16),
+          movieApi.getSeries(1, 24),
+          movieApi.getSingleMovies(1, 24),
           movieApi.getAnime(1, 16),
           movieApi.getByGenre('hanh-dong', 1, 16),
           movieApi.getByGenre('tinh-cam', 1, 16),
+          movieApi.getByGenre('kinh-di', 1, 16),
+          movieApi.getByGenre('vien-tuong', 1, 16),
           movieApi.getByCountry('han-quoc', 1, 16),
         ]);
 
@@ -195,11 +233,13 @@ export default function App() {
           if (!newUpdated.length && newRes?.items?.length) {
             setNewUpdated(newRes.items);
           }
-          if (seriesRes.status === 'fulfilled') setSeriesList(seriesRes.value.items || []);
-          if (singleRes.status === 'fulfilled') setSingleList(singleRes.value.items || []);
+          if (seriesRes.status === 'fulfilled') setSeriesList(seriesRes.value.items?.slice(10) || []);
+          if (singleRes.status === 'fulfilled') setSingleList(singleRes.value.items?.slice(10) || []);
           if (animeRes.status === 'fulfilled') setAnimeList(animeRes.value.items || []);
           if (actionRes.status === 'fulfilled') setActionList(actionRes.value.items || []);
           if (romanceRes.status === 'fulfilled') setRomanceList(romanceRes.value.items || []);
+          if (horrorRes.status === 'fulfilled') setHorrorList(horrorRes.value.items || []);
+          if (sciFiRes.status === 'fulfilled') setSciFiList(sciFiRes.value.items || []);
           if (koreanRes.status === 'fulfilled') setKoreanList(koreanRes.value.items || []);
         }
       } catch (e) {
@@ -303,6 +343,98 @@ export default function App() {
     return myList.some((item) => item.movieSlug === slug);
   };
 
+  // Unified History/Back Button Manager
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      if (playingMovie) {
+        setPlayingMovie(null);
+        setSelectedMovieForDetail(playingMovie);
+        refreshProfileData();
+      } else if (selectedMovieForDetail) {
+        setSelectedMovieForDetail(null);
+      } else if (showAdminDashboard) {
+        setShowAdminDashboard(false);
+      } else if (showProfileSelector && currentAccount && activeProfile) {
+        setShowProfileSelector(false);
+      } else if (e.state && e.state.tab) {
+        setActiveTab(e.state.tab);
+      } else {
+        setActiveTab('home');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [playingMovie, selectedMovieForDetail, showAdminDashboard, showProfileSelector, currentAccount, activeProfile, refreshProfileData]);
+
+  // Wrapper for state changes
+  const handleTabChange = (tab: NavTab) => {
+    if (tab === activeTab) return;
+    window.history.pushState({ tab }, '', '');
+    setActiveTab(tab);
+    if (tab !== 'filter') setSearchKeyword('');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const openAdminDashboard = () => {
+    window.history.pushState({ overlay: 'admin' }, '', '');
+    setShowAdminDashboard(true);
+  };
+
+  const closeAdminDashboard = () => {
+    if (window.history.state && window.history.state.overlay === 'admin') {
+      window.history.back();
+    } else {
+      setShowAdminDashboard(false);
+    }
+  };
+
+  const openProfileSelector = () => {
+    window.history.pushState({ overlay: 'profiles' }, '', '');
+    setShowProfileSelector(true);
+  };
+
+  const openDetailModal = (movie: Movie) => {
+    if (!selectedMovieForDetail) {
+      window.history.pushState({ overlay: 'detail' }, '', '');
+    }
+    setSelectedMovieForDetail(movie);
+  };
+
+  const closeDetailModal = () => {
+    if (window.history.state && window.history.state.overlay === 'detail') {
+      window.history.back();
+    } else {
+      setSelectedMovieForDetail(null);
+    }
+  };
+
+  const openPlayerWithHistory = (
+    movie: Movie,
+    episode: MovieEpisode,
+    server: EpisodeServer,
+    servers: EpisodeServer[],
+    resumeTime: number
+  ) => {
+    setPlayingMovie(movie);
+    setPlayingEpisode(episode);
+    setPlayingServer(server);
+    setAllServers(servers);
+    setInitialResumeTime(resumeTime);
+    setSelectedMovieForDetail(null);
+    window.history.pushState({ playerOpen: true }, '', '');
+  };
+
+  const closePlayer = () => {
+    if (window.history.state && window.history.state.playerOpen) {
+      window.history.back();
+    } else {
+      const currentMovie = playingMovie;
+      setPlayingMovie(null);
+      setSelectedMovieForDetail(currentMovie);
+      refreshProfileData();
+    }
+  };
+
   // Start Playing a Movie directly
   const handlePlayMovie = async (movie: Movie) => {
     try {
@@ -328,19 +460,14 @@ export default function App() {
         const defaultServer = servers[0];
         const defaultEpisode = defaultServer.server_data[0];
 
-        setPlayingMovie(movieData);
-        setPlayingServer(defaultServer);
-        setPlayingEpisode(defaultEpisode);
-        setAllServers(servers);
-        setInitialResumeTime(resumeSeconds);
-        setSelectedMovieForDetail(null);
+        openPlayerWithHistory(movieData, defaultEpisode, defaultServer, servers, resumeSeconds);
       } else {
-        setSelectedMovieForDetail(movieData || movie);
+        openDetailModal(movieData || movie);
       }
     } catch (err: any) {
       console.error('Error starting movie playback', err);
       showToast(`Không thể tải phim: ${err?.message || 'Vui lòng thử lại sau'}`);
-      setSelectedMovieForDetail(movie);
+      openDetailModal(movie);
     }
   };
 
@@ -350,11 +477,6 @@ export default function App() {
     episode: MovieEpisode,
     server: EpisodeServer
   ) => {
-    setPlayingMovie(movie);
-    setPlayingEpisode(episode);
-    setPlayingServer(server);
-    setAllServers(movie.episodes || [server]);
-
     let resumeTime = 0;
     if (activeProfile) {
       const match = watchHistory.find(
@@ -364,8 +486,7 @@ export default function App() {
         resumeTime = match.currentTime;
       }
     }
-    setInitialResumeTime(resumeTime);
-    setSelectedMovieForDetail(null);
+    openPlayerWithHistory(movie, episode, server, movie.episodes || [server], resumeTime);
   };
 
   // Resume from History View
@@ -380,11 +501,7 @@ export default function App() {
           srv.server_data.find((e) => e.slug === item.episodeSlug) ||
           srv.server_data[0];
         if (ep) {
-          setPlayingMovie(detail.movie);
-          setPlayingEpisode(ep);
-          setPlayingServer(srv);
-          setAllServers(servers);
-          setInitialResumeTime(item.currentTime);
+          openPlayerWithHistory(detail.movie, ep, srv, servers, item.currentTime);
         }
       }
     } catch (e) {
@@ -405,9 +522,9 @@ export default function App() {
   const handleOpenDetailSlug = async (slug: string, name: string, thumb: string) => {
     try {
       const detail = await movieApi.getMovieDetail(slug);
-      setSelectedMovieForDetail(detail.movie);
+      openDetailModal(detail.movie);
     } catch (e) {
-      setSelectedMovieForDetail({
+      openDetailModal({
         name,
         slug,
         origin_name: '',
@@ -446,7 +563,7 @@ export default function App() {
   // Search Submit Handler
   const handleSearchSubmit = (keyword: string) => {
     setSearchKeyword(keyword);
-    setActiveTab('filter');
+    handleTabChange('filter');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -460,7 +577,7 @@ export default function App() {
     return (
       <AdminDashboard
         currentAccount={currentAccount}
-        onBackToCinema={() => setShowAdminDashboard(false)}
+        onBackToCinema={closeAdminDashboard}
         onShowToast={showToast}
       />
     );
@@ -482,7 +599,7 @@ export default function App() {
           onDeleteProfile={handleDeleteProfile}
           onLogout={handleLogout}
           onOpenAdminDashboard={
-            currentAccount.role === 'admin' ? () => setShowAdminDashboard(true) : undefined
+            currentAccount.role === 'admin' ? openAdminDashboard : undefined
           }
         />
       )}
@@ -495,12 +612,7 @@ export default function App() {
           currentServer={playingServer}
           allServers={allServers}
           initialTime={initialResumeTime}
-          onBack={() => {
-            const currentMovie = playingMovie;
-            setPlayingMovie(null);
-            setSelectedMovieForDetail(currentMovie);
-            refreshProfileData();
-          }}
+          onBack={closePlayer}
           onSelectEpisode={(ep, srv, resumeTime) => {
             setPlayingEpisode(ep);
             setPlayingServer(srv);
@@ -514,21 +626,17 @@ export default function App() {
       {!playingMovie && !showProfileSelector && (
         <Navbar
           activeTab={activeTab}
-          onTabChange={(tab) => {
-            setActiveTab(tab);
-            if (tab !== 'filter') setSearchKeyword('');
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          }}
+          onTabChange={handleTabChange}
           currentAccount={currentAccount}
           activeProfile={activeProfile}
           profiles={profiles}
           onSelectProfile={handleSelectProfile}
-          onSwitchProfileScreen={() => setShowProfileSelector(true)}
-          onSelectMovie={(movie) => setSelectedMovieForDetail(movie)}
+          onSwitchProfileScreen={openProfileSelector}
+          onSelectMovie={(movie) => openDetailModal(movie)}
           onPlayMovie={handlePlayMovie}
           onSearchSubmit={handleSearchSubmit}
           onOpenAdminDashboard={
-            currentAccount.role === 'admin' ? () => setShowAdminDashboard(true) : undefined
+            currentAccount.role === 'admin' ? openAdminDashboard : undefined
           }
           onLogout={handleLogout}
         />
@@ -544,7 +652,7 @@ export default function App() {
               <HeroBanner
                 movies={newUpdated.slice(0, 5)}
                 onPlay={handlePlayMovie}
-                onOpenDetail={(m) => setSelectedMovieForDetail(m)}
+                onOpenDetail={(m) => openDetailModal(m)}
                 onToggleMyList={handleToggleMyList}
                 isInMyList={isInMyList}
               />
@@ -558,7 +666,7 @@ export default function App() {
                       <span>Tiếp Tục Xem ({activeProfile?.name})</span>
                     </h2>
                     <button
-                      onClick={() => setActiveTab('history')}
+                      onClick={() => handleTabChange('history')}
                       className="text-xs text-slate-400 hover:text-white cursor-pointer"
                     >
                       Xem tất cả →
@@ -606,78 +714,26 @@ export default function App() {
 
               {/* Categorized Rows */}
               <div className="space-y-4">
+                <Theater3DCarousel
+                  title="Top Phim Hot Nhất Hôm Nay"
+                  movies={topHotAll}
+                  onOpenDetail={(m) => openDetailModal(m)}
+                  onPlay={handlePlayMovie}
+                />
+
                 <Top10Carousel
-                  movies={newUpdated.slice(0, 10)}
-                  onOpenDetail={(m) => setSelectedMovieForDetail(m)}
+                  title="Top 10 Phim Bộ Hôm Nay"
+                  movies={topSeries}
+                  onOpenDetail={(m) => openDetailModal(m)}
                   onPlay={handlePlayMovie}
-                />
-
-                <MovieRow
-                  title="Phim Mới Cập Nhật"
-                  icon={<Flame className="w-5 h-5 text-amber-400" />}
-                  movies={newUpdated}
-                  onOpenDetail={(m) => setSelectedMovieForDetail(m)}
-                  onSelectMovie={(m) => setSelectedMovieForDetail(m)}
-                  onPlay={handlePlayMovie}
-                  onPlayMovie={handlePlayMovie}
-                  onToggleMyList={handleToggleMyList}
-                  isInMyList={isInMyList}
-                />
-
-                <MovieRow
-                  title="Phim Bộ Hot"
-                  icon={<Tv className="w-5 h-5 text-sky-400" />}
-                  movies={seriesList}
-                  onOpenDetail={(m) => setSelectedMovieForDetail(m)}
-                  onSelectMovie={(m) => setSelectedMovieForDetail(m)}
-                  onPlay={handlePlayMovie}
-                  onPlayMovie={handlePlayMovie}
-                  onToggleMyList={handleToggleMyList}
-                  isInMyList={isInMyList}
-                />
-
-                <MovieRow
-                  title="Phim Lẻ Đặc Sắc"
-                  icon={<Film className="w-5 h-5 text-indigo-400" />}
-                  movies={singleList}
-                  onOpenDetail={(m) => setSelectedMovieForDetail(m)}
-                  onSelectMovie={(m) => setSelectedMovieForDetail(m)}
-                  onPlay={handlePlayMovie}
-                  onPlayMovie={handlePlayMovie}
-                  onToggleMyList={handleToggleMyList}
-                  isInMyList={isInMyList}
-                />
-
-                <MovieRow
-                  title="Hành Động Đỉnh Cao"
-                  icon={<Sword className="w-5 h-5 text-red-400" />}
-                  movies={actionList}
-                  onOpenDetail={(m) => setSelectedMovieForDetail(m)}
-                  onSelectMovie={(m) => setSelectedMovieForDetail(m)}
-                  onPlay={handlePlayMovie}
-                  onPlayMovie={handlePlayMovie}
-                  onToggleMyList={handleToggleMyList}
-                  isInMyList={isInMyList}
                 />
 
                 <MovieRow
                   title="Anime & Hoạt Hình"
                   icon={<Smile className="w-5 h-5 text-emerald-400" />}
                   movies={animeList}
-                  onOpenDetail={(m) => setSelectedMovieForDetail(m)}
-                  onSelectMovie={(m) => setSelectedMovieForDetail(m)}
-                  onPlay={handlePlayMovie}
-                  onPlayMovie={handlePlayMovie}
-                  onToggleMyList={handleToggleMyList}
-                  isInMyList={isInMyList}
-                />
-
-                <MovieRow
-                  title="Tình Cảm & Lãng Mạn"
-                  icon={<Heart className="w-5 h-5 text-pink-400" />}
-                  movies={romanceList}
-                  onOpenDetail={(m) => setSelectedMovieForDetail(m)}
-                  onSelectMovie={(m) => setSelectedMovieForDetail(m)}
+                  onOpenDetail={(m) => openDetailModal(m)}
+                  onSelectMovie={(m) => openDetailModal(m)}
                   onPlay={handlePlayMovie}
                   onPlayMovie={handlePlayMovie}
                   onToggleMyList={handleToggleMyList}
@@ -688,12 +744,110 @@ export default function App() {
                   title="Điện Ảnh Hàn Quốc"
                   icon={<Clapperboard className="w-5 h-5 text-blue-400" />}
                   movies={koreanList}
-                  onOpenDetail={(m) => setSelectedMovieForDetail(m)}
-                  onSelectMovie={(m) => setSelectedMovieForDetail(m)}
+                  onOpenDetail={(m) => openDetailModal(m)}
+                  onSelectMovie={(m) => openDetailModal(m)}
                   onPlay={handlePlayMovie}
                   onPlayMovie={handlePlayMovie}
                   onToggleMyList={handleToggleMyList}
                   isInMyList={isInMyList}
+                />
+
+                <MovieRow
+                  title="Hành Động Đỉnh Cao"
+                  icon={<Sword className="w-5 h-5 text-red-400" />}
+                  movies={actionList}
+                  onOpenDetail={(m) => openDetailModal(m)}
+                  onSelectMovie={(m) => openDetailModal(m)}
+                  onPlay={handlePlayMovie}
+                  onPlayMovie={handlePlayMovie}
+                  onToggleMyList={handleToggleMyList}
+                  isInMyList={isInMyList}
+                />
+
+                <Top10Carousel
+                  title="Top 10 Phim Lẻ Hôm Nay"
+                  movies={topSingle}
+                  onOpenDetail={(m) => openDetailModal(m)}
+                  onPlay={handlePlayMovie}
+                />
+
+                <MovieRow
+                  title="Phim Mới Cập Nhật"
+                  icon={<Flame className="w-5 h-5 text-amber-400" />}
+                  movies={newUpdated}
+                  onOpenDetail={(m) => openDetailModal(m)}
+                  onSelectMovie={(m) => openDetailModal(m)}
+                  onPlay={handlePlayMovie}
+                  onPlayMovie={handlePlayMovie}
+                  onToggleMyList={handleToggleMyList}
+                  isInMyList={isInMyList}
+                />
+
+                <MovieRow
+                  title="Phim Bộ Hot"
+                  icon={<Tv className="w-5 h-5 text-sky-400" />}
+                  movies={seriesList}
+                  onOpenDetail={(m) => openDetailModal(m)}
+                  onSelectMovie={(m) => openDetailModal(m)}
+                  onPlay={handlePlayMovie}
+                  onPlayMovie={handlePlayMovie}
+                  onToggleMyList={handleToggleMyList}
+                  isInMyList={isInMyList}
+                />
+
+                <MovieRow
+                  title="Phim Lẻ Đặc Sắc"
+                  icon={<Film className="w-5 h-5 text-indigo-400" />}
+                  movies={singleList}
+                  onOpenDetail={(m) => openDetailModal(m)}
+                  onSelectMovie={(m) => openDetailModal(m)}
+                  onPlay={handlePlayMovie}
+                  onPlayMovie={handlePlayMovie}
+                  onToggleMyList={handleToggleMyList}
+                  isInMyList={isInMyList}
+                />
+
+                <MovieRow
+                  title="Tình Cảm & Lãng Mạn"
+                  icon={<Heart className="w-5 h-5 text-pink-400" />}
+                  movies={romanceList}
+                  onOpenDetail={(m) => openDetailModal(m)}
+                  onSelectMovie={(m) => openDetailModal(m)}
+                  onPlay={handlePlayMovie}
+                  onPlayMovie={handlePlayMovie}
+                  onToggleMyList={handleToggleMyList}
+                  isInMyList={isInMyList}
+                />
+
+                <MovieRow
+                  title="Kinh Dị & Bí Ẩn"
+                  icon={<Flame className="w-5 h-5 text-purple-400" />}
+                  movies={horrorList}
+                  onOpenDetail={(m) => openDetailModal(m)}
+                  onSelectMovie={(m) => openDetailModal(m)}
+                  onPlay={handlePlayMovie}
+                  onPlayMovie={handlePlayMovie}
+                  onToggleMyList={handleToggleMyList}
+                  isInMyList={isInMyList}
+                />
+
+                <MovieRow
+                  title="Viễn Tưởng & Phiêu Lưu"
+                  icon={<Sparkles className="w-5 h-5 text-cyan-400" />}
+                  movies={sciFiList}
+                  onOpenDetail={(m) => openDetailModal(m)}
+                  onSelectMovie={(m) => openDetailModal(m)}
+                  onPlay={handlePlayMovie}
+                  onPlayMovie={handlePlayMovie}
+                  onToggleMyList={handleToggleMyList}
+                  isInMyList={isInMyList}
+                />
+
+                <CinematicCarousel
+                  title="Mãn nhãn phim chiếu rạp 🍿"
+                  movies={theaterList}
+                  onOpenDetail={(m) => openDetailModal(m)}
+                  onPlay={handlePlayMovie}
                 />
               </div>
             </>
@@ -705,8 +859,8 @@ export default function App() {
               <FilterSection
                 key="tab-series"
                 fixedType="series"
-                onOpenDetail={(m) => setSelectedMovieForDetail(m)}
-                onSelectMovie={(m) => setSelectedMovieForDetail(m)}
+                onOpenDetail={(m) => openDetailModal(m)}
+                onSelectMovie={(m) => openDetailModal(m)}
                 onPlay={handlePlayMovie}
                 onPlayMovie={handlePlayMovie}
                 onToggleMyList={handleToggleMyList}
@@ -721,8 +875,8 @@ export default function App() {
               <FilterSection
                 key="tab-single"
                 fixedType="single"
-                onOpenDetail={(m) => setSelectedMovieForDetail(m)}
-                onSelectMovie={(m) => setSelectedMovieForDetail(m)}
+                onOpenDetail={(m) => openDetailModal(m)}
+                onSelectMovie={(m) => openDetailModal(m)}
                 onPlay={handlePlayMovie}
                 onPlayMovie={handlePlayMovie}
                 onToggleMyList={handleToggleMyList}
@@ -737,8 +891,8 @@ export default function App() {
               <FilterSection
                 key="tab-anime"
                 fixedType="anime"
-                onOpenDetail={(m) => setSelectedMovieForDetail(m)}
-                onSelectMovie={(m) => setSelectedMovieForDetail(m)}
+                onOpenDetail={(m) => openDetailModal(m)}
+                onSelectMovie={(m) => openDetailModal(m)}
                 onPlay={handlePlayMovie}
                 onPlayMovie={handlePlayMovie}
                 onToggleMyList={handleToggleMyList}
@@ -753,8 +907,8 @@ export default function App() {
               <FilterSection
                 key="tab-tv-shows"
                 fixedType="tv-shows"
-                onOpenDetail={(m) => setSelectedMovieForDetail(m)}
-                onSelectMovie={(m) => setSelectedMovieForDetail(m)}
+                onOpenDetail={(m) => openDetailModal(m)}
+                onSelectMovie={(m) => openDetailModal(m)}
                 onPlay={handlePlayMovie}
                 onPlayMovie={handlePlayMovie}
                 onToggleMyList={handleToggleMyList}
@@ -768,8 +922,8 @@ export default function App() {
             <div className="pt-20">
               <FilterSection
                 initialKeyword={searchKeyword}
-                onOpenDetail={(m) => setSelectedMovieForDetail(m)}
-                onSelectMovie={(m) => setSelectedMovieForDetail(m)}
+                onOpenDetail={(m) => openDetailModal(m)}
+                onSelectMovie={(m) => openDetailModal(m)}
                 onPlay={handlePlayMovie}
                 onPlayMovie={handlePlayMovie}
                 onToggleMyList={handleToggleMyList}
@@ -798,7 +952,7 @@ export default function App() {
                   await refreshProfileData();
                   showToast('Đã xóa khỏi danh sách yêu thích');
                 }}
-                onExploreClick={() => setActiveTab('filter')}
+                onExploreClick={() => handleTabChange('filter')}
               />
             </div>
           )}
@@ -824,7 +978,7 @@ export default function App() {
                   await refreshProfileData();
                   showToast('Đã dọn sạch lịch sử xem của hồ sơ');
                 }}
-                onExploreClick={() => setActiveTab('home')}
+                onExploreClick={() => handleTabChange('home')}
               />
             </div>
           )}
@@ -840,12 +994,12 @@ export default function App() {
       {selectedMovieForDetail && (
         <MovieDetailModal
           movie={selectedMovieForDetail}
-          onClose={() => setSelectedMovieForDetail(null)}
+          onClose={closeDetailModal}
           onPlayMovie={handlePlayMovie}
           onPlayEpisode={handlePlayEpisode}
           onToggleMyList={handleToggleMyList}
           isInMyList={isInMyList}
-          onSelectRelatedMovie={(m) => setSelectedMovieForDetail(m)}
+          onSelectRelatedMovie={(m) => openDetailModal(m)}
         />
       )}
 
@@ -885,17 +1039,17 @@ export default function App() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-1 text-slate-400">
               <div className="space-y-1.5">
                 <p className="text-slate-200 font-semibold uppercase text-[11px] tracking-wider">Khám Phá</p>
-                <p onClick={() => setActiveTab('home')} className="hover:text-sky-300 cursor-pointer transition-colors">Trang Chủ</p>
-                <p onClick={() => setActiveTab('series')} className="hover:text-sky-300 cursor-pointer transition-colors">Phim Bộ</p>
-                <p onClick={() => setActiveTab('single')} className="hover:text-sky-300 cursor-pointer transition-colors">Phim Lẻ</p>
-                <p onClick={() => setActiveTab('anime')} className="hover:text-sky-300 cursor-pointer transition-colors">Anime & Hoạt Hình</p>
+                <p onClick={() => handleTabChange('home')} className="hover:text-sky-300 cursor-pointer transition-colors">Trang Chủ</p>
+                <p onClick={() => handleTabChange('series')} className="hover:text-sky-300 cursor-pointer transition-colors">Phim Bộ</p>
+                <p onClick={() => handleTabChange('single')} className="hover:text-sky-300 cursor-pointer transition-colors">Phim Lẻ</p>
+                <p onClick={() => handleTabChange('anime')} className="hover:text-sky-300 cursor-pointer transition-colors">Anime & Hoạt Hình</p>
               </div>
               <div className="space-y-1.5">
                 <p className="text-slate-200 font-semibold uppercase text-[11px] tracking-wider">Hồ Sơ Của Bạn</p>
                 <p onClick={() => setShowProfileSelector(true)} className="hover:text-sky-300 cursor-pointer transition-colors">5 Hồ Sơ Người Xem</p>
-                <p onClick={() => setActiveTab('my-list')} className="hover:text-sky-300 cursor-pointer transition-colors">Danh Sách Đã Lưu</p>
-                <p onClick={() => setActiveTab('history')} className="hover:text-sky-300 cursor-pointer transition-colors">Lịch Sử & Tiến Độ Xem</p>
-                <p onClick={() => setActiveTab('filter')} className="hover:text-sky-300 cursor-pointer transition-colors">Tìm Kiếm Nâng Cao</p>
+                <p onClick={() => handleTabChange('my-list')} className="hover:text-sky-300 cursor-pointer transition-colors">Danh Sách Đã Lưu</p>
+                <p onClick={() => handleTabChange('history')} className="hover:text-sky-300 cursor-pointer transition-colors">Lịch Sử & Tiến Độ Xem</p>
+                <p onClick={() => handleTabChange('filter')} className="hover:text-sky-300 cursor-pointer transition-colors">Tìm Kiếm Nâng Cao</p>
               </div>
               <div className="space-y-1.5">
                 <p className="text-slate-200 font-semibold uppercase text-[11px] tracking-wider">Công Nghệ</p>
@@ -940,14 +1094,11 @@ export default function App() {
       {!showProfileSelector && !playingMovie && (
         <MobileBottomNav
           activeTab={activeTab}
-          onTabChange={(tab) => {
-            setActiveTab(tab);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          }}
+          onTabChange={handleTabChange}
           activeProfile={activeProfile}
           profiles={profiles}
           onSelectProfile={handleSelectProfile}
-          onSwitchProfileScreen={() => setShowProfileSelector(true)}
+          onSwitchProfileScreen={openProfileSelector}
         />
       )}
     </div>
