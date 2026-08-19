@@ -189,8 +189,26 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const handleOpenSearch = () => {
     setIsSearchOpen(true);
-    setTimeout(() => searchInputRef.current?.focus(), 100);
+    // Instant focus via microtask & multiple fallback frames for smooth animation
+    requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+    });
+    setTimeout(() => {
+      searchInputRef.current?.focus();
+    }, 50);
+    setTimeout(() => {
+      searchInputRef.current?.focus();
+    }, 180);
   };
+
+  useEffect(() => {
+    if (isSearchOpen) {
+      const timer = setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [isSearchOpen]);
 
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && searchQuery.trim()) {
@@ -321,11 +339,15 @@ export const Navbar: React.FC<NavbarProps> = ({
                   transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
                   className="hidden sm:flex items-center bg-[#131f37]/98 border border-blue-600/70 rounded-full px-3 py-1.5 shadow-2xl shadow-blue-950/60 backdrop-blur-md"
                 >
-                  <Search className="w-4 h-4 text-sky-400 shrink-0 mr-1.5" />
+                  <Search
+                    className="w-4 h-4 text-sky-400 shrink-0 mr-1.5 cursor-pointer hover:text-sky-300"
+                    onClick={() => searchInputRef.current?.focus()}
+                  />
                   <input
                     ref={searchInputRef}
                     id="navbar-search-input"
                     type="text"
+                    autoFocus
                     placeholder="Tìm tên phim, diễn viên..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}

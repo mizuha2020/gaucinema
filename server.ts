@@ -334,6 +334,7 @@ async function startServer() {
         logo: string;
         group: string;
         url: string;
+        drmKey?: string;
       }> = [];
 
       // Handle JSON source (common for some bit.ly redirects)
@@ -352,6 +353,7 @@ async function startServer() {
       let currentGroup = "Truyền Hình";
       let currentLogo = "";
       let currentName = "";
+      let currentKey = "";
 
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
@@ -368,6 +370,8 @@ async function startServer() {
           if (commaIndex !== -1) {
             currentName = line.substring(commaIndex + 1).trim();
           }
+        } else if (line.startsWith("#KODIPROP:inputstream.adaptive.license_key=")) {
+          currentKey = line.replace("#KODIPROP:inputstream.adaptive.license_key=", "").trim();
         } else if (line && !line.startsWith("#")) {
           if (currentName) {
             channels.push({
@@ -375,10 +379,12 @@ async function startServer() {
               logo: currentLogo || "https://images.unsplash.com/photo-1593784991095-a205069470b6?w=100&auto=format&fit=crop&q=60",
               group: currentGroup,
               url: line,
+              drmKey: currentKey || undefined,
             });
           }
           currentName = "";
           currentLogo = "";
+          currentKey = "";
         }
       }
 

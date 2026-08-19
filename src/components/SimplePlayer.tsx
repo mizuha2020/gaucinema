@@ -114,7 +114,15 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
   const [hud, setHud] = useState<{ type: 'volume' | 'brightness'; value: number } | null>(null);
   const hudTimer = useRef<NodeJS.Timeout | null>(null);
 
-  const touchStart = useRef<{ x: number; y: number; mode: 'brightness' | 'volume'; startVal: number } | null>(null);
+  const touchData = useRef<{
+    x: number;
+    y: number;
+    mode: 'brightness' | 'volume';
+    startVal: number;
+    startTime: number;
+    hasMoved: boolean;
+  } | null>(null);
+  const lastTouchTapTime = useRef<number>(0);
 
   const showHud = useCallback((type: 'volume' | 'brightness', value: number) => {
     if (hudTimer.current) clearTimeout(hudTimer.current);
@@ -446,29 +454,36 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     resetControlsTimer,
   ]);
 
-  // Touch gesture (giữ nguyên)
+  // Touch gesture & tap-to-toggle controls (mobile/tablet)
   const handleTouchStart = (e: React.TouchEvent) => {
     const target = e.target as HTMLElement;
-    if (target.closest('button, input, .controls-area')) return;
+    if (target.closest('button, input, .controls-area, a, .player-menu-btn, .player-menu-content')) return;
     if (e.touches.length !== 1) return;
 
     const touch = e.touches[0];
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
     const isLeft = touch.clientX < rect.left + rect.width / 2;
-    touchStart.current = {
+    touchData.current = {
       x: touch.clientX,
       y: touch.clientY,
       mode: isLeft ? 'brightness' : 'volume',
       startVal: isLeft ? brightness : volume,
+      startTime: Date.now(),
+      hasMoved: false,
     };
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (!touchStart.current || e.touches.length !== 1) return;
+    if (!touchData.current || e.touches.length !== 1) return;
     const touch = e.touches[0];
-    const deltaY = touchStart.current.y - touch.clientY;
-    const deltaX = Math.abs(touch.clientX - touchStart.current.x);
+    const deltaY = touchData.current.y - touch.clientY;
+    const deltaX = Math.abs(touch.clientX - touchData.current.x);
+
+    if (Math.abs(deltaY) > 8 || deltaX > 8) {
+      touchData.current.hasMoved = true;
+    }
+
     if (Math.abs(deltaY) < 15 || deltaX > Math.abs(deltaY) * 0.7) return;
 
     const container = containerRef.current;
@@ -476,17 +491,42 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     const height = container.clientHeight;
     const ratio = deltaY / (height * 0.6);
 
-    if (touchStart.current.mode === 'brightness') {
-      const newVal = Math.min(2, Math.max(0.2, touchStart.current.startVal + ratio * 1.5));
+    if (touchData.current.mode === 'brightness') {
+      const newVal = Math.min(2, Math.max(0.2, touchData.current.startVal + ratio * 1.5));
       changeBrightness(newVal, true);
     } else {
-      const newVal = Math.min(1, Math.max(0, touchStart.current.startVal + ratio));
+      const newVal = Math.min(1, Math.max(0, touchData.current.startVal + ratio));
       changeVolume(newVal, true);
     }
   };
 
   const handleTouchEnd = () => {
-    touchStart.current = null;
+    if (touchData.current) {
+      const elapsed = Date.now() - touchData.current.startTime;
+      // On mobile/touch: a clean tap (no swipe) only toggles overlay controls, does NOT play/pause
+      if (!touchData.current.hasMoved && elapsed < 350) {
+        lastTouchTapTime.current = Date.now();
+        setShowControls((prev) => {
+          const next = !prev;
+          if (next) {
+            resetControlsTimer();
+          } else {
+            if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
+          }
+          return next;
+        });
+      }
+      touchData.current = null;
+    }
+  };
+
+  const handleVideoClick = (e: React.MouseEvent) => {
+    // If click was triggered by recent touch tap on touch screen, do not toggle play
+    const isRecentTouch = Date.now() - lastTouchTapTime.current < 450;
+    if (isRecentTouch) return;
+
+    // On PC (mouse click): play / pause
+    togglePlay();
   };
 
   const formatTime = (seconds: number) => {
@@ -563,7 +603,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
               if (nextEpisode) goToNextEpisode();
             }}
             playsInline
-            onClick={togglePlay}
+            onClick={handleVideoClick}
           />
 
           {isLoading && (
@@ -676,16 +716,36 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                   >
                     <RotateCw className="w-5 h-5" />
                   </button>
-                  <button
-                    onClick={toggleMute}
-                    className="text-white hover:text-blue-400 p-1"
-                  >
-                    {isMuted || volume === 0 ? (
-                      <VolumeX className="w-5 h-5" />
-                    ) : (
-                      <Volume2 className="w-5 h-5" />
-                    )}
-                  </button>
+                  <div className="relative flex items-center group/vol">
+                    <button
+                      type="button"
+                      onClick={toggleMute}
+                      className="text-white hover:text-blue-400 p-1 cursor-pointer transition-colors"
+                      title={isMuted || volume === 0 ? 'Bật âm thanh (M)' : 'Tắt âm thanh (M)'}
+                    >
+                      {isMuted || volume === 0 ? (
+                        <VolumeX className="w-5 h-5 text-red-400" />
+                      ) : (
+                        <Volume2 className="w-5 h-5" />
+                      )}
+                    </button>
+
+                    {/* PC volume slider on hover */}
+                    <div className="hidden md:flex items-center w-0 opacity-0 group-hover/vol:w-20 group-hover/vol:opacity-100 transition-all duration-200 ease-out overflow-hidden ml-0 group-hover/vol:ml-1">
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={isMuted ? 0 : volume}
+                        onChange={(e) => {
+                          changeVolume(parseFloat(e.target.value));
+                        }}
+                        className="w-18 h-1 bg-slate-600 rounded-lg cursor-pointer appearance-none accent-blue-500 hover:accent-sky-400"
+                        title={`Âm lượng: ${Math.round((isMuted ? 0 : volume) * 100)}%`}
+                      />
+                    </div>
+                  </div>
                   <span className="text-white text-sm font-mono ml-1">
                     {formatTime(currentTime)} / {formatTime(duration)}
                   </span>

@@ -133,6 +133,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     let currentGroup = 'Truyền Hình';
     let currentLogo = '';
     let currentName = '';
+    let currentKey = '';
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -147,6 +148,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         if (commaIndex !== -1) {
           currentName = line.substring(commaIndex + 1).trim();
         }
+      } else if (line.startsWith('#KODIPROP:inputstream.adaptive.license_key=')) {
+        currentKey = line.replace('#KODIPROP:inputstream.adaptive.license_key=', '').trim();
       } else if (line && !line.startsWith('#')) {
         if (currentName) {
           list.push({
@@ -154,10 +157,12 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
             logo: currentLogo || 'https://images.unsplash.com/photo-1593784991095-a205069470b6?w=100&auto=format&fit=crop&q=60',
             group: currentGroup,
             url: line,
+            drmKey: currentKey || undefined,
           });
         }
         currentName = '';
         currentLogo = '';
+        currentKey = '';
       }
     }
     return list;
@@ -180,11 +185,11 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         }
       } catch {}
 
-      // 1. Try Backend Proxy with 4s timeout
+      // 1. Try Backend Proxy with 4s timeout (Backend prioritizes bit.ly/tinhlagitivi)
       let loadedChannels: Channel[] = [];
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 4000);
+        const timer = setTimeout(() => controller.abort(), 4500);
         const res = await fetch(getFullApiUrl('/api/tv/channels'), { signal: controller.signal });
         clearTimeout(timer);
         if (res.ok) {
@@ -197,12 +202,12 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         console.warn('Backend /api/tv/channels failed, falling back to direct IPTV sources...');
       }
 
-      // 2. Direct client-side IPTV source fallbacks if server returns 0
+      // 2. Direct client-side IPTV source fallbacks (Prioritizing bit.ly/tinhlagitivi)
       if (loadedChannels.length === 0) {
         const directSources = [
+          'https://bit.ly/tinhlagitivi',
           'https://raw.githubusercontent.com/iptv-org/iptv/master/streams/vn.m3u',
           'https://iptv-org.github.io/iptv/countries/vn.m3u',
-          'https://bit.ly/tinhlagitivi',
         ];
 
         for (const url of directSources) {
@@ -260,11 +265,18 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
 
     // Cleanup previous players
     if (hlsRef.current) {
-      hlsRef.current.destroy();
+      try {
+        hlsRef.current.destroy();
+      } catch (e) {}
       hlsRef.current = null;
     }
     if (dashPlayerRef.current) {
-      dashPlayerRef.current.reset();
+      try {
+        dashPlayerRef.current.destroy();
+      } catch (e) {}
+      try {
+        dashPlayerRef.current.reset();
+      } catch (e) {}
       dashPlayerRef.current = null;
     }
 
@@ -277,6 +289,40 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         
         // Suppress Dash.js internal logs to prevent AI Studio error catcher from triggering
         player.updateSettings({ debug: { logLevel: dashjs.Debug.LOG_LEVEL_NONE } });
+
+        if (activeChannel.drmKey) {
+          try {
+            if (activeChannel.drmKey.trim().startsWith('{')) {
+              const parsedKey = JSON.parse(activeChannel.drmKey);
+              if (parsedKey.keys && Array.isArray(parsedKey.keys)) {
+                const clearkeyMap: Record<string, string> = {};
+                for (const item of parsedKey.keys) {
+                  if (item.kid && item.k) {
+                    clearkeyMap[item.kid] = item.k;
+                  }
+                }
+                if (Object.keys(clearkeyMap).length > 0) {
+                  player.setProtectionData({
+                    'org.w3.clearkey': {
+                      clearkeys: clearkeyMap,
+                    },
+                  });
+                }
+              }
+            } else if (activeChannel.drmKey.includes(':')) {
+              const [kid, k] = activeChannel.drmKey.split(':');
+              player.setProtectionData({
+                'org.w3.clearkey': {
+                  clearkeys: {
+                    [kid.trim()]: k.trim(),
+                  },
+                },
+              });
+            }
+          } catch (e) {
+            console.warn('Error applying ClearKey DRM config:', e);
+          }
+        }
         
         player.initialize(video, streamUrl, true);
         player.on(dashjs.MediaPlayer.events.CAN_PLAY, () => {
@@ -336,11 +382,18 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
 
     return () => {
       if (hlsRef.current) {
-        hlsRef.current.destroy();
+        try {
+          hlsRef.current.destroy();
+        } catch (e) {}
         hlsRef.current = null;
       }
       if (dashPlayerRef.current) {
-        dashPlayerRef.current.reset();
+        try {
+          dashPlayerRef.current.destroy();
+        } catch (e) {}
+        try {
+          dashPlayerRef.current.reset();
+        } catch (e) {}
         dashPlayerRef.current = null;
       }
     };
