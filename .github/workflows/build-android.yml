@@ -51,9 +51,9 @@ jobs:
           ls -l assets/resources/
           
           for file in assets/resources/*.png; do
-            echo "Converting $file to real PNG..."
-            # Using magick or convert depending on version
-            magick "$file" "${file}.tmp.png" || convert "$file" "${file}.tmp.png"
+            echo "Converting $file (JPEG content) to real PNG..."
+            # Force JPEG reading by prefixing with jpg:
+            convert "jpg:$file" "${file}.tmp.png"
             mv "${file}.tmp.png" "$file"
           done
           
