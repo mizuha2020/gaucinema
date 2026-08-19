@@ -15,7 +15,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'zulu'
           java-version: '21'
@@ -39,13 +39,15 @@ jobs:
           npx cap sync android
 
       - name: Generate Android Assets
-        run: npx @capacitor/assets generate --android --assetPath resources
+        run: |
+          npx @capacitor/assets generate --android --assetPath assets
+          npx cap sync android
 
       - name: Build Android APK with Gradle
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace
+          ./gradlew clean assembleDebug --stacktrace
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4

@@ -236,7 +236,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <div className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl overflow-hidden border-2 border-blue-500/50 shadow-lg shadow-blue-500/20 group-hover:scale-110 group-hover:border-blue-400 transition-all duration-300">
               <img
-                src="/src/assets/images/app_logo.jpg"
+                src="/app_logo.jpg"
                 alt="Gấu Cinema Logo"
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"

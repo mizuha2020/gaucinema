@@ -53,7 +53,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       >
         <div className="relative w-20 h-20 sm:w-24 sm:h-24 mb-4 rounded-3xl overflow-hidden border-2 border-blue-500/30 shadow-2xl shadow-blue-500/20">
           <img
-            src="/src/assets/images/app_logo.jpg"
+            src="/app_logo.jpg"
             alt="Gấu Cinema Logo"
             className="w-full h-full object-cover"
             referrerPolicy="no-referrer"
