@@ -96,7 +96,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
                 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
             }}
           />
-          {/* Multi-layered QTB navy cinematic gradients */}
+          {/* Multi-layered Gấu navy cinematic gradients */}
           <div className="absolute inset-0 bg-gradient-to-r from-[#0b1329] via-[#0b1329]/80 to-transparent w-full md:w-3/4" />
           <div className="absolute inset-0 bg-gradient-to-t from-[#0b1329] via-[#0b1329]/30 to-transparent" />
           <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-[#070b16]/90 to-transparent" />
@@ -109,7 +109,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           {/* Badges / Category pill */}
           <div className="flex items-center flex-wrap gap-2 text-xs font-semibold">
             <span className="flex items-center gap-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-2.5 py-0.5 rounded-full font-bold tracking-wide text-[11px] uppercase shadow-lg shadow-blue-600/30">
-              <Sparkles className="w-3 h-3 text-sky-200" /> QTB NỔI BẬT
+              <Sparkles className="w-3 h-3 text-sky-200" /> Gấu NỔI BẬT
             </span>
             {currentMovie.quality && (
               <span className="bg-slate-800/90 text-sky-200 border border-blue-900/60 px-2 py-0.5 rounded-md">
@@ -145,7 +145,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           <p className="text-xs sm:text-sm text-slate-300 leading-relaxed line-clamp-2 sm:line-clamp-3 max-w-xl drop-shadow-md">
             {currentMovie.content
               ? currentMovie.content.replace(/<[^>]*>?/gm, '')
-              : `Khám phá câu chuyện lôi cuốn trong siêu phẩm "${currentMovie.name}". Trải nghiệm trọn vẹn trên QTB Cinema với chất lượng hình ảnh sắc nét, âm thanh sống động.`}
+              : `Khám phá câu chuyện lôi cuốn trong siêu phẩm "${currentMovie.name}". Trải nghiệm trọn vẹn trên Gấu Cinema với chất lượng hình ảnh sắc nét, âm thanh sống động.`}
           </p>
 
           {/* Action Buttons */}

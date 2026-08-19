@@ -21,7 +21,7 @@ import { Theater3DCarousel } from './components/Theater3DCarousel';
 import { CinematicCarousel } from './components/CinematicCarousel';
 import { MovieRow } from './components/MovieRow';
 import { MovieDetailModal } from './components/MovieDetailModal';
-import { NetflixPlayer } from './components/NetflixPlayer';
+import { SimplePlayer } from './components/SimplePlayer';
 import { ProfileSelector } from './components/ProfileSelector';
 import { FilterSection } from './components/FilterSection';
 import { MyListView } from './components/MyListView';
@@ -29,6 +29,7 @@ import { HistoryView } from './components/HistoryView';
 import { LiveTvView } from './components/LiveTvView';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { InitialLoader } from './components/InitialLoader';
+import { App as CapApp } from '@capacitor/app';
 import {
   Sparkles,
   Flame,
@@ -261,7 +262,7 @@ export default function App() {
   const handleLoginSuccess = (account: Account) => {
     setCurrentAccount(account);
     setShowAdminDashboard(false);
-    showToast(`Chào mừng @${account.username} đến với QTB Cinema!`);
+    showToast(`Chào mừng @${account.username} đến với Gấu Cinema!`);
   };
 
   const handleLogout = () => {
@@ -363,7 +364,27 @@ export default function App() {
       }
     };
     window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    
+    // Capacitor Back Button for Android
+    const backListener = CapApp.addListener('backButton', ({ canGoBack }) => {
+      if (playingMovie || selectedMovieForDetail || showAdminDashboard || (showProfileSelector && currentAccount && activeProfile)) {
+        window.history.back();
+      } else if (activeTab !== 'home') {
+        window.history.back();
+      } else {
+        // If we are on home tab and no overlays, let it exit or minimize
+        if (canGoBack) {
+          window.history.back();
+        } else {
+          CapApp.exitApp();
+        }
+      }
+    });
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      backListener.then(l => l.remove());
+    };
   }, [playingMovie, selectedMovieForDetail, showAdminDashboard, showProfileSelector, currentAccount, activeProfile, refreshProfileData]);
 
   // Wrapper for state changes
@@ -606,7 +627,7 @@ export default function App() {
 
       {/* 2. Fullscreen HLS Video Player (0 Ads) */}
       {playingMovie && playingEpisode && playingServer && (
-        <NetflixPlayer
+        <SimplePlayer
           movie={playingMovie}
           currentEpisode={playingEpisode}
           currentServer={playingServer}
@@ -1018,7 +1039,7 @@ export default function App() {
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pb-6 border-b border-slate-900">
               <div className="flex items-center gap-3">
                 <span className="text-2xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-300 to-cyan-400">
-                  QTB CINEMA
+                  Gấu Cinema HD
                 </span>
                 <span className="text-slate-600">|</span>
                 <span className="text-slate-300 font-semibold">Rạp Phim Cá Nhân Gia Đình</span>
@@ -1083,7 +1104,7 @@ export default function App() {
 
             {/* Bottom Copyright Note */}
             <div className="pt-2 border-t border-slate-900/90 flex flex-col sm:flex-row items-center justify-between gap-2 text-slate-500 text-[11px]">
-              <p>© 2026 QTB Cinema • Dự án cá nhân phi lợi nhuận • Trải nghiệm điện ảnh gia đình chất lượng cao.</p>
+              <p>© 2026 Gấu Cinema • Dự án cá nhân phi lợi nhuận • Trải nghiệm điện ảnh gia đình chất lượng cao.</p>
               <p className="text-slate-600">Private Personal & Educational Use Only</p>
             </div>
           </div>

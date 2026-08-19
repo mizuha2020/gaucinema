@@ -404,7 +404,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                   {/* Badges */}
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs font-black uppercase px-3 py-1 rounded-full shadow-lg shadow-blue-600/30">
-                      QTB CINEMA HD
+                      Gấu Cinema HD
                     </span>
                     {currentData.quality && (
                       <span className="bg-slate-900/90 text-sky-300 border border-blue-800/80 text-xs font-semibold px-2.5 py-0.5 rounded-md">
@@ -507,7 +507,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
               <div className="space-y-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-[10px] sm:text-[11px] font-black uppercase px-2.5 py-0.5 rounded-full">
-                    QTB Cinema
+                    Gấu Cinema
                   </span>
                   <span className="bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] sm:text-[11px] font-bold px-2.5 py-0.5 rounded-md flex items-center gap-1.5">
                     <Video className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-rose-400" />
@@ -856,7 +856,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
 
           {/* Bottom Footer */}
           <footer className="pt-6 pb-4 border-t border-slate-900 flex flex-col sm:flex-row items-center justify-between gap-3 text-slate-500 text-xs">
-            <p>© 2026 QTB Cinema • Trải nghiệm điện ảnh gia đình chất lượng cao</p>
+            <p>© 2026 Gấu Cinema • Trải nghiệm điện ảnh gia đình chất lượng cao</p>
             <button
               onClick={onClose}
               className="text-sky-400 hover:text-sky-300 font-semibold cursor-pointer"

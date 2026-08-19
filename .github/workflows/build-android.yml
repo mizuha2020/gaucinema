@@ -36,6 +36,9 @@ jobs:
           npx cap add android || true
           npx cap sync android
 
+      - name: Generate Android Assets
+        run: npx @capacitor/assets generate --android --assetPath resources
+
       - name: Build Android APK with Gradle
         working-directory: android
         run: |

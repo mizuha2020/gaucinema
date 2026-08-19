@@ -63,7 +63,12 @@ export const InitialLoader: React.FC<InitialLoaderProps> = ({ isLoading }) => {
         <div className="relative mb-6">
           <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-blue-700 via-blue-600 to-cyan-400 p-0.5 shadow-2xl shadow-blue-500/30">
             <div className="w-full h-full bg-[#0b1329] rounded-[14px] flex items-center justify-center relative overflow-hidden">
-              <Film className="w-10 h-10 text-cyan-400 animate-spin-slow" style={{ animationDuration: '8s' }} />
+              <img
+                src="/src/assets/images/app_logo.jpg"
+                alt="Gấu Cinema Logo"
+                className="w-full h-full object-cover animate-pulse"
+                referrerPolicy="no-referrer"
+              />
               <div className="absolute inset-0 bg-gradient-to-t from-blue-600/20 to-transparent" />
             </div>
           </div>
@@ -74,7 +79,7 @@ export const InitialLoader: React.FC<InitialLoaderProps> = ({ isLoading }) => {
         {/* Title */}
         <div className="space-y-1 mb-6">
           <h1 className="text-2xl sm:text-3xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-white via-slate-100 to-sky-400">
-            QTB CINEMA
+            Gấu Cinema HD
           </h1>
           <p className="text-xs text-sky-400/90 font-semibold tracking-wide">
             RẠP PHIM TRỰC TUYẾN CAO CẤP

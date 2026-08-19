@@ -51,15 +51,24 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         transition={{ duration: 0.5 }}
         className="flex flex-col items-center mb-8 text-center"
       >
+        <div className="relative w-20 h-20 sm:w-24 sm:h-24 mb-4 rounded-3xl overflow-hidden border-2 border-blue-500/30 shadow-2xl shadow-blue-500/20">
+          <img
+            src="/src/assets/images/app_logo.jpg"
+            alt="Gấu Cinema Logo"
+            className="w-full h-full object-cover"
+            referrerPolicy="no-referrer"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-blue-600/20 to-transparent" />
+        </div>
         <div className="flex items-center gap-2 mb-2">
           <span className="text-3xl sm:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-indigo-400 tracking-tight drop-shadow-[0_2px_14px_rgba(59,130,246,0.6)]">
-            QTB
+            Gấu
           </span>
           <span className="text-xs sm:text-sm uppercase font-extrabold tracking-widest px-2.5 py-0.5 rounded-md bg-blue-950/90 text-sky-300 border border-blue-800/80 shadow-lg">
             CINEMA HD
           </span>
         </div>
-        <p className="text-xs sm:text-sm text-slate-400 font-medium">
+        <p className="text-xs sm:text-sm text-slate-400 font-medium max-w-[280px]">
           Rạp Chiếu Phim Cá Nhân & Gia Đình • Riêng Tư & Bảo Mật
         </p>
       </motion.div>

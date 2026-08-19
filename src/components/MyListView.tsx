@@ -136,7 +136,7 @@ export const MyListView: React.FC<MyListViewProps> = ({
           <Bookmark className="w-12 h-12 text-slate-600 mx-auto mb-3" />
           <h2 className="text-lg font-bold text-white mb-1">Danh sách của bạn đang trống</h2>
           <p className="text-xs text-slate-400 mb-6">
-            Thêm các bộ phim yêu thích vào danh sách để dễ dàng tìm và xem lại bất cứ lúc nào trên QTB.
+            Thêm các bộ phim yêu thích vào danh sách để dễ dàng tìm và xem lại bất cứ lúc nào trên Gấu.
           </p>
           <button
             onClick={handleExplore}

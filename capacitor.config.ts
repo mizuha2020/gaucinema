@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.qtbcinema.app',
-  appName: 'Gấu Cine',
+  appName: 'Gấu Cinema HD',
   webDir: 'dist',
   server: {
     androidScheme: 'https'

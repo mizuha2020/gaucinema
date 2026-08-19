@@ -44,7 +44,7 @@ async function startServer() {
 
   // Health check
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", message: "QTB Cinema API Server is healthy" });
+    res.json({ status: "ok", message: "Gấu Cinema API Server is healthy" });
   });
 
   // 1. KKPhim Dedicated Proxy (https://phimapi.com)
@@ -386,7 +386,7 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🎬 Gấu Cine Web server running on http://0.0.0.0:${PORT}`);
+    console.log(`🎬 Gấu Cinema HD Web server running on http://0.0.0.0:${PORT}`);
   });
 }
 

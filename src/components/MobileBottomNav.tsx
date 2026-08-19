@@ -86,7 +86,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                       </span>
                     )}
                   </h4>
-                  <p className="text-xs text-sky-400">Đang hoạt động trên QTB Cinema</p>
+                  <p className="text-xs text-sky-400">Đang hoạt động trên Gấu Cinema</p>
                 </div>
               </div>
 

@@ -19,6 +19,7 @@ import Hls from 'hls.js';
 import * as dashjs from 'dashjs';
 import { Account } from '../types';
 import { firestoreStorage } from '../services/firestoreStorage';
+import { getFullApiUrl } from '../services/apiConfig';
 
 interface Channel {
   name: string;
@@ -127,7 +128,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch('/api/tv/channels');
+      const res = await fetch(getFullApiUrl('/api/tv/channels'));
       const data = await res.json();
       if (data.success && data.channels) {
         setChannels(data.channels);

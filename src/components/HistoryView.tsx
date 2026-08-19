@@ -164,7 +164,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           <Clock className="w-12 h-12 text-slate-600 mx-auto mb-3" />
           <h2 className="text-lg font-bold text-white mb-1">Chưa có lịch sử xem phim</h2>
           <p className="text-xs text-slate-400 mb-6">
-            Khi bạn xem bất kỳ bộ phim nào trên QTB, hệ thống sẽ tự động ghi nhớ vị trí và tập đang xem để bạn
+            Khi bạn xem bất kỳ bộ phim nào trên Gấu, hệ thống sẽ tự động ghi nhớ vị trí và tập đang xem để bạn
             tiếp tục thưởng thức sau này.
           </p>
           <button

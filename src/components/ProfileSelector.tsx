@@ -152,13 +152,23 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
       {/* Top Bar: Brand + User Info & Logout / Admin */}
       <div className="w-full max-w-5xl mx-auto flex items-center justify-between gap-2 pt-1 pb-3 shrink-0">
         {/* Brand */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="text-xl sm:text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-blue-500 tracking-tight">
-            QTB
-          </span>
-          <span className="text-[9px] sm:text-[11px] uppercase font-bold tracking-widest px-1.5 sm:px-2 py-0.5 rounded bg-blue-950/90 text-sky-300 border border-blue-800/80">
-            Cinema HD
-          </span>
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg overflow-hidden border border-blue-500/30">
+            <img
+              src="/src/assets/images/app_logo.jpg"
+              alt="Gấu Cinema Logo"
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-lg sm:text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-blue-500 tracking-tight leading-none">
+              Gấu
+            </span>
+            <span className="text-[7px] sm:text-[8px] uppercase font-bold tracking-widest text-sky-400/80">
+              Cinema HD
+            </span>
+          </div>
         </div>
 
         {/* User Badge & Actions */}

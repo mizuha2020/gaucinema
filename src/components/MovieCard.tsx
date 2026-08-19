@@ -141,7 +141,7 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
         </div>
       </div>
 
-      {/* Floating Hover Action Overlay (QTB Navy Style) */}
+      {/* Floating Hover Action Overlay (Gấu Navy Style) */}
       {isHovered && (
         <div
           className="hidden md:block absolute -top-12 -left-4 -right-4 bg-[#0f172a] rounded-xl shadow-2xl border border-blue-900/80 p-3 z-40 animate-in fade-in zoom-in-95 duration-200"

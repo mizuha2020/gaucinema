@@ -212,18 +212,29 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-3 sm:gap-6">
         {/* Left: Brand + Nav Links */}
         <div className="flex items-center gap-4 lg:gap-7 min-w-0 flex-1">
-          {/* QTB Brand */}
+          {/* Gấu Brand */}
           <button
             id="brand-logo-btn"
             onClick={() => onTabChange('home')}
-            className="flex items-center gap-2 cursor-pointer focus:outline-none group text-left shrink-0"
+            className="flex items-center gap-2.5 cursor-pointer focus:outline-none group text-left shrink-0"
           >
-            <span className="text-2xl sm:text-3xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-indigo-400 group-hover:scale-105 transition-transform drop-shadow-[0_2px_12px_rgba(59,130,246,0.6)]">
-              QTB
-            </span>
-            <span className="text-xs sm:text-sm uppercase font-extrabold tracking-wider px-2 py-0.5 rounded-md bg-blue-950/90 text-sky-300 border border-blue-800/80 shadow-md">
-              CINEMA HD
-            </span>
+            <div className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl overflow-hidden border-2 border-blue-500/50 shadow-lg shadow-blue-500/20 group-hover:scale-110 group-hover:border-blue-400 transition-all duration-300">
+              <img
+                src="/src/assets/images/app_logo.jpg"
+                alt="Gấu Cinema Logo"
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-blue-600/10 to-transparent" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-xl sm:text-2xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-indigo-400 transition-all drop-shadow-[0_2px_12px_rgba(59,130,246,0.5)]">
+                Gấu
+              </span>
+              <span className="text-[9px] sm:text-[10px] uppercase font-black tracking-[0.2em] text-sky-400/90 -mt-1">
+                CINEMA HD
+              </span>
+            </div>
           </button>
 
           {/* Desktop & Tablet Navigation */}

@@ -1,4 +1,5 @@
 import { Movie, MovieDetailResponse, MovieListResponse, EpisodeServer, ApiSource } from '../types';
+import { getFullApiUrl } from './apiConfig';
 
 export interface SourceOption {
   id: ApiSource;
@@ -110,7 +111,7 @@ async function fetchKKPhim<T>(endpoint: string, params?: Record<string, any>): P
 
   // 1. Try proxy
   try {
-    const res = await fetch(`/api/proxy/kkphim/${clean}${query}`);
+    const res = await fetch(getFullApiUrl(`/api/proxy/kkphim/${clean}${query}`));
     if (res.ok) {
       const data = await res.json();
       if (data && (data.status === true || data.items || data.data?.items || data.movie)) return data;
@@ -128,7 +129,7 @@ async function fetchOPhim<T>(endpoint: string, params?: Record<string, any>): Pr
 
   // 1. Try proxy
   try {
-    const res = await fetch(`/api/proxy/ophim/${clean}${query}`);
+    const res = await fetch(getFullApiUrl(`/api/proxy/ophim/${clean}${query}`));
     if (res.ok) {
       const data = await res.json();
       if (data && (data.status === true || data.status === 'success' || data.items || data.data?.items || data.movie)) return data;
@@ -146,7 +147,7 @@ async function fetchNguonC<T>(endpoint: string, params?: Record<string, any>): P
 
   // 1. Try proxy
   try {
-    const res = await fetch(`/api/proxy/nguonc/${clean}${query}`);
+    const res = await fetch(getFullApiUrl(`/api/proxy/nguonc/${clean}${query}`));
     if (res.ok) {
       const data = await res.json();
       if (data && (data.status === 'success' || data.items || data.movie)) return data;
@@ -598,7 +599,7 @@ export const movieApi = {
 
       // 'all' Mode: Use server search aggregation or direct multi-fetch
       try {
-        const res = await fetch(`/api/proxy/search-all?keyword=${encodeURIComponent(kw)}`);
+        const res = await fetch(getFullApiUrl(`/api/proxy/search-all?keyword=${encodeURIComponent(kw)}`));
         if (res.ok) {
           const payload = await res.json();
           if (payload?.items && Array.isArray(payload.items)) {
@@ -766,7 +767,7 @@ export const movieApi = {
       // 4. General fallback proxy if still not found
       if (!data || !data.movie) {
         try {
-          const res = await fetch(`/api/proxy/movie/phim/${slug}`);
+          const res = await fetch(getFullApiUrl(`/api/proxy/movie/phim/${slug}`));
           if (res.ok) data = await res.json();
         } catch {}
       }
