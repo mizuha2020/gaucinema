@@ -6,7 +6,16 @@ import { Capacitor } from '@capacitor/core';
  * the app is served from localhost, but the server is remote.
  */
 export const getApiBaseUrl = (): string => {
-  // If we're on a browser and not localhost, use the current origin
+  // Priority 1: Use the hardcoded environment variable from Vite build
+  // This is the MOST reliable for Capacitor APKs.
+  const envUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_APP_URL;
+  if (envUrl && envUrl !== '') {
+    const cleanUrl = envUrl.replace(/\/$/, '');
+    console.log('API Base URL set from Vite env:', cleanUrl);
+    return cleanUrl;
+  }
+
+  // Priority 2: If we're on a browser and not localhost, use the current origin
   if (typeof window !== 'undefined') {
     const { hostname, origin } = window.location;
     
@@ -16,25 +25,14 @@ export const getApiBaseUrl = (): string => {
     if (hostname !== 'localhost' && hostname !== '127.0.0.1' && !isCapacitor) {
       return origin;
     }
+    
+    // Fallback for AI Studio preview specifically
+    if (origin.includes('run.app')) {
+      return origin;
+    }
   }
 
-  // Use the environment variable if provided (MUST be prefixed with VITE_)
-  // For Capacitor builds, this is the most reliable way to point to the remote server.
-  const envUrl = import.meta.env.VITE_API_URL || import.meta.env.VITE_APP_URL;
-  
-  if (envUrl) {
-    const cleanUrl = envUrl.replace(/\/$/, '');
-    console.log('API Base URL set from environment:', cleanUrl);
-    return cleanUrl;
-  }
-
-  // Fallback for AI Studio specifically - try to derive it from the window location if we are in an iframe
-  // or if we can find a hint in the environment.
-  if (typeof window !== 'undefined' && window.location.origin.includes('run.app')) {
-    return window.location.origin;
-  }
-
-  console.warn('API Base URL is EMPTY. Native app connectivity will fail.');
+  console.warn('API Base URL is EMPTY. This will likely cause failures on native platforms.');
   return '';
 };
 

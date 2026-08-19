@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import dns from "node:dns";
+import cors from "cors";
 import { createServer as createViteServer } from "vite";
 
 // Force IPv4 resolution first to prevent ConnectTimeoutError on Cloudflare IPv6
@@ -39,6 +40,12 @@ async function fetchWithTimeout(url: string, timeoutMs = 4000): Promise<any> {
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // Enable CORS for Android app
+  app.use(cors({
+    origin: ["https://localhost", "http://localhost", /^https:\/\/.*\.run\.app$/],
+    credentials: true
+  }));
 
   app.use(express.json());
 

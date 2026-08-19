@@ -31,17 +31,21 @@ jobs:
       - name: Build Web App (Vite)
         env:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
-        run: npm run build
+        run: |
+          echo "Building with API URL: $VITE_API_URL"
+          npm run build
 
       - name: Initialize Android Project (Capacitor)
         run: |
           npx cap add android || true
+          npx cap copy android
           npx cap sync android
 
       - name: Generate Android Assets
         run: |
           # Use the correct path to resources folder where icon.png and splash.png are located
           npx @capacitor/assets generate --android --assetPath assets/resources
+          npx cap copy android
           npx cap sync android
 
       - name: Build Android APK with Gradle

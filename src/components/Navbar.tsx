@@ -20,6 +20,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { movieApi, getImageUrl, API_SOURCES } from '../services/movieApi';
+import { getFullApiUrl } from '../services/apiConfig';
 import { Movie } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -236,12 +237,15 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <div className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl overflow-hidden border-2 border-blue-500/50 shadow-lg shadow-blue-500/20 group-hover:scale-110 group-hover:border-blue-400 transition-all duration-300">
               <img
-                src="app_logo.jpg"
+                src={getFullApiUrl('/app_logo.jpg')}
                 alt="Gấu Cinema Logo"
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).src = '/app_logo.jpg';
+                  const target = e.target as HTMLImageElement;
+                  if (target.src !== '/app_logo.jpg') {
+                    target.src = '/app_logo.jpg';
+                  }
                 }}
               />
               <div className="absolute inset-0 bg-gradient-to-t from-blue-600/10 to-transparent" />
