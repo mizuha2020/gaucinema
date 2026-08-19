@@ -54,5 +54,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: QTB-Cinema-Android-App
-          path: android/app/build/outputs/apk/debug/gaucine.apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
