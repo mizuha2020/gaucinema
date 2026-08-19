@@ -4,6 +4,13 @@ export interface Category {
   slug: string;
 }
 
+export interface Channel {
+  name: string;
+  logo: string;
+  group: string;
+  url: string;
+}
+
 export interface Country {
   id: string;
   name: string;

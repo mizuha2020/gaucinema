@@ -2,75 +2,74 @@ const fs = require('fs');
 const path = require('path');
 
 async function run() {
-  console.log('--- STARTING ASSET PREPARATION ---');
+  console.log('=== RUNNING ASSET GENERATION & ANDROID RES FIXER ===');
   let sharp;
   try {
     sharp = require('sharp');
   } catch (e) {
-    console.error('Sharp not found:', e.message);
+    console.error('Sharp not available:', e.message);
     process.exit(0);
   }
 
   const rootDir = path.resolve(__dirname, '..');
   const resourcesDir = path.join(rootDir, 'assets', 'resources');
-  if (!fs.existsSync(resourcesDir)) {
-    fs.mkdirSync(resourcesDir, { recursive: true });
-  }
+  const publicDir = path.join(rootDir, 'public');
 
-  // Find best available source logo
-  const possibleSources = [
-    path.join(rootDir, 'public', 'app_logo.jpg'),
+  if (!fs.existsSync(resourcesDir)) fs.mkdirSync(resourcesDir, { recursive: true });
+  if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
+
+  // Priority sources for the Gấu Cinema Logo
+  const candidatePaths = [
     path.join(rootDir, 'src', 'assets', 'images', 'app_logo.jpg'),
-    path.join(rootDir, 'public', 'icon.png'),
-    path.join(rootDir, 'public', 'icon.jpg'),
-    path.join(resourcesDir, 'icon.png'),
+    path.join(rootDir, 'src', 'assets', 'images', 'gau_cinema_icon_square_1787156637840.jpg'),
+    path.join(rootDir, 'src', 'assets', 'images', 'gau_cinema_icon_1787155456099.jpg'),
+    path.join(publicDir, 'app_logo.jpg'),
+    path.join(resourcesDir, 'icon.png')
   ];
 
-  let sourceBuffer = null;
-  for (const src of possibleSources) {
-    if (fs.existsSync(src)) {
+  let rawSourceBuf = null;
+  for (const cPath of candidatePaths) {
+    if (fs.existsSync(cPath)) {
       try {
-        const buf = fs.readFileSync(src);
+        const buf = fs.readFileSync(cPath);
         const meta = await sharp(buf).metadata();
-        if (meta && meta.width) {
-          console.log(`Found valid source image at: ${src} (${meta.width}x${meta.height}, format: ${meta.format})`);
-          sourceBuffer = buf;
+        if (meta && meta.width > 50) {
+          console.log(`✓ Loaded high-res source image from: ${cPath} (${meta.width}x${meta.height}, format: ${meta.format})`);
+          rawSourceBuf = buf;
           break;
         }
-      } catch (err) {
-        console.warn(`Failed reading candidate ${src}:`, err.message);
+      } catch (e) {
+        console.warn(`Could not read ${cPath}:`, e.message);
       }
     }
   }
 
-  if (!sourceBuffer) {
+  if (!rawSourceBuf) {
     console.log('Generating fallback SVG logo...');
-    const svg = `
-      <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-        <rect width="1024" height="1024" fill="#0b1329"/>
-        <circle cx="512" cy="512" r="380" fill="#1e3a8a"/>
-        <circle cx="512" cy="512" r="300" fill="#3b82f6"/>
-        <text x="512" y="580" font-family="Arial, sans-serif" font-size="280" font-weight="bold" fill="#ffffff" text-anchor="middle">GẤU</text>
-      </svg>
-    `;
-    sourceBuffer = Buffer.from(svg);
+    const svg = `<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+      <rect width="1024" height="1024" fill="#0b1329"/>
+      <circle cx="512" cy="512" r="380" fill="#1e3a8a"/>
+      <circle cx="512" cy="512" r="300" fill="#3b82f6"/>
+      <text x="512" y="580" font-family="Arial, sans-serif" font-size="260" font-weight="bold" fill="#ffffff" text-anchor="middle">GẤU</text>
+    </svg>`;
+    rawSourceBuf = Buffer.from(svg);
   }
 
-  // 1. Generate 1024x1024 icon.png (Square, Solid background #0b1329)
-  const iconBuffer = await sharp(sourceBuffer)
+  // 1. Generate master PNGs in assets/resources
+  const masterIcon1024 = await sharp(rawSourceBuf)
     .resize(1024, 1024, { fit: 'cover' })
     .png({ quality: 100 })
     .toBuffer();
 
-  fs.writeFileSync(path.join(resourcesDir, 'icon.png'), iconBuffer);
-  fs.writeFileSync(path.join(resourcesDir, 'icon-only.png'), iconBuffer);
+  fs.writeFileSync(path.join(resourcesDir, 'icon.png'), masterIcon1024);
+  fs.writeFileSync(path.join(resourcesDir, 'icon-only.png'), masterIcon1024);
 
-  // Foreground: logo resized inside with padding
-  const iconInner = await sharp(sourceBuffer)
-    .resize(800, 800, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+  // Foreground for adaptive icons (logo scaled to 680x680 centered in 1024x1024 transparent canvas)
+  const foregroundInner = await sharp(rawSourceBuf)
+    .resize(680, 680, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .toBuffer();
 
-  const foregroundBuffer = await sharp({
+  const masterForeground1024 = await sharp({
     create: {
       width: 1024,
       height: 1024,
@@ -78,53 +77,66 @@ async function run() {
       background: { r: 0, g: 0, b: 0, alpha: 0 }
     }
   })
-    .composite([{ input: iconInner, gravity: 'center' }])
+    .composite([{ input: foregroundInner, gravity: 'center' }])
     .png()
     .toBuffer();
 
-  fs.writeFileSync(path.join(resourcesDir, 'icon-foreground.png'), foregroundBuffer);
+  fs.writeFileSync(path.join(resourcesDir, 'icon-foreground.png'), masterForeground1024);
 
-  // Background: Solid midnight blue
-  const backgroundBuffer = await sharp({
+  // Background: Solid dark blue (#0b1329)
+  const masterBackground1024 = await sharp({
     create: {
       width: 1024,
       height: 1024,
       channels: 4,
-      background: { r: 11, g: 19, b: 41, alpha: 1 } // #0b1329
+      background: { r: 11, g: 19, b: 41, alpha: 1 }
     }
   })
     .png()
     .toBuffer();
 
-  fs.writeFileSync(path.join(resourcesDir, 'icon-background.png'), backgroundBuffer);
+  fs.writeFileSync(path.join(resourcesDir, 'icon-background.png'), masterBackground1024);
 
-  // Splash: 2732x2732 with centered logo
-  const splashLogo = await sharp(sourceBuffer)
-    .resize(1200, 1200, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+  // Splash master: 2732x2732
+  const splashLogo = await sharp(rawSourceBuf)
+    .resize(1100, 1100, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .toBuffer();
 
-  const splashBuffer = await sharp({
+  const masterSplash2732 = await sharp({
     create: {
       width: 2732,
       height: 2732,
       channels: 4,
-      background: { r: 7, g: 11, b: 22, alpha: 1 } // #070b16
+      background: { r: 7, g: 11, b: 22, alpha: 1 }
     }
   })
     .composite([{ input: splashLogo, gravity: 'center' }])
     .png()
     .toBuffer();
 
-  fs.writeFileSync(path.join(resourcesDir, 'splash.png'), splashBuffer);
+  fs.writeFileSync(path.join(resourcesDir, 'splash.png'), masterSplash2732);
 
-  console.log('✓ Successfully generated all standard master assets in assets/resources/');
+  // 2. Synchronize public directory with clean standard PNGs & JPEGs
+  const publicJpg = await sharp(rawSourceBuf).resize(1024, 1024, { fit: 'cover' }).jpeg({ quality: 95 }).toBuffer();
+  fs.writeFileSync(path.join(publicDir, 'app_logo.jpg'), publicJpg);
+  fs.writeFileSync(path.join(publicDir, 'icon.jpg'), publicJpg);
+  fs.writeFileSync(path.join(publicDir, 'icon.png'), masterIcon1024);
 
-  // 2. Direct generation into android res folders if android project exists
+  const icon192 = await sharp(rawSourceBuf).resize(192, 192, { fit: 'cover' }).png().toBuffer();
+  fs.writeFileSync(path.join(publicDir, 'icon-192.png'), icon192);
+
+  const icon512 = await sharp(rawSourceBuf).resize(512, 512, { fit: 'cover' }).png().toBuffer();
+  fs.writeFileSync(path.join(publicDir, 'icon-512.png'), icon512);
+
+  console.log('✓ Master assets and public icons updated successfully.');
+
+  // 3. Inject directly into Android Project (Res directory)
   const androidResDir = path.join(rootDir, 'android', 'app', 'src', 'main', 'res');
   if (fs.existsSync(androidResDir)) {
-    console.log('Found Android res directory. Injecting Android icons & splash drawables directly...');
+    console.log('Injecting Android mipmaps and adaptive icons into:', androidResDir);
 
-    const mipmapSizes = {
+    // Standard mipmap icon sizes (Legacy)
+    const legacySizes = {
       'mipmap-mdpi': 48,
       'mipmap-hdpi': 72,
       'mipmap-xhdpi': 96,
@@ -132,17 +144,45 @@ async function run() {
       'mipmap-xxxhdpi': 192
     };
 
-    for (const [folder, size] of Object.entries(mipmapSizes)) {
+    // Adaptive icon foreground sizes (Android API 26+)
+    const adaptiveForegroundSizes = {
+      'mipmap-mdpi': 108,
+      'mipmap-hdpi': 162,
+      'mipmap-xhdpi': 216,
+      'mipmap-xxhdpi': 324,
+      'mipmap-xxxhdpi': 432
+    };
+
+    // Generate circular mask for ic_launcher_round
+    for (const [folder, size] of Object.entries(legacySizes)) {
       const folderPath = path.join(androidResDir, folder);
       if (!fs.existsSync(folderPath)) fs.mkdirSync(folderPath, { recursive: true });
 
-      const resizedSquare = await sharp(iconBuffer).resize(size, size).png().toBuffer();
-      fs.writeFileSync(path.join(folderPath, 'ic_launcher.png'), resizedSquare);
-      fs.writeFileSync(path.join(folderPath, 'ic_launcher_round.png'), resizedSquare);
-      fs.writeFileSync(path.join(folderPath, 'ic_launcher_foreground.png'), resizedSquare);
+      // Standard square legacy icon
+      const squareIcon = await sharp(masterIcon1024).resize(size, size).png().toBuffer();
+      fs.writeFileSync(path.join(folderPath, 'ic_launcher.png'), squareIcon);
+
+      // Round legacy icon (circle mask)
+      const radius = size / 2;
+      const circleSvg = `<svg width="${size}" height="${size}"><circle cx="${radius}" cy="${radius}" r="${radius}" fill="#ffffff"/></svg>`;
+      const roundIcon = await sharp(masterIcon1024)
+        .resize(size, size)
+        .composite([{ input: Buffer.from(circleSvg), blend: 'dest-in' }])
+        .png()
+        .toBuffer();
+      fs.writeFileSync(path.join(folderPath, 'ic_launcher_round.png'), roundIcon);
+
+      // Adaptive background
+      const bgSize = adaptiveForegroundSizes[folder];
+      const adaptiveBg = await sharp(masterBackground1024).resize(bgSize, bgSize).png().toBuffer();
+      fs.writeFileSync(path.join(folderPath, 'ic_launcher_background.png'), adaptiveBg);
+
+      // Adaptive foreground (with transparent safe-zone padding)
+      const adaptiveFg = await sharp(masterForeground1024).resize(bgSize, bgSize).png().toBuffer();
+      fs.writeFileSync(path.join(folderPath, 'ic_launcher_foreground.png'), adaptiveFg);
     }
 
-    // Adaptive icon XML for mipmap-anydpi-v26
+    // Adaptive XMLs in mipmap-anydpi-v26
     const anyDpiDir = path.join(androidResDir, 'mipmap-anydpi-v26');
     if (!fs.existsSync(anyDpiDir)) fs.mkdirSync(anyDpiDir, { recursive: true });
 
@@ -155,14 +195,13 @@ async function run() {
     fs.writeFileSync(path.join(anyDpiDir, 'ic_launcher.xml'), icLauncherXml);
     fs.writeFileSync(path.join(anyDpiDir, 'ic_launcher_round.xml'), icLauncherXml);
 
-    // Color value for background
+    // Color definitions
     const valuesDir = path.join(androidResDir, 'values');
     if (!fs.existsSync(valuesDir)) fs.mkdirSync(valuesDir, { recursive: true });
-    const icColorsXml = `<?xml version="1.0" encoding="utf-8"?>
+    fs.writeFileSync(path.join(valuesDir, 'ic_launcher_background.xml'), `<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_launcher_background">#0b1329</color>
-</resources>`;
-    fs.writeFileSync(path.join(valuesDir, 'ic_launcher_background.xml'), icColorsXml);
+</resources>`);
 
     // Splash drawables
     const drawableSizes = {
@@ -181,17 +220,17 @@ async function run() {
       const dPath = path.join(androidResDir, dFolder);
       if (!fs.existsSync(dPath)) fs.mkdirSync(dPath, { recursive: true });
 
-      const dSplash = await sharp(splashBuffer).resize(w, h, { fit: 'cover' }).png().toBuffer();
+      const dSplash = await sharp(masterSplash2732).resize(w, h, { fit: 'cover' }).png().toBuffer();
       fs.writeFileSync(path.join(dPath, 'splash.png'), dSplash);
     }
 
     console.log('✓ Successfully wrote all Android mipmap icons and splash drawables directly into android/res!');
   }
 
-  console.log('--- ASSET PREPARATION COMPLETED SUCCESSFULLY ---');
+  console.log('=== ASSET GENERATION FINISHED ===');
 }
 
 run().catch(err => {
-  console.error('Error in prepare-assets:', err);
+  console.error('Fatal in prepare-assets:', err);
   process.exit(1);
 });

@@ -17,24 +17,18 @@ import {
 } from 'lucide-react';
 import Hls from 'hls.js';
 import * as dashjs from 'dashjs';
-import { Account } from '../types';
+import { Account, Channel } from '../types';
 import { firestoreStorage } from '../services/firestoreStorage';
 import { getFullApiUrl } from '../services/apiConfig';
-
-interface Channel {
-  name: string;
-  logo: string;
-  group: string;
-  url: string;
-}
+import { DEFAULT_CHANNELS } from '../data/defaultChannels';
 
 interface LiveTvViewProps {
   currentAccount: Account | null;
 }
 
 export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
-  const [channels, setChannels] = useState<Channel[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [channels, setChannels] = useState<Channel[]>(DEFAULT_CHANNELS);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<string>('Tất cả');
   const [searchQuery, setSearchQuery] = useState<string>('');

@@ -3,6 +3,7 @@ import { authService } from '../services/authService';
 import { Account } from '../types';
 import { Lock, User, KeyRound, ShieldAlert, Sparkles, ShieldCheck, CheckCircle2, Film } from 'lucide-react';
 import { motion } from 'motion/react';
+import appLogo from '../assets/images/app_logo.jpg';
 
 interface LoginScreenProps {
   onLoginSuccess: (account: Account) => void;
@@ -53,7 +54,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       >
         <div className="relative w-20 h-20 sm:w-24 sm:h-24 mb-4 rounded-3xl overflow-hidden border-2 border-blue-500/30 shadow-2xl shadow-blue-500/20">
           <img
-            src="/app_logo.jpg"
+            src={appLogo}
             alt="Gấu Cinema Logo"
             className="w-full h-full object-cover"
             referrerPolicy="no-referrer"

@@ -39,18 +39,13 @@ jobs:
         run: |
           rm -rf android
           npx cap add android
-          npx cap sync android
-
-      - name: Generate Android Assets
-        run: |
-          # 1. Prepare and generate clean PNG master assets and Android resources
-          node scripts/prepare-assets.cjs
-          # 2. Run Capacitor assets generator (with fallback to prepare-assets)
-          npx @capacitor/assets generate --android --assetPath assets/resources || true
-          # 3. Ensure all Android mipmap icons and splash drawables are present
-          node scripts/prepare-assets.cjs
           npx cap copy android
           npx cap sync android
+
+      - name: Generate and Inject Android Assets
+        run: |
+          # 1. Prepare master assets and inject all Android mipmap icons, adaptive icons and splash screens
+          node scripts/prepare-assets.cjs
 
       - name: Build Android APK with Gradle
         working-directory: android

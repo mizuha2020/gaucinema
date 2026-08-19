@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Film, Clapperboard, Sparkles, ShieldCheck, Zap } from 'lucide-react';
+import appLogo from '../assets/images/app_logo.jpg';
 
 interface InitialLoaderProps {
   isLoading: boolean;
@@ -64,7 +65,7 @@ export const InitialLoader: React.FC<InitialLoaderProps> = ({ isLoading }) => {
           <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-blue-700 via-blue-600 to-cyan-400 p-0.5 shadow-2xl shadow-blue-500/30">
             <div className="w-full h-full bg-[#0b1329] rounded-[14px] flex items-center justify-center relative overflow-hidden">
               <img
-                src="/app_logo.jpg"
+                src={appLogo}
                 alt="Gấu Cinema Logo"
                 className="w-full h-full object-cover animate-pulse"
                 referrerPolicy="no-referrer"

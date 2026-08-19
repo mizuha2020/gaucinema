@@ -14,6 +14,7 @@ import {
   PlusCircle,
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import appLogo from '../assets/images/app_logo.jpg';
 
 interface ProfileSelectorProps {
   currentAccount: Account;
@@ -155,7 +156,7 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
         <div className="flex items-center gap-2 shrink-0">
           <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg overflow-hidden border border-blue-500/30">
             <img
-              src="/app_logo.jpg"
+              src={appLogo}
               alt="Gấu Cinema Logo"
               className="w-full h-full object-cover"
               referrerPolicy="no-referrer"
