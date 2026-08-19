@@ -37,15 +37,18 @@ jobs:
 
       - name: Initialize Android Project (Capacitor)
         run: |
-          # Remove existing android folder to ensure a clean build and fresh resource generation
           rm -rf android
           npx cap add android
           npx cap sync android
 
       - name: Generate Android Assets
         run: |
-          # Generate assets and explicitly copy them to the android project
-          npx @capacitor/assets generate --android --assetPath assets/resources
+          # 1. Prepare and generate clean PNG master assets and Android resources
+          node scripts/prepare-assets.cjs
+          # 2. Run Capacitor assets generator (with fallback to prepare-assets)
+          npx @capacitor/assets generate --android --assetPath assets/resources || true
+          # 3. Ensure all Android mipmap icons and splash drawables are present
+          node scripts/prepare-assets.cjs
           npx cap copy android
           npx cap sync android
 

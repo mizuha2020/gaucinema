@@ -23,6 +23,7 @@ import { movieApi, getImageUrl, API_SOURCES } from '../services/movieApi';
 import { getFullApiUrl } from '../services/apiConfig';
 import { Movie } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
+import appLogo from '../assets/images/app_logo.jpg';
 
 interface NavbarProps {
   activeTab: NavTab;
@@ -237,29 +238,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <div className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl overflow-hidden border-2 border-blue-500/50 shadow-lg shadow-blue-500/20 group-hover:scale-110 group-hover:border-blue-400 transition-all duration-300">
               <img
-                src={getFullApiUrl('/app_logo.jpg')}
+                src={appLogo}
                 alt="Gấu Cinema Logo"
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
-                onError={(e) => {
-                  const target = e.target as HTMLImageElement;
-                  // Try various fallbacks if the primary API URL fails
-                  const fallbacks = [
-                    '/app_logo.jpg',
-                    'https://ais-pre-vnvd2uudmu6l2atxxr7h75-18391378124.asia-southeast1.run.app/app_logo.jpg',
-                    '/icon.jpg'
-                  ];
-                  
-                  const currentSrc = target.getAttribute('src');
-                  const nextIndex = fallbacks.indexOf(currentSrc || '') + 1;
-                  
-                  if (nextIndex < fallbacks.length) {
-                    target.src = fallbacks[nextIndex];
-                  } else {
-                    // Final fallback to a generic icon if all else fails
-                    target.src = 'https://images.unsplash.com/photo-1593784991095-a205069470b6?w=100&auto=format&fit=crop&q=60';
-                  }
-                }}
               />
               <div className="absolute inset-0 bg-gradient-to-t from-blue-600/10 to-transparent" />
             </div>

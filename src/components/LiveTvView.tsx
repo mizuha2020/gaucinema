@@ -124,19 +124,121 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     fetchChannels();
   }, []);
 
+  const parseM3uContent = (text: string): Channel[] => {
+    const list: Channel[] = [];
+    if (!text || text.length < 50) return list;
+
+    if (text.trim().startsWith('{')) {
+      try {
+        const json = JSON.parse(text);
+        if (Array.isArray(json.channels)) return json.channels;
+      } catch {}
+    }
+
+    const lines = text.split(/\r?\n/);
+    let currentGroup = 'Truyền Hình';
+    let currentLogo = '';
+    let currentName = '';
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.startsWith('#EXTINF:')) {
+        const groupMatch = line.match(/group-title="([^"]*)"/);
+        if (groupMatch) currentGroup = groupMatch[1];
+
+        const logoMatch = line.match(/tvg-logo="([^"]*)"/);
+        if (logoMatch) currentLogo = logoMatch[1];
+
+        const commaIndex = line.lastIndexOf(',');
+        if (commaIndex !== -1) {
+          currentName = line.substring(commaIndex + 1).trim();
+        }
+      } else if (line && !line.startsWith('#')) {
+        if (currentName) {
+          list.push({
+            name: currentName,
+            logo: currentLogo || 'https://images.unsplash.com/photo-1593784991095-a205069470b6?w=100&auto=format&fit=crop&q=60',
+            group: currentGroup,
+            url: line,
+          });
+        }
+        currentName = '';
+        currentLogo = '';
+      }
+    }
+    return list;
+  };
+
   const fetchChannels = async () => {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch(getFullApiUrl('/api/tv/channels'));
-      const data = await res.json();
-      if (data.success && data.channels) {
-        setChannels(data.channels);
-        if (data.channels.length > 0 && !activeChannel) {
-          setActiveChannel(data.channels[0]);
+
+      // Load cached channels first for instant display
+      try {
+        const cached = localStorage.getItem('qtb_tv_channels_cache');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setChannels(parsed);
+            if (!activeChannel) setActiveChannel(parsed[0]);
+          }
         }
+      } catch {}
+
+      // 1. Try Backend Proxy with 4s timeout
+      let loadedChannels: Channel[] = [];
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4000);
+        const res = await fetch(getFullApiUrl('/api/tv/channels'), { signal: controller.signal });
+        clearTimeout(timer);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.channels) && data.channels.length > 0) {
+            loadedChannels = data.channels;
+          }
+        }
+      } catch (e) {
+        console.warn('Backend /api/tv/channels failed, falling back to direct IPTV sources...');
+      }
+
+      // 2. Direct client-side IPTV source fallbacks if server returns 0
+      if (loadedChannels.length === 0) {
+        const directSources = [
+          'https://raw.githubusercontent.com/iptv-org/iptv/master/streams/vn.m3u',
+          'https://iptv-org.github.io/iptv/countries/vn.m3u',
+          'https://bit.ly/tinhlagitivi',
+        ];
+
+        for (const url of directSources) {
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 5000);
+            const res = await fetch(url, { signal: controller.signal });
+            clearTimeout(timer);
+            if (res.ok) {
+              const text = await res.text();
+              const parsed = parseM3uContent(text);
+              if (parsed.length > 0) {
+                loadedChannels = parsed;
+                break;
+              }
+            }
+          } catch {}
+        }
+      }
+
+      if (loadedChannels.length > 0) {
+        setChannels(loadedChannels);
+        if (!activeChannel) {
+          setActiveChannel(loadedChannels[0]);
+        }
+        try {
+          localStorage.setItem('qtb_tv_channels_cache', JSON.stringify(loadedChannels));
+        } catch {}
       } else {
-        setError('Không thể tải danh sách kênh truyền hình.');
+        setError('Không thể kết nối đến nguồn phát sóng truyền hình. Vui lòng kiểm tra lại kết nối mạng.');
       }
     } catch (err: any) {
       setError(err?.message || 'Lỗi kết nối đến máy chủ truyền hình.');
