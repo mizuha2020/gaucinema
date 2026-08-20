@@ -18,6 +18,9 @@ import {
   Database,
   Server,
   Sparkles,
+  LayoutGrid,
+  Tv,
+  BookOpen,
 } from 'lucide-react';
 import { movieApi, getImageUrl, API_SOURCES } from '../services/movieApi';
 import { getFullApiUrl } from '../services/apiConfig';
@@ -60,6 +63,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [searchResults, setSearchResults] = useState<Movie[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isAppMenuOpen, setIsAppMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Profile PIN prompt state
@@ -97,8 +101,11 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
+  const appMenuRef = useRef<HTMLDivElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const mobileSearchOverlayRef = useRef<HTMLDivElement>(null);
+  const mobileMenuRef = useRef<HTMLDivElement>(null);
+  const mobileMenuToggleRef = useRef<HTMLButtonElement>(null);
 
   // Background transition on scroll
   useEffect(() => {
@@ -119,6 +126,17 @@ export const Navbar: React.FC<NavbarProps> = ({
       if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
         setIsProfileMenuOpen(false);
       }
+      if (appMenuRef.current && !appMenuRef.current.contains(e.target as Node)) {
+        setIsAppMenuOpen(false);
+      }
+      if (
+        mobileMenuRef.current &&
+        !mobileMenuRef.current.contains(e.target as Node) &&
+        mobileMenuToggleRef.current &&
+        !mobileMenuToggleRef.current.contains(e.target as Node)
+      ) {
+        setIsMobileMenuOpen(false);
+      }
       const isInsideDesktop = searchContainerRef.current?.contains(e.target as Node);
       const isInsideMobile = mobileSearchOverlayRef.current?.contains(e.target as Node);
       if (!isInsideDesktop && !isInsideMobile) {
@@ -130,6 +148,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       if (e.key === 'Escape') {
         setIsSearchOpen(false);
         setIsProfileMenuOpen(false);
+        setIsAppMenuOpen(false);
         setIsMobileMenuOpen(false);
       }
     };
@@ -189,23 +208,15 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const handleOpenSearch = () => {
     setIsSearchOpen(true);
-    // Instant focus via microtask & multiple fallback frames for smooth animation
-    requestAnimationFrame(() => {
-      searchInputRef.current?.focus();
-    });
-    setTimeout(() => {
-      searchInputRef.current?.focus();
-    }, 50);
-    setTimeout(() => {
-      searchInputRef.current?.focus();
-    }, 180);
   };
 
   useEffect(() => {
     if (isSearchOpen) {
       const timer = setTimeout(() => {
         searchInputRef.current?.focus();
-      }, 50);
+        const mobInput = document.getElementById('navbar-search-input-mobile') as HTMLInputElement | null;
+        mobInput?.focus();
+      }, 80);
       return () => clearTimeout(timer);
     }
   }, [isSearchOpen]);
@@ -220,19 +231,15 @@ export const Navbar: React.FC<NavbarProps> = ({
   // Primary navigation tabs (Always visible on desktop/tablet)
   const primaryNavItems: { label: string; tab: NavTab }[] = [
     { label: 'Trang Chủ', tab: 'home' },
-    { label: 'Truyền Hình & Thể Thao', tab: 'tv-live' },
     { label: 'Phim Bộ', tab: 'series' },
     { label: 'Phim Lẻ', tab: 'single' },
     { label: 'Hoạt Hình', tab: 'anime' },
     { label: 'TV Shows', tab: 'tv-shows' },
-    { label: 'Đọc Truyện Manga', tab: 'manga' },
   ];
 
   // Secondary navigation tabs (Temporarily hide when search expands)
   const secondaryNavItems: { label: string; tab: NavTab }[] = [
     { label: 'Khám Phá / Lọc', tab: 'filter' },
-    { label: 'Danh Sách Của Tôi', tab: 'my-list' },
-    { label: 'Lịch Sử Xem', tab: 'history' },
   ];
 
   const allNavItems = [...primaryNavItems, ...secondaryNavItems];
@@ -330,7 +337,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="flex items-center gap-2.5 sm:gap-4 shrink-0">
           {/* Desktop/Tablet Expandable Search Bar */}
           <div ref={searchContainerRef} className="relative flex items-center justify-end">
-            <AnimatePresence initial={false} mode="wait">
+            <AnimatePresence initial={false}>
               {isSearchOpen ? (
                 <motion.div
                   key="search-input-active"
@@ -393,7 +400,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   id="search-toggle-btn-desktop"
                   initial={{ scale: 0.9, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.9, opacity: 0 }}
+                  exit={{ scale: 0.9, opacity: 0, position: 'absolute', right: 0 }}
                   transition={{ duration: 0.18 }}
                   onClick={handleOpenSearch}
                   className="hidden sm:flex items-center justify-center w-9 h-9 rounded-full bg-slate-900/60 hover:bg-[#131f37] border border-slate-800/80 hover:border-blue-700/60 text-slate-300 hover:text-sky-300 cursor-pointer transition-all hover:scale-105"
@@ -525,6 +532,56 @@ export const Navbar: React.FC<NavbarProps> = ({
                   className="p-3 bg-[#0b1329] hover:bg-[#131f37] text-center text-xs font-semibold text-sky-400 cursor-pointer transition-colors border-t border-slate-800"
                 >
                   Xem tất cả kết quả tìm kiếm →
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* App Switcher Menu */}
+          <div ref={appMenuRef} className="relative">
+            <button
+              onClick={() => setIsAppMenuOpen(!isAppMenuOpen)}
+              className="flex items-center justify-center w-9 h-9 rounded-full bg-slate-900/60 hover:bg-[#131f37] border border-slate-800/80 hover:border-blue-700/60 text-slate-300 hover:text-sky-300 cursor-pointer transition-all hover:scale-105 mr-1"
+              title="Khám phá dịch vụ khác"
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            
+            {isAppMenuOpen && (
+              <div className="absolute right-[-4rem] sm:right-0 top-12 w-[280px] sm:w-72 bg-[#0f172a] border border-blue-900/60 rounded-2xl shadow-2xl p-3 z-50 animate-in fade-in zoom-in-95 duration-200">
+                <div className="text-xs font-bold text-slate-400 mb-2 px-2">HỆ SINH THÁI</div>
+                <div className="space-y-1">
+                  <button
+                    onClick={() => {
+                      onTabChange('tv-live');
+                      setIsAppMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium text-slate-200 hover:bg-sky-900/30 hover:text-sky-300 transition-colors cursor-pointer group"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-sky-900/40 flex items-center justify-center group-hover:bg-sky-500/20 shrink-0">
+                      <Tv className="w-4 h-4 text-sky-400" />
+                    </div>
+                    <div className="flex flex-col items-start">
+                      <span>Truyền Hình & Thể Thao</span>
+                      <span className="text-[10px] text-slate-400 font-normal">Kênh thể thao trực tiếp</span>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      onTabChange('manga');
+                      setIsAppMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium text-slate-200 hover:bg-orange-900/30 hover:text-orange-300 transition-colors cursor-pointer group"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-orange-900/40 flex items-center justify-center group-hover:bg-orange-500/20 shrink-0">
+                      <BookOpen className="w-4 h-4 text-orange-400" />
+                    </div>
+                    <div className="flex flex-col items-start">
+                      <span>Đọc Truyện Manga</span>
+                      <span className="text-[10px] text-slate-400 font-normal">Thế giới truyện tranh manga</span>
+                    </div>
+                  </button>
                 </div>
               </div>
             )}
@@ -694,6 +751,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Mobile Menu Button */}
           <button
+            ref={mobileMenuToggleRef}
             id="mobile-menu-toggle"
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
             className="md:hidden text-slate-300 hover:text-white p-1"
@@ -706,7 +764,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Mobile Drawer Navigation */}
       {isMobileMenuOpen && (
-        <div className="md:hidden bg-[#0b1329] border-b border-slate-800 px-4 py-4 space-y-3">
+        <div ref={mobileMenuRef} className="md:hidden bg-[#0b1329] border-b border-slate-800 px-4 py-4 space-y-3">
           <div className="space-y-1">
             {allNavItems.map((item) => (
               <button

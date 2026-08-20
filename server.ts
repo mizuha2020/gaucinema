@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import dns from "node:dns";
 import cors from "cors";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 
 // Force IPv4 resolution first to prevent ConnectTimeoutError on Cloudflare IPv6
@@ -444,8 +445,10 @@ async function startServer() {
     }
   });
 
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  // Vite middleware for development or fallback to production static files
+  const isProd = process.env.NODE_ENV === "production";
+  
+  if (!isProd) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

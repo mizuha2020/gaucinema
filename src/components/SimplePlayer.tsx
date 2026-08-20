@@ -227,7 +227,11 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
         if (typeof (video as any).webkitEnterFullscreen === 'function') {
           (video as any).webkitEnterFullscreen();
         } else if (container?.requestFullscreen) {
-          container.requestFullscreen().catch(() => {});
+          container.requestFullscreen().then(() => {
+            if (window.screen?.orientation?.lock) {
+              window.screen.orientation.lock('landscape').catch(() => {});
+            }
+          }).catch(() => {});
         }
       }
     } else {
@@ -246,17 +250,34 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     [duration]
   );
 
-  const toggleFullscreen = useCallback(() => {
+  const toggleFullscreen = useCallback(async () => {
     const container = containerRef.current;
     if (!container) return;
-    if (!document.fullscreenElement) {
-      if (typeof (videoRef.current as any)?.webkitEnterFullscreen === 'function') {
-        (videoRef.current as any).webkitEnterFullscreen();
-      } else {
-        container.requestFullscreen?.().catch(() => {});
-      }
+    
+    const isMobile = window.innerWidth <= 1024;
+    const isLandscape = isMobile && window.innerWidth > window.innerHeight;
+    const isFs = !!document.fullscreenElement;
+
+    if (!isFs && (!isMobile || !isLandscape)) {
+      try {
+        if (typeof (videoRef.current as any)?.webkitEnterFullscreen === 'function') {
+          (videoRef.current as any).webkitEnterFullscreen();
+        } else {
+          await container.requestFullscreen?.();
+        }
+        if (window.screen?.orientation?.lock) {
+          await window.screen.orientation.lock('landscape').catch(() => {});
+        }
+      } catch (err) {}
     } else {
-      document.exitFullscreen?.().catch(() => {});
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen?.();
+        }
+        if (window.screen?.orientation?.unlock) {
+          window.screen.orientation.unlock();
+        }
+      } catch (err) {}
     }
   }, []);
 
@@ -318,9 +339,31 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
   }, []);
 
   useEffect(() => {
-    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    const onFsChange = () => {
+      // Check if we are physically in landscape mode (mobile mostly) or in actual fullscreen
+      const isFs = !!document.fullscreenElement;
+      const isLandscape = window.innerWidth > window.innerHeight;
+      
+      // On small screens, being in landscape is practically "fullscreen"
+      if (window.innerWidth <= 1024) {
+        setIsFullscreen(isFs || isLandscape);
+      } else {
+        setIsFullscreen(isFs);
+      }
+    };
+    
     document.addEventListener('fullscreenchange', onFsChange);
-    return () => document.removeEventListener('fullscreenchange', onFsChange);
+    window.addEventListener('resize', onFsChange);
+    window.addEventListener('orientationchange', onFsChange);
+    
+    // Initial check
+    onFsChange();
+
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange);
+      window.removeEventListener('resize', onFsChange);
+      window.removeEventListener('orientationchange', onFsChange);
+    };
   }, []);
 
   // Khởi tạo HLS (giống như cũ)
