@@ -114,6 +114,47 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
   const [hud, setHud] = useState<{ type: 'volume' | 'brightness'; value: number } | null>(null);
   const hudTimer = useRef<NodeJS.Timeout | null>(null);
 
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
+  const audioInitializedRef = useRef<boolean>(false);
+
+  const initAudioBoost = () => {
+    if (audioInitializedRef.current || !videoRef.current) return;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
+          audioCtxRef.current = new AudioCtx();
+        }
+        const ctx = audioCtxRef.current;
+        if (ctx.state === 'suspended') {
+          ctx.resume().catch(() => {});
+        }
+        const gainNode = ctx.createGain();
+        gainNodeRef.current = gainNode;
+        const source = ctx.createMediaElementSource(videoRef.current);
+        source.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        audioInitializedRef.current = true;
+      }
+    } catch (e) {
+      // AudioContext source might already be connected or restricted
+    }
+  };
+
+  // Safe cleanup of AudioContext on unmount
+  useEffect(() => {
+    return () => {
+      if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
+        try {
+          audioCtxRef.current.close().catch(() => {});
+        } catch {}
+        audioCtxRef.current = null;
+      }
+      audioInitializedRef.current = false;
+    };
+  }, []);
+
   const touchData = useRef<{
     x: number;
     y: number;
@@ -123,6 +164,12 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     hasMoved: boolean;
   } | null>(null);
   const lastTouchTapTime = useRef<number>(0);
+  const lastTouchTime = useRef<number>(0);
+
+  const handleMouseMove = () => {
+    if (Date.now() - lastTouchTime.current < 600) return;
+    resetControlsTimer();
+  };
 
   const showHud = useCallback((type: 'volume' | 'brightness', value: number) => {
     if (hudTimer.current) clearTimeout(hudTimer.current);
@@ -132,7 +179,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
 
   const changeBrightness = useCallback(
     (val: number, showToast = true) => {
-      const clamped = Math.min(2, Math.max(0.2, val));
+      const clamped = Math.min(1.0, Math.max(0.2, val));
       setBrightness(clamped);
       localStorage.setItem('player_brightness', String(clamped));
       if (showToast) showHud('brightness', clamped);
@@ -142,12 +189,14 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
 
   const changeVolume = useCallback(
     (val: number, showToast = true) => {
-      const clamped = Math.min(1, Math.max(0, val));
+      const clamped = Math.min(1.0, Math.max(0, val));
       setVolume(clamped);
       setIsMuted(clamped === 0);
-      if (videoRef.current) {
-        videoRef.current.volume = clamped;
-        videoRef.current.muted = clamped === 0;
+
+      const video = videoRef.current;
+      if (video) {
+        video.volume = clamped;
+        video.muted = clamped === 0;
       }
       localStorage.setItem('player_volume', String(clamped));
       if (showToast) showHud('volume', clamped);
@@ -175,8 +224,8 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
       // Tự động fullscreen nếu chưa fullscreen và autoFullscreen=true
       if (autoFullscreen && !document.fullscreenElement) {
         // iOS Safari
-        if (video.webkitEnterFullscreen) {
-          video.webkitEnterFullscreen();
+        if (typeof (video as any).webkitEnterFullscreen === 'function') {
+          (video as any).webkitEnterFullscreen();
         } else if (container?.requestFullscreen) {
           container.requestFullscreen().catch(() => {});
         }
@@ -201,8 +250,8 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     const container = containerRef.current;
     if (!container) return;
     if (!document.fullscreenElement) {
-      if (videoRef.current?.webkitEnterFullscreen) {
-        videoRef.current.webkitEnterFullscreen();
+      if (typeof (videoRef.current as any)?.webkitEnterFullscreen === 'function') {
+        (videoRef.current as any).webkitEnterFullscreen();
       } else {
         container.requestFullscreen?.().catch(() => {});
       }
@@ -320,10 +369,15 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
-        backBufferLength: 90,
-        maxBufferLength: 60,
-        manifestLoadingTimeOut: 8000,
-        levelLoadingTimeOut: 8000,
+        backBufferLength: 30,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 60,
+        maxBufferSize: 30 * 1000 * 1000, // 30MB limit for mobile stability
+        manifestLoadingTimeOut: 10000,
+        levelLoadingTimeOut: 10000,
+        fragLoadingTimeOut: 20000,
+        startLevel: -1,
+        capLevelToPlayerSize: true,
       });
       hlsRef.current = hls;
 
@@ -341,9 +395,15 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
         video.muted = isMuted;
       });
 
+      let errorCount = 0;
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.fatal) {
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR || data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          errorCount++;
+          if (errorCount <= 2 && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hls.startLoad();
+          } else if (errorCount <= 2 && data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls.recoverMediaError();
+          } else {
             tryNext(hls);
           }
         }
@@ -456,6 +516,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
 
   // Touch gesture & tap-to-toggle controls (mobile/tablet)
   const handleTouchStart = (e: React.TouchEvent) => {
+    lastTouchTime.current = Date.now();
     const target = e.target as HTMLElement;
     if (target.closest('button, input, .controls-area, a, .player-menu-btn, .player-menu-content')) return;
     if (e.touches.length !== 1) return;
@@ -475,6 +536,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
+    lastTouchTime.current = Date.now();
     if (!touchData.current || e.touches.length !== 1) return;
     const touch = e.touches[0];
     const deltaY = touchData.current.y - touch.clientY;
@@ -492,28 +554,34 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     const ratio = deltaY / (height * 0.6);
 
     if (touchData.current.mode === 'brightness') {
-      const newVal = Math.min(2, Math.max(0.2, touchData.current.startVal + ratio * 1.5));
+      const newVal = Math.min(1.0, Math.max(0.2, touchData.current.startVal + ratio));
       changeBrightness(newVal, true);
     } else {
-      const newVal = Math.min(1, Math.max(0, touchData.current.startVal + ratio));
+      const newVal = Math.min(1.0, Math.max(0, touchData.current.startVal + ratio));
       changeVolume(newVal, true);
     }
   };
 
-  const handleTouchEnd = () => {
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    lastTouchTime.current = Date.now();
     if (touchData.current) {
       const elapsed = Date.now() - touchData.current.startTime;
-      // On mobile/touch: a clean tap (no swipe) only toggles overlay controls, does NOT play/pause
+      // On mobile/touch: a clean tap (no swipe) only toggles overlay controls instantly, does NOT play/pause
       if (!touchData.current.hasMoved && elapsed < 350) {
         lastTouchTapTime.current = Date.now();
         setShowControls((prev) => {
-          const next = !prev;
-          if (next) {
-            resetControlsTimer();
+          if (prev) {
+            // Instantly hide overlay
+            if (controlsTimeout.current) {
+              clearTimeout(controlsTimeout.current);
+              controlsTimeout.current = null;
+            }
+            return false;
           } else {
-            if (controlsTimeout.current) clearTimeout(controlsTimeout.current);
+            // Show overlay and start timer
+            resetControlsTimer();
+            return true;
           }
-          return next;
         });
       }
       touchData.current = null;
@@ -560,7 +628,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     <div
       ref={containerRef}
       className="fixed inset-0 bg-black z-50 flex items-center justify-center select-none touch-none"
-      onMouseMove={resetControlsTimer}
+      onMouseMove={handleMouseMove}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -641,7 +709,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                 <div
                   className="h-full bg-white"
                   style={{
-                    width: `${Math.min(100, Math.max(0, hud.type === 'brightness' ? (hud.value / 2) * 100 : hud.value * 100))}%`,
+                    width: `${Math.min(100, Math.max(0, hud.value * 100))}%`,
                   }}
                 />
               </div>
@@ -735,7 +803,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                       <input
                         type="range"
                         min={0}
-                        max={1}
+                        max={1.0}
                         step={0.05}
                         value={isMuted ? 0 : volume}
                         onChange={(e) => {

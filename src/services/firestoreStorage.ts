@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType, sanitizeData } from './firebase';
 import { CustomAvatar, MyListItem, UserProfile, WatchHistoryItem } from '../types';
+import { MangaItem, MangaHistoryItem } from './mangaApi';
 import { DEFAULT_AVATARS } from './authService';
 
 const ACTIVE_PROFILE_KEY = 'qtb_active_profile_id_v2';
@@ -23,7 +24,11 @@ export const firestoreStorage = {
     if (!accountId) return [];
     const profilesCol = collection(db, 'accounts', accountId, 'profiles');
     try {
-      const snap = await getDocs(profilesCol);
+      // 3.5s timeout protection
+      const snap = await Promise.race([
+        getDocs(profilesCol),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Profile fetch timeout')), 3500)),
+      ]);
       if (snap.empty) {
         // Fallback: If for any reason no profile exists, create the primary profile
         const primaryId = `prof_${accountId}_primary`;
@@ -35,15 +40,23 @@ export const firestoreStorage = {
           isPrimary: true,
           createdAt: Date.now(),
         };
-        await setDoc(doc(db, 'accounts', accountId, 'profiles', primaryId), sanitizeData(primaryProf));
+        setDoc(doc(db, 'accounts', accountId, 'profiles', primaryId), sanitizeData(primaryProf)).catch(() => {});
         return [primaryProf];
       }
 
       const profiles = snap.docs.map((d) => d.data() as UserProfile);
       return profiles.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     } catch (e) {
-      handleFirestoreError(e, OperationType.LIST, `accounts/${accountId}/profiles`);
-      return [];
+      console.warn('getProfiles warning:', e);
+      const fallbackProf: UserProfile = {
+        id: `prof_${accountId}_primary`,
+        name: accountId,
+        avatar: DEFAULT_AVATARS[0],
+        color: '#2563EB',
+        isPrimary: true,
+        createdAt: Date.now(),
+      };
+      return [fallbackProf];
     }
   },
 
@@ -276,6 +289,71 @@ export const firestoreStorage = {
       await setDoc(docRef, sanitizeData({ hiddenUrls, updatedAt: Date.now() }));
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, 'global/tv_config');
+    }
+  },
+
+  // --- MANGA SAVED & HISTORY (Per Profile) ---
+
+  async getSavedManga(accountId: string, profileId: string): Promise<MangaItem[]> {
+    if (!accountId || !profileId) return [];
+    const colRef = collection(db, 'accounts', accountId, 'profiles', profileId, 'savedManga');
+    try {
+      const snap = await getDocs(colRef);
+      return snap.docs.map((d) => d.data() as MangaItem);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, `accounts/${accountId}/profiles/${profileId}/savedManga`);
+      return [];
+    }
+  },
+
+  async toggleSavedManga(accountId: string, profileId: string, manga: MangaItem): Promise<boolean> {
+    if (!accountId || !profileId) return false;
+    const docRef = doc(db, 'accounts', accountId, 'profiles', profileId, 'savedManga', manga.id);
+    try {
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        await deleteDoc(docRef);
+        return false;
+      } else {
+        await setDoc(docRef, sanitizeData(manga));
+        return true;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `accounts/${accountId}/profiles/${profileId}/savedManga/${manga.id}`);
+      return false;
+    }
+  },
+
+  async getMangaHistory(accountId: string, profileId: string): Promise<MangaHistoryItem[]> {
+    if (!accountId || !profileId) return [];
+    const colRef = collection(db, 'accounts', accountId, 'profiles', profileId, 'mangaHistory');
+    try {
+      const snap = await getDocs(colRef);
+      const items = snap.docs.map((d) => d.data() as MangaHistoryItem);
+      return items.sort((a, b) => b.timestamp - a.timestamp).slice(0, 50);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, `accounts/${accountId}/profiles/${profileId}/mangaHistory`);
+      return [];
+    }
+  },
+
+  async saveMangaProgress(accountId: string, profileId: string, item: MangaHistoryItem): Promise<void> {
+    if (!accountId || !profileId) return;
+    const docRef = doc(db, 'accounts', accountId, 'profiles', profileId, 'mangaHistory', item.mangaId);
+    try {
+      await setDoc(docRef, sanitizeData(item), { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `accounts/${accountId}/profiles/${profileId}/mangaHistory/${item.mangaId}`);
+    }
+  },
+
+  async removeMangaHistoryItem(accountId: string, profileId: string, mangaId: string): Promise<void> {
+    if (!accountId || !profileId) return;
+    const docRef = doc(db, 'accounts', accountId, 'profiles', profileId, 'mangaHistory', mangaId);
+    try {
+      await deleteDoc(docRef);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `accounts/${accountId}/profiles/${profileId}/mangaHistory/${mangaId}`);
     }
   },
 };

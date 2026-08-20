@@ -90,21 +90,65 @@ export function getImageUrl(path?: string, source?: ApiSource | string): string 
   return `https://img.ophim.live/uploads/movies/${cleanPath}`;
 }
 
-// Memory cache helper to avoid repeated calls
-const cache = new Map<string, { data: any; time: number }>();
+// Client-side bounded LRU cache to prevent memory buildup
+class ClientLRUCache<K, V> {
+  private max: number;
+  private cache: Map<K, { data: V; time: number }>;
+
+  constructor(max = 300) {
+    this.max = max;
+    this.cache = new Map();
+  }
+
+  get(key: K, ttlMs: number): V | null {
+    const item = this.cache.get(key);
+    if (!item) return null;
+    if (Date.now() - item.time > ttlMs) {
+      this.cache.delete(key);
+      return null;
+    }
+    // Refresh LRU
+    this.cache.delete(key);
+    this.cache.set(key, item);
+    return item.data;
+  }
+
+  set(key: K, data: V): void {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= this.max) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.cache.delete(oldestKey);
+      }
+    }
+    this.cache.set(key, { data, time: Date.now() });
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+}
+
+const cache = new ClientLRUCache<string, any>(300);
 const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 async function cachedFetch<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
-  const cached = cache.get(key);
-  if (cached && Date.now() - cached.time < CACHE_TTL) {
-    return cached.data;
+  const cached = cache.get(key, CACHE_TTL);
+  if (cached !== null) {
+    return cached;
   }
-  const result = await fetcher();
-  cache.set(key, { data: result, time: Date.now() });
-  return result;
+  try {
+    const result = await fetcher();
+    cache.set(key, result);
+    return result;
+  } catch (err) {
+    // If cache had stale data, we can fallback, otherwise rethrow or return empty
+    throw err;
+  }
 }
 
-// Base Fetcher for each source
+// Base Fetcher for each source with safe error catching
 async function fetchKKPhim<T>(endpoint: string, params?: Record<string, any>): Promise<T> {
   const clean = endpoint.replace(/^\//, '');
   const query = params ? '?' + new URLSearchParams(params as any).toString() : '';
@@ -119,8 +163,14 @@ async function fetchKKPhim<T>(endpoint: string, params?: Record<string, any>): P
   } catch {}
 
   // 2. Try direct
-  const res = await fetch(`https://phimapi.com/${clean}${query}`);
-  return res.json();
+  try {
+    const res = await fetch(`https://phimapi.com/${clean}${query}`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch {}
+
+  return { status: false, items: [], msg: 'KKPhim fetch failed' } as unknown as T;
 }
 
 async function fetchOPhim<T>(endpoint: string, params?: Record<string, any>): Promise<T> {
@@ -137,8 +187,14 @@ async function fetchOPhim<T>(endpoint: string, params?: Record<string, any>): Pr
   } catch {}
 
   // 2. Try direct
-  const res = await fetch(`https://ophim1.com/${clean}${query}`);
-  return res.json();
+  try {
+    const res = await fetch(`https://ophim1.com/${clean}${query}`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch {}
+
+  return { status: false, items: [], msg: 'OPhim fetch failed' } as unknown as T;
 }
 
 async function fetchNguonC<T>(endpoint: string, params?: Record<string, any>): Promise<T> {
@@ -155,8 +211,14 @@ async function fetchNguonC<T>(endpoint: string, params?: Record<string, any>): P
   } catch {}
 
   // 2. Try direct
-  const res = await fetch(`https://phim.nguonc.com/api/${clean}${query}`);
-  return res.json();
+  try {
+    const res = await fetch(`https://phim.nguonc.com/api/${clean}${query}`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch {}
+
+  return { status: 'error', items: [], msg: 'NguonC fetch failed' } as unknown as T;
 }
 
 export const GENRES = [

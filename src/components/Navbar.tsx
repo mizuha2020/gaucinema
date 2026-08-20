@@ -225,6 +225,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     { label: 'Phim Lẻ', tab: 'single' },
     { label: 'Hoạt Hình', tab: 'anime' },
     { label: 'TV Shows', tab: 'tv-shows' },
+    { label: 'Đọc Truyện Manga', tab: 'manga' },
   ];
 
   // Secondary navigation tabs (Temporarily hide when search expands)

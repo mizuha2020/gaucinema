@@ -313,7 +313,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   );
 
   return (
-    <div id="qtb-admin-dashboard" className="min-h-screen bg-[#070b16] text-white pt-6 sm:pt-10 pb-24 px-3 sm:px-6 lg:px-8">
+    <div
+      id="qtb-admin-dashboard"
+      className="min-h-screen w-full bg-[#070b16] text-white pt-6 sm:pt-10 pb-32 px-3 sm:px-6 lg:px-8 overflow-y-auto overflow-x-hidden"
+      style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+    >
       <div className="max-w-7xl mx-auto space-y-5 sm:space-y-6">
         {/* Top Bar Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#0b1329]/95 border border-blue-900/60 p-4 sm:p-5 rounded-3xl backdrop-blur-md shadow-2xl">
@@ -665,11 +669,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         {/* --- MODAL 1: ADD ACCOUNT --- */}
         {isAddAccountOpen && (
-          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="w-full max-w-md bg-[#0f172a] border border-blue-900/80 rounded-3xl p-5 sm:p-6 text-white shadow-2xl"
+              className="w-full max-w-md max-h-[90vh] overflow-y-auto bg-[#0f172a] border border-blue-900/80 rounded-3xl p-5 sm:p-6 text-white shadow-2xl"
             >
               <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
                 <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
@@ -758,11 +762,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         {/* --- MODAL 2: EDIT / RESET PASSWORD --- */}
         {editingAccount && (
-          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="w-full max-w-md bg-[#0f172a] border border-blue-900/80 rounded-3xl p-5 sm:p-6 text-white shadow-2xl"
+              className="w-full max-w-md max-h-[90vh] overflow-y-auto bg-[#0f172a] border border-blue-900/80 rounded-3xl p-5 sm:p-6 text-white shadow-2xl"
             >
               <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
                 <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">

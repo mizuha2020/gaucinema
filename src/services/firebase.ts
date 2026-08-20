@@ -3,9 +3,27 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId); /* CRITICAL: The app will break without this line */
-export const auth = getAuth(app);
+let app: any;
+let dbInstance: any;
+let authInstance: any;
+
+try {
+  app = initializeApp(firebaseConfig);
+  dbInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)');
+  authInstance = getAuth(app);
+} catch (e) {
+  console.error('Firebase initialization error, falling back:', e);
+  try {
+    app = initializeApp(firebaseConfig);
+    dbInstance = getFirestore(app);
+    authInstance = getAuth(app);
+  } catch (e2) {
+    console.error('Firebase fallback initialization failed:', e2);
+  }
+}
+
+export const db = dbInstance;
+export const auth = authInstance;
 
 export enum OperationType {
   CREATE = 'create',

@@ -1,41 +1,47 @@
-import {StrictMode} from 'react';
-import {createRoot} from 'react-dom/client';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 
-// Safe guard for MediaKeySession.prototype.close in browsers/webviews to prevent unhandled 'The session is not callable' error
+// Safe global unhandled rejection handler for benign browser/media warnings
 if (typeof window !== 'undefined') {
-  if (typeof (window as any).MediaKeySession !== 'undefined' && (window as any).MediaKeySession.prototype) {
-    const origClose = (window as any).MediaKeySession.prototype.close;
-    if (typeof origClose === 'function') {
-      (window as any).MediaKeySession.prototype.close = function (...args: any[]) {
-        try {
-          const promise = origClose.apply(this, args);
-          if (promise && typeof promise.catch === 'function') {
-            return promise.catch(() => {
-              return Promise.resolve();
-            });
-          }
-          return promise;
-        } catch (e) {
-          return Promise.resolve();
-        }
-      };
-    }
-  }
-
   window.addEventListener('unhandledrejection', (event) => {
-    const reason = event.reason;
-    const msg = typeof reason === 'string' ? reason : reason?.message || '';
-    if (msg.includes('MediaKeySession') || msg.includes('The session is not callable')) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
+    try {
+      const reason = event.reason;
+      const msg = typeof reason === 'string' ? reason : reason?.message || '';
+      if (
+        msg.includes('MediaKeySession') ||
+        msg.includes('The session is not callable') ||
+        msg.includes('AbortError')
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    } catch {
+      // ignore
     }
   });
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+const rootElement = document.getElementById('root');
+if (rootElement) {
+  try {
+    createRoot(rootElement).render(
+      <StrictMode>
+        <ErrorBoundary>
+          <App />
+        </ErrorBoundary>
+      </StrictMode>
+    );
+  } catch (e: any) {
+    console.error('Fatal render error:', e);
+    rootElement.innerHTML = `
+      <div style="padding: 24px; color: white; background: #070b16; min-height: 100vh; font-family: sans-serif; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+        <h2 style="font-size: 20px; font-weight: bold; margin-bottom: 8px;">Không thể tải ứng dụng</h2>
+        <p style="color: #94a3b8; font-size: 14px; margin-bottom: 16px;">${e?.message || 'Lỗi khởi tạo hệ thống'}</p>
+        <button onclick="localStorage.clear(); window.location.reload();" style="padding: 10px 20px; background: #2563eb; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">Xóa bộ nhớ đệm & Tải lại</button>
+      </div>
+    `;
+  }
+}

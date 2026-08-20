@@ -11,7 +11,57 @@ try {
   // Ignore on older runtimes
 }
 
-const proxyCache = new Map<string, { data: any; timestamp: number }>();
+// Bounded LRU cache (max 500 items) to avoid memory leaks
+class LRUCache<K, V> {
+  private max: number;
+  private cache: Map<K, V>;
+
+  constructor(max = 500) {
+    this.max = max;
+    this.cache = new Map();
+  }
+
+  get(key: K): V | undefined {
+    const item = this.cache.get(key);
+    if (item === undefined) return undefined;
+    // Refresh LRU order
+    this.cache.delete(key);
+    this.cache.set(key, item);
+    return item;
+  }
+
+  set(key: K, value: V): this {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= this.max) {
+      // Evict oldest item
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.cache.delete(oldestKey);
+      }
+    }
+    this.cache.set(key, value);
+    return this;
+  }
+
+  has(key: K): boolean {
+    return this.cache.has(key);
+  }
+
+  delete(key: K): boolean {
+    return this.cache.delete(key);
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+
+  get size(): number {
+    return this.cache.size;
+  }
+}
+
+const proxyCache = new LRUCache<string, { data: any; timestamp: number }>(500);
 const CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes cache
 
 async function fetchWithTimeout(url: string, timeoutMs = 4000): Promise<any> {

@@ -148,66 +148,68 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
   return (
     <div
       id="qtb-profile-selector"
-      className="fixed inset-0 z-50 bg-[#070b16] flex flex-col justify-between p-3.5 sm:p-6 md:p-8 overflow-y-auto"
+      className="fixed inset-0 z-50 bg-[#070b16] overflow-y-auto overflow-x-hidden p-3.5 sm:p-6 md:p-8"
+      style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
     >
-      {/* Top Bar: Brand + User Info & Logout / Admin */}
-      <div className="w-full max-w-5xl mx-auto flex items-center justify-between gap-2 pt-1 pb-3 shrink-0">
-        {/* Brand */}
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg overflow-hidden border border-blue-500/30">
-            <img
-              src={appLogo}
-              alt="Gấu Cinema Logo"
-              className="w-full h-full object-cover"
-              referrerPolicy="no-referrer"
-            />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-lg sm:text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-blue-500 tracking-tight leading-none">
-              Gấu
-            </span>
-            <span className="text-[7px] sm:text-[8px] uppercase font-bold tracking-widest text-sky-400/80">
-              Cinema HD
-            </span>
-          </div>
-        </div>
-
-        {/* User Badge & Actions */}
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-          <div className="flex items-center gap-1 text-[11px] sm:text-xs text-slate-300 bg-[#0f172a] px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl border border-slate-800 max-w-[130px] sm:max-w-[200px] truncate">
-            <User className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-sky-400 shrink-0" />
-            <span className="truncate">@{currentAccount.username}</span>
+      <div className="min-h-full flex flex-col justify-between max-w-5xl mx-auto py-2 space-y-6">
+        {/* Top Bar: Brand + User Info & Logout / Admin */}
+        <div className="w-full flex items-center justify-between gap-2 pt-1 pb-2 shrink-0">
+          {/* Brand */}
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg overflow-hidden border border-blue-500/30">
+              <img
+                src={appLogo}
+                alt="Gấu Cinema Logo"
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-lg sm:text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-blue-500 tracking-tight leading-none">
+                Gấu
+              </span>
+              <span className="text-[7px] sm:text-[8px] uppercase font-bold tracking-widest text-sky-400/80">
+                Cinema HD
+              </span>
+            </div>
           </div>
 
-          {currentAccount.role === 'admin' && onOpenAdminDashboard && (
+          {/* User Badge & Actions */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <div className="flex items-center gap-1 text-[11px] sm:text-xs text-slate-300 bg-[#0f172a] px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl border border-slate-800 max-w-[130px] sm:max-w-[200px] truncate">
+              <User className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-sky-400 shrink-0" />
+              <span className="truncate">@{currentAccount.username}</span>
+            </div>
+
+            {currentAccount.role === 'admin' && onOpenAdminDashboard && (
+              <button
+                id="goto-admin-portal-btn"
+                onClick={onOpenAdminDashboard}
+                className="flex items-center gap-1 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-indigo-950/90 hover:bg-indigo-900 border border-indigo-700/80 text-indigo-200 text-[11px] sm:text-xs font-bold transition-transform active:scale-95 cursor-pointer shadow-md shrink-0"
+              >
+                <Settings className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+                <span className="hidden xs:inline">Admin</span>
+              </button>
+            )}
+
             <button
-              id="goto-admin-portal-btn"
-              onClick={onOpenAdminDashboard}
-              className="flex items-center gap-1 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-indigo-950/90 hover:bg-indigo-900 border border-indigo-700/80 text-indigo-200 text-[11px] sm:text-xs font-bold transition-transform active:scale-95 cursor-pointer shadow-md shrink-0"
+              id="profile-logout-btn"
+              onClick={onLogout}
+              className="flex items-center gap-1 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-slate-800/80 hover:bg-red-950/80 hover:text-red-300 hover:border-red-800 border border-slate-700 text-slate-300 text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer shrink-0"
+              title="Đăng xuất khỏi tài khoản"
             >
-              <Settings className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
-              <span className="hidden xs:inline">Admin</span>
+              <LogOut className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+              <span className="hidden sm:inline">Đăng xuất</span>
             </button>
-          )}
-
-          <button
-            id="profile-logout-btn"
-            onClick={onLogout}
-            className="flex items-center gap-1 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-slate-800/80 hover:bg-red-950/80 hover:text-red-300 hover:border-red-800 border border-slate-700 text-slate-300 text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer shrink-0"
-            title="Đăng xuất khỏi tài khoản"
-          >
-            <LogOut className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
-            <span className="hidden sm:inline">Đăng xuất</span>
-          </button>
+          </div>
         </div>
-      </div>
 
-      {/* Main Center Profiles Grid */}
-      <motion.div
-        initial={{ opacity: 0, scale: 0.97, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="w-full max-w-4xl mx-auto flex flex-col items-center text-center my-auto py-4 sm:py-6"
-      >
+        {/* Main Center Profiles Grid */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.97, y: 10 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          className="w-full max-w-4xl mx-auto flex flex-col items-center text-center my-auto py-2 sm:py-4"
+        >
         <h1 className="text-2xl sm:text-4xl md:text-5xl font-bold text-white tracking-tight mb-1.5 sm:mb-2">
           {isManaging ? 'Quản lý hồ sơ người xem' : 'Ai đang xem?'}
         </h1>
@@ -319,9 +321,10 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
         </button>
       </motion.div>
 
-      {/* Footer Info */}
-      <div className="text-[10px] sm:text-[11px] text-slate-500 text-center pb-1 shrink-0">
-        Bảo mật dữ liệu đám mây Firebase • Tối đa 5 hồ sơ / tài khoản
+        {/* Footer Info */}
+        <div className="text-[10px] sm:text-[11px] text-slate-500 text-center pb-2 shrink-0">
+          Bảo mật dữ liệu đám mây Firebase • Tối đa 5 hồ sơ / tài khoản
+        </div>
       </div>
 
       {/* --- MODAL 1: ADD NEW PROFILE --- */}

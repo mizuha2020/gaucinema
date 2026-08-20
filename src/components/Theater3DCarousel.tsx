@@ -15,6 +15,7 @@ export const Theater3DCarousel: React.FC<Theater3DCarouselProps> = ({ title, mov
   const displayMovies = movies.slice(0, 10);
   const [activeIndex, setActiveIndex] = useState(0);
   const touchStartX = useRef<number>(0);
+  const touchStartY = useRef<number>(0);
 
   if (!displayMovies || displayMovies.length === 0) return null;
 
@@ -23,13 +24,18 @@ export const Theater3DCarousel: React.FC<Theater3DCarouselProps> = ({ title, mov
 
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     const touchEndX = e.changedTouches[0].clientX;
-    const delta = touchEndX - touchStartX.current;
-    if (delta > 50) handlePrev();
-    else if (delta < -50) handleNext();
+    const touchEndY = e.changedTouches[0].clientY;
+    const deltaX = touchEndX - touchStartX.current;
+    const deltaY = touchEndY - touchStartY.current;
+    if (Math.abs(deltaX) > Math.abs(deltaY) * 1.5) {
+      if (deltaX > 40) handlePrev();
+      else if (deltaX < -40) handleNext();
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -39,7 +45,7 @@ export const Theater3DCarousel: React.FC<Theater3DCarouselProps> = ({ title, mov
   };
 
   // Tối ưu physics của spring để mượt hơn, giảm tính toán
-  const springConfig = { type: 'spring', stiffness: 300, damping: 30, mass: 0.8 };
+  const springConfig = { type: 'spring' as const, stiffness: 300, damping: 30, mass: 0.8 };
   const xSpacing = typeof window !== 'undefined' && window.innerWidth < 768 ? 140 : 180;
 
   return (

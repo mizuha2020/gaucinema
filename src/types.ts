@@ -32,6 +32,7 @@ export interface EpisodeServer {
   server_name: string;
   server_data: MovieEpisode[];
   source?: ApiSource;
+  sourceLabel?: string;
 }
 
 export interface Movie {
@@ -154,4 +155,4 @@ export interface MyListItem {
   addedAt: number;
 }
 
-export type NavTab = 'home' | 'series' | 'single' | 'cinema' | 'anime' | 'tv-shows' | 'filter' | 'my-list' | 'history' | 'tv-live';
+export type NavTab = 'home' | 'series' | 'single' | 'cinema' | 'anime' | 'tv-shows' | 'manga' | 'filter' | 'my-list' | 'history' | 'tv-live';

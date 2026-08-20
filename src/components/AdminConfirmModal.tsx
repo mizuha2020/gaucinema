@@ -58,11 +58,11 @@ export const AdminConfirmModal: React.FC<AdminConfirmModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        className="w-full max-w-md bg-[#0f172a] border border-blue-900/80 rounded-3xl p-5 sm:p-6 text-white shadow-2xl relative"
+        className="w-full max-w-md max-h-[90vh] overflow-y-auto bg-[#0f172a] border border-blue-900/80 rounded-3xl p-5 sm:p-6 text-white shadow-2xl relative"
       >
         {/* Header */}
         <div className="flex items-start justify-between pb-3 mb-4 border-b border-slate-800">

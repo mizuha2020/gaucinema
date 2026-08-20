@@ -26,8 +26,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     setErrorMessage(null);
 
     try {
-      // Ensure admin exists in firestore
-      await authService.bootstrapAdminAccount().catch((err) => console.warn(err));
       const account = await authService.login(username, password);
       onLoginSuccess(account);
     } catch (err: any) {
@@ -40,47 +38,49 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   return (
     <div
       id="qtb-login-screen"
-      className="fixed inset-0 z-50 bg-[#070b16] flex flex-col items-center justify-center p-4 sm:p-6 overflow-y-auto"
+      className="fixed inset-0 z-50 bg-[#070b16] overflow-y-auto overflow-x-hidden p-4 sm:p-6"
+      style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
     >
-      {/* Background Ambience Glow */}
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none" />
+      <div className="min-h-full flex flex-col items-center justify-center py-6">
+        {/* Background Ambience Glow */}
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none" />
 
-      {/* Brand Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className="flex flex-col items-center mb-8 text-center"
-      >
-        <div className="relative w-20 h-20 sm:w-24 sm:h-24 mb-4 rounded-3xl overflow-hidden border-2 border-blue-500/30 shadow-2xl shadow-blue-500/20">
-          <img
-            src={appLogo}
-            alt="Gấu Cinema Logo"
-            className="w-full h-full object-cover"
-            referrerPolicy="no-referrer"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-blue-600/20 to-transparent" />
-        </div>
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-3xl sm:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-indigo-400 tracking-tight drop-shadow-[0_2px_14px_rgba(59,130,246,0.6)]">
-            Gấu
-          </span>
-          <span className="text-xs sm:text-sm uppercase font-extrabold tracking-widest px-2.5 py-0.5 rounded-md bg-blue-950/90 text-sky-300 border border-blue-800/80 shadow-lg">
-            CINEMA HD
-          </span>
-        </div>
-        <p className="text-xs sm:text-sm text-slate-400 font-medium max-w-[280px]">
-          Rạp Chiếu Phim Cá Nhân & Gia Đình • Riêng Tư & Bảo Mật
-        </p>
-      </motion.div>
+        {/* Brand Header */}
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="flex flex-col items-center mb-8 text-center"
+        >
+          <div className="relative w-20 h-20 sm:w-24 sm:h-24 mb-4 rounded-3xl overflow-hidden border-2 border-blue-500/30 shadow-2xl shadow-blue-500/20">
+            <img
+              src={appLogo}
+              alt="Gấu Cinema Logo"
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-blue-600/20 to-transparent" />
+          </div>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-3xl sm:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-indigo-400 tracking-tight drop-shadow-[0_2px_14px_rgba(59,130,246,0.6)]">
+              Gấu
+            </span>
+            <span className="text-xs sm:text-sm uppercase font-extrabold tracking-widest px-2.5 py-0.5 rounded-md bg-blue-950/90 text-sky-300 border border-blue-800/80 shadow-lg">
+              CINEMA HD
+            </span>
+          </div>
+          <p className="text-xs sm:text-sm text-slate-400 font-medium max-w-[280px]">
+            Rạp Chiếu Phim Cá Nhân & Gia Đình • Riêng Tư & Bảo Mật
+          </p>
+        </motion.div>
 
-      {/* Login Card */}
-      <motion.div
-        initial={{ opacity: 0, scale: 0.96, y: 15 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="w-full max-w-md bg-[#0f172a]/95 border border-blue-900/60 rounded-3xl p-6 sm:p-8 text-white shadow-2xl backdrop-blur-xl relative"
-      >
+        {/* Login Card */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.96, y: 15 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ duration: 0.4 }}
+          className="w-full max-w-md bg-[#0f172a]/95 border border-blue-900/60 rounded-3xl p-6 sm:p-8 text-white shadow-2xl backdrop-blur-xl relative"
+        >
         <div className="flex items-center justify-between pb-4 mb-6 border-b border-slate-800">
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Đăng Nhập</h1>
@@ -181,6 +181,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           </div>
         </div>
       </motion.div>
+      </div>
     </div>
   );
 };

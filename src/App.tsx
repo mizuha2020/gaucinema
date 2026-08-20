@@ -27,8 +27,8 @@ import { FilterSection } from './components/FilterSection';
 import { MyListView } from './components/MyListView';
 import { HistoryView } from './components/HistoryView';
 import { LiveTvView } from './components/LiveTvView';
+import { MangaView } from './components/manga/MangaView';
 import { MobileBottomNav } from './components/MobileBottomNav';
-import { InitialLoader } from './components/InitialLoader';
 import { App as CapApp } from '@capacitor/app';
 import {
   Sparkles,
@@ -344,21 +344,18 @@ export default function App() {
     return myList.some((item) => item.movieSlug === slug);
   };
 
-  // Prevent body scroll when overlay is open
+  // Prevent body scroll ONLY when modal dialog or player overlay is open
   useEffect(() => {
-    const shouldLock = playingMovie || selectedMovieForDetail || showProfileSelector || showAdminDashboard;
+    const shouldLock = Boolean(playingMovie || selectedMovieForDetail);
     if (shouldLock) {
       document.body.style.overflow = 'hidden';
-      document.body.style.height = '100vh';
     } else {
-      document.body.style.overflow = 'unset';
-      document.body.style.height = 'unset';
+      document.body.style.overflow = '';
     }
     return () => {
-      document.body.style.overflow = 'unset';
-      document.body.style.height = 'unset';
+      document.body.style.overflow = '';
     };
-  }, [playingMovie, selectedMovieForDetail, showProfileSelector, showAdminDashboard]);
+  }, [playingMovie, selectedMovieForDetail]);
 
   // Unified History/Back Button Manager
   useEffect(() => {
@@ -375,31 +372,39 @@ export default function App() {
         setShowProfileSelector(false);
       } else if (e.state && e.state.tab) {
         setActiveTab(e.state.tab);
-      } else {
+      } else if (!e.state) {
         setActiveTab('home');
       }
     };
     window.addEventListener('popstate', handlePopState);
     
-    // Capacitor Back Button for Android
-    const backListener = CapApp.addListener('backButton', ({ canGoBack }) => {
-      if (playingMovie || selectedMovieForDetail || showAdminDashboard || (showProfileSelector && currentAccount && activeProfile)) {
-        window.history.back();
-      } else if (activeTab !== 'home') {
-        window.history.back();
-      } else {
-        // If we are on home tab and no overlays, let it exit or minimize
-        if (canGoBack) {
-          window.history.back();
-        } else {
-          CapApp.exitApp();
-        }
+    // Capacitor Back Button for Android (Safe check for native platform)
+    let backUnsub: (() => void) | undefined;
+    try {
+      if (typeof window !== 'undefined' && (window as any)?.Capacitor?.isNativePlatform?.()) {
+        CapApp.addListener('backButton', ({ canGoBack }) => {
+          if (playingMovie || selectedMovieForDetail || showAdminDashboard || (showProfileSelector && currentAccount && activeProfile)) {
+            window.history.back();
+          } else if (activeTab !== 'home') {
+            window.history.back();
+          } else {
+            if (canGoBack) {
+              window.history.back();
+            } else {
+              CapApp.exitApp();
+            }
+          }
+        }).then((l) => {
+          backUnsub = () => l.remove();
+        }).catch(() => {});
       }
-    });
+    } catch {
+      // Ignore on web browser
+    }
 
     return () => {
       window.removeEventListener('popstate', handlePopState);
-      backListener.then(l => l.remove());
+      if (backUnsub) backUnsub();
     };
   }, [playingMovie, selectedMovieForDetail, showAdminDashboard, showProfileSelector, currentAccount, activeProfile, refreshProfileData]);
 
@@ -622,9 +627,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#070b16] text-white font-sans selection:bg-blue-600 selection:text-white">
-      {/* 0. Initial App Cinematic Loader (UX Enhancement) */}
-      <InitialLoader isLoading={isLoadingHome && !newUpdated.length} />
-
       {/* 1. Who's Watching Profile Selector Screen */}
       {showProfileSelector && (
         <ProfileSelector
@@ -1023,6 +1025,11 @@ export default function App() {
           {/* LIVE TV & SPORTS TAB */}
           {activeTab === 'tv-live' && (
             <LiveTvView currentAccount={currentAccount} />
+          )}
+
+          {/* MANGA READER TAB */}
+          {activeTab === 'manga' && (
+            <MangaView activeProfile={activeProfile} currentAccount={currentAccount} />
           )}
         </main>
       )}
