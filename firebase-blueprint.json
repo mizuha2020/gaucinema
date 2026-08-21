@@ -83,6 +83,54 @@
         "createdAt": { "type": "number" }
       },
       "required": ["id", "url", "name", "createdAt"]
+    },
+    "SystemApiEndpoint": {
+      "title": "SystemApiEndpoint",
+      "description": "System API configurations managed by admin for movies, manga, livetv and utility services",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "maxLength": 128 },
+        "category": { "type": "string", "enum": ["movie", "manga", "livetv", "utility"] },
+        "baseUrl": { "type": "string", "maxLength": 2048 },
+        "testUrl": { "type": "string", "maxLength": 2048 },
+        "description": { "type": "string", "maxLength": 500 },
+        "enabled": { "type": "boolean" },
+        "isDefault": { "type": "boolean" },
+        "priority": { "type": "number" },
+        "lastChecked": { "type": "number" },
+        "lastLatencyMs": { "type": "number" },
+        "lastStatusCode": { "type": "number" },
+        "lastStatus": { "type": "string", "enum": ["live", "slow", "down"] },
+        "lastErrorMessage": { "type": "string", "maxLength": 1000 },
+        "updatedAt": { "type": "number" },
+        "updatedBy": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "category", "baseUrl", "testUrl", "enabled", "lastStatus"]
+    },
+    "ActiveViewerSession": {
+      "title": "ActiveViewerSession",
+      "description": "Realtime active viewing/reading presence session for users",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "accountId": { "type": "string", "maxLength": 64 },
+        "accountDisplayName": { "type": "string", "maxLength": 100 },
+        "profileId": { "type": "string", "maxLength": 64 },
+        "profileName": { "type": "string", "maxLength": 64 },
+        "profileAvatar": { "type": "string", "maxLength": 2048 },
+        "type": { "type": "string", "enum": ["watching_movie", "reading_manga", "watching_tv", "browsing"] },
+        "itemTitle": { "type": "string", "maxLength": 256 },
+        "itemSubtitle": { "type": "string", "maxLength": 256 },
+        "itemCover": { "type": "string", "maxLength": 2048 },
+        "apiSourceUsed": { "type": "string", "maxLength": 64 },
+        "progressPercent": { "type": "number" },
+        "currentTime": { "type": "number" },
+        "duration": { "type": "number" },
+        "lastHeartbeat": { "type": "number" },
+        "deviceInfo": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["sessionId", "accountId", "profileId", "type", "itemTitle", "lastHeartbeat"]
     }
   },
   "firestore": {
@@ -105,6 +153,14 @@
     "/customAvatars/{avatarId}": {
       "schema": "CustomAvatar",
       "description": "Gallery of custom avatars managed by admin"
+    },
+    "/system_apis/{apiId}": {
+      "schema": "SystemApiEndpoint",
+      "description": "Dynamic system API configurations for entire app runtime"
+    },
+    "/activeSessions/{sessionId}": {
+      "schema": "ActiveViewerSession",
+      "description": "Realtime active viewer presence heartbeat sessions"
     }
   }
 }

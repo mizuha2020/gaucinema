@@ -23,6 +23,7 @@ import {
   Server,
 } from 'lucide-react';
 import { EpisodeServer, Movie, MovieEpisode } from '../types';
+import { presenceService } from '../services/presenceService';
 
 interface SimplePlayerProps {
   movie: Movie;
@@ -228,8 +229,8 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
           (video as any).webkitEnterFullscreen();
         } else if (container?.requestFullscreen) {
           container.requestFullscreen().then(() => {
-            if (window.screen?.orientation?.lock) {
-              window.screen.orientation.lock('landscape').catch(() => {});
+            if ((window.screen?.orientation as any)?.lock) {
+              (window.screen.orientation as any).lock('landscape').catch(() => {});
             }
           }).catch(() => {});
         }
@@ -265,8 +266,8 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
         } else {
           await container.requestFullscreen?.();
         }
-        if (window.screen?.orientation?.lock) {
-          await window.screen.orientation.lock('landscape').catch(() => {});
+        if ((window.screen?.orientation as any)?.lock) {
+          await (window.screen.orientation as any).lock('landscape').catch(() => {});
         }
       } catch (err) {}
     } else {
@@ -480,9 +481,31 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
   }, [currentEpisode.link_m3u8, useEmbed, allServers, currentServer, initialTime, onSelectEpisode]);
 
   useEffect(() => {
+    presenceService.startHeartbeat({
+      accountId: 'user',
+      accountDisplayName: 'Khán Giả Phim',
+      profileId: 'movie_profile',
+      profileName: 'Người xem',
+      type: 'watching_movie',
+      itemTitle: movie.name,
+      itemSubtitle: currentEpisode.name,
+      itemCover: movie.poster_url || movie.thumb_url,
+      apiSourceUsed: currentServer.server_name || 'movie',
+      duration: duration || 0,
+      currentTime: initialTime || 0,
+    });
+
+    return () => {
+      presenceService.stopHeartbeat();
+    };
+  }, [movie.name, currentEpisode.name, currentServer.server_name]);
+
+  useEffect(() => {
     saveInterval.current = setInterval(() => {
       if (videoRef.current && duration > 0) {
-        onSaveProgress(videoRef.current.currentTime, duration);
+        const cur = videoRef.current.currentTime;
+        onSaveProgress(cur, duration);
+        presenceService.updateProgress(cur, duration);
       }
     }, 5000);
     return () => {

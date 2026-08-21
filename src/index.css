@@ -16,7 +16,6 @@ html {
   background-color: #070b16;
   min-height: 100%;
   overflow-x: hidden;
-  overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   touch-action: pan-y pinch-zoom;
 }
@@ -27,7 +26,6 @@ body {
   min-height: 100%;
   width: 100%;
   overflow-x: hidden;
-  overflow-y: auto;
   background-color: #070b16;
   color: #f8fafc;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
@@ -110,5 +108,29 @@ input, select, textarea {
 video::-webkit-media-controls {
   display: none !important;
 }
+
+/* Custom Sleek Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
 
 

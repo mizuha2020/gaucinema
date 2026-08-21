@@ -47,15 +47,6 @@ function isSha256Hash(str: string): boolean {
 
 export const DEFAULT_AVATARS: string[] = [
   'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1566492031773-4f4e44671857?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1527980965255-d3b416303d12?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1628157582853-a796fa650a6a?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1568602471122-7832951cc4c5?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200&auto=format&fit=crop&q=80',
 ];
 
 export const authService = {
@@ -66,13 +57,13 @@ export const authService = {
 
     try {
       if (!forceReset) {
-        const snap = await withTimeout(getDoc(adminDocRef), 3000).catch(() => null);
-        if (snap && snap.exists()) {
+        const snap = await getDoc(adminDocRef);
+        if (snap.exists()) {
           return snap.data() as Account;
         }
       }
-    } catch {
-      // Continue to create/reset
+    } catch (e) {
+      console.warn('Admin account check warning:', e);
     }
 
     const adminAccount: Account = {
@@ -88,16 +79,21 @@ export const authService = {
 
     try {
       await setDoc(adminDocRef, sanitizeData(adminAccount), { merge: true });
-      const primaryProfileRef = doc(db, 'accounts', 'admin', 'profiles', 'admin_primary');
-      const primaryProfile: UserProfile = {
-        id: 'admin_primary',
-        name: 'Quản trị viên',
-        avatar: DEFAULT_AVATARS[0],
-        color: '#2563EB',
-        isPrimary: true,
-        createdAt: Date.now(),
-      };
-      await setDoc(primaryProfileRef, sanitizeData(primaryProfile), { merge: true });
+      // Only set primary profile if no profiles exist
+      const profilesCol = collection(db, 'accounts', 'admin', 'profiles');
+      const profilesSnap = await getDocs(profilesCol).catch(() => null);
+      if (!profilesSnap || profilesSnap.empty) {
+        const primaryProfileRef = doc(db, 'accounts', 'admin', 'profiles', 'admin_primary');
+        const primaryProfile: UserProfile = {
+          id: 'admin_primary',
+          name: 'Quản trị viên',
+          avatar: DEFAULT_AVATARS[0],
+          color: '#2563EB',
+          isPrimary: true,
+          createdAt: Date.now(),
+        };
+        await setDoc(primaryProfileRef, sanitizeData(primaryProfile), { merge: true });
+      }
     } catch (e) {
       console.warn('Admin bootstrap save warning:', e);
     }

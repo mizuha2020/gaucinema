@@ -39,9 +39,15 @@ export const MangaDetailModal: React.FC<MangaDetailModalProps> = ({
           <img
             src={manga.coverUrl}
             alt={manga.title}
+            referrerPolicy="no-referrer"
             className="w-28 h-40 sm:w-36 sm:h-52 object-cover rounded-xl shadow-lg border border-white/10 flex-shrink-0"
             onError={(e) => {
-              (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
+              const target = e.target as HTMLImageElement;
+              if (!target.src.includes('/api/proxy/image') && manga.coverUrl && manga.coverUrl.startsWith('http')) {
+                target.src = `/api/proxy/image?url=${encodeURIComponent(manga.coverUrl)}`;
+              } else {
+                target.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
+              }
             }}
           />
 

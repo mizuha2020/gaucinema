@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { authService } from '../services/authService';
 import { Account } from '../types';
-import { Lock, User, KeyRound, ShieldAlert, Sparkles, ShieldCheck, CheckCircle2, Film } from 'lucide-react';
+import { Lock, User, KeyRound, ShieldAlert, Sparkles, ShieldCheck } from 'lucide-react';
 import { motion } from 'motion/react';
 import appLogo from '../assets/images/app_logo.jpg';
 
@@ -38,21 +38,21 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   return (
     <div
       id="qtb-login-screen"
-      className="fixed inset-0 z-50 bg-[#070b16] overflow-y-auto overflow-x-hidden p-4 sm:p-6"
+      className="min-h-screen w-full bg-[#070b16] overflow-y-auto overflow-x-hidden p-4 sm:p-6 flex flex-col items-center justify-center relative safe-pt safe-pb select-none"
       style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
     >
-      <div className="min-h-full flex flex-col items-center justify-center py-6">
-        {/* Background Ambience Glow */}
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none" />
+      {/* Background Ambience Glow */}
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 sm:w-[500px] sm:h-[500px] bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
 
+      <div className="w-full max-w-md my-auto flex flex-col items-center justify-center py-6 relative z-10">
         {/* Brand Header */}
         <motion.div
-          initial={{ opacity: 0, y: -20 }}
+          initial={{ opacity: 1, y: 0 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="flex flex-col items-center mb-8 text-center"
+          transition={{ duration: 0.3 }}
+          className="flex flex-col items-center mb-6 sm:mb-8 text-center"
         >
-          <div className="relative w-20 h-20 sm:w-24 sm:h-24 mb-4 rounded-3xl overflow-hidden border-2 border-blue-500/30 shadow-2xl shadow-blue-500/20">
+          <div className="relative w-20 h-20 sm:w-24 sm:h-24 mb-3 sm:mb-4 rounded-3xl overflow-hidden border-2 border-blue-500/30 shadow-2xl shadow-blue-500/20 bg-[#0f172a]">
             <img
               src={appLogo}
               alt="Gấu Cinema Logo"
@@ -76,112 +76,115 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
 
         {/* Login Card */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.96, y: 15 }}
+          initial={{ opacity: 1, scale: 1, y: 0 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-          className="w-full max-w-md bg-[#0f172a]/95 border border-blue-900/60 rounded-3xl p-6 sm:p-8 text-white shadow-2xl backdrop-blur-xl relative"
+          transition={{ duration: 0.3 }}
+          className="w-full bg-[#0f172a] border border-blue-900/60 rounded-3xl p-6 sm:p-8 text-white shadow-2xl relative"
         >
-        <div className="flex items-center justify-between pb-4 mb-6 border-b border-slate-800">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Đăng Nhập</h1>
-            <p className="text-xs text-slate-400 mt-0.5">Sử dụng tài khoản được cấp để truy cập</p>
-          </div>
-          <div className="w-10 h-10 rounded-2xl bg-blue-950/80 border border-blue-800/60 flex items-center justify-center text-sky-400">
-            <Lock className="w-5 h-5" />
-          </div>
-        </div>
-
-        {/* Error Alert */}
-        {errorMessage && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-5 p-3.5 rounded-2xl bg-red-950/80 border border-red-800/80 flex items-start gap-3 text-red-200 text-xs shadow-lg"
-          >
-            <ShieldAlert className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <span className="font-semibold block">{errorMessage}</span>
+          <div className="flex items-center justify-between pb-4 mb-6 border-b border-slate-800">
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Đăng Nhập</h1>
+              <p className="text-xs text-slate-400 mt-0.5">Sử dụng tài khoản được cấp để truy cập</p>
             </div>
-          </motion.div>
-        )}
+            <div className="w-10 h-10 rounded-2xl bg-blue-950/80 border border-blue-800/60 flex items-center justify-center text-sky-400">
+              <Lock className="w-5 h-5" />
+            </div>
+          </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Username */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
-              Tên đăng nhập
-            </label>
-            <div className="relative flex items-center">
-              <div className="absolute left-3 text-slate-400 pointer-events-none">
-                <User className="w-4 h-4" />
+          {/* Error Alert */}
+          {errorMessage && (
+            <div className="mb-5 p-3.5 rounded-2xl bg-red-950/80 border border-red-800/80 flex items-start gap-3 text-red-200 text-xs shadow-lg animate-in fade-in duration-200">
+              <ShieldAlert className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <span className="font-semibold block">{errorMessage}</span>
               </div>
-              <input
-                id="login-username-input"
-                type="text"
-                required
-                autoComplete="username"
-                placeholder="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                style={{ fontSize: '15px' }}
-                className="w-full bg-[#131f37] border border-slate-700/80 hover:border-slate-600 focus:border-blue-500 rounded-2xl pl-10 pr-4 py-3 text-white placeholder-slate-500 focus:outline-none transition-colors"
-              />
             </div>
-          </div>
+          )}
 
-          {/* Password */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
-              Mật khẩu
-            </label>
-            <div className="relative flex items-center">
-              <div className="absolute left-3 text-slate-400 pointer-events-none">
-                <KeyRound className="w-4 h-4" />
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Username */}
+            <div>
+              <label htmlFor="login-username-input" className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
+                Tên đăng nhập
+              </label>
+              <div className="relative flex items-center">
+                <div className="absolute left-3 text-slate-400 pointer-events-none z-10">
+                  <User className="w-4 h-4" />
+                </div>
+                <input
+                  id="login-username-input"
+                  type="text"
+                  required
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  autoComplete="username"
+                  placeholder="username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  style={{ fontSize: '16px' }}
+                  className="w-full bg-[#131f37] border border-slate-700/80 hover:border-slate-600 focus:border-blue-500 rounded-2xl pl-10 pr-4 py-3 text-white text-base placeholder-slate-500 focus:outline-none transition-colors"
+                />
               </div>
-              <input
-                id="login-password-input"
-                type="password"
-                required
-                autoComplete="current-password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                style={{ fontSize: '15px' }}
-                className="w-full bg-[#131f37] border border-slate-700/80 hover:border-slate-600 focus:border-blue-500 rounded-2xl pl-10 pr-4 py-3 text-white placeholder-slate-500 focus:outline-none transition-colors"
-              />
+            </div>
+
+            {/* Password */}
+            <div>
+              <label htmlFor="login-password-input" className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
+                Mật khẩu
+              </label>
+              <div className="relative flex items-center">
+                <div className="absolute left-3 text-slate-400 pointer-events-none z-10">
+                  <KeyRound className="w-4 h-4" />
+                </div>
+                <input
+                  id="login-password-input"
+                  type="password"
+                  required
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  autoComplete="current-password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  style={{ fontSize: '16px' }}
+                  className="w-full bg-[#131f37] border border-slate-700/80 hover:border-slate-600 focus:border-blue-500 rounded-2xl pl-10 pr-4 py-3 text-white text-base placeholder-slate-500 focus:outline-none transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* Submit Button */}
+            <button
+              id="login-submit-btn"
+              type="submit"
+              disabled={isLoading}
+              className="w-full mt-2 py-3.5 px-6 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-sm tracking-wide shadow-lg shadow-blue-600/30 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {isLoading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>Đang xác thực tài khoản...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  <span>Vào Xem Phim</span>
+                </>
+              )}
+            </button>
+          </form>
+
+          {/* Private Policy Note */}
+          <div className="mt-6 pt-4 border-t border-slate-800/80 text-center">
+            <div className="flex items-center justify-center gap-1.5 text-xs text-slate-400 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800/60">
+              <ShieldCheck className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+              <span>Hệ thống chỉ cho phép đăng nhập, không mở đăng ký tự do.</span>
             </div>
           </div>
-
-          {/* Submit Button */}
-          <button
-            id="login-submit-btn"
-            type="submit"
-            disabled={isLoading}
-            className="w-full mt-2 py-3 px-6 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-sm tracking-wide shadow-lg shadow-blue-600/30 active:scale-[0.98] transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            {isLoading ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                <span>Đang xác thực tài khoản...</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4" />
-                <span>Vào Xem Phim</span>
-              </>
-            )}
-          </button>
-        </form>
-
-        {/* Private Policy Note */}
-        <div className="mt-6 pt-4 border-t border-slate-800/80 text-center">
-          <div className="flex items-center justify-center gap-1.5 text-xs text-slate-400 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800/60">
-            <ShieldCheck className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-            <span>Hệ thống chỉ cho phép đăng nhập, không mở đăng ký tự do.</span>
-          </div>
-        </div>
-      </motion.div>
+        </motion.div>
       </div>
     </div>
   );
 };
+

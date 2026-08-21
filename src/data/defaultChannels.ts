@@ -123,5 +123,30 @@ export const DEFAULT_CHANNELS: Channel[] = [
     logo: 'https://upload.wikimedia.org/wikipedia/vi/thumb/1/15/Logo_QuochoiTV.svg/200px-Logo_QuochoiTV.svg.png',
     group: '📰 Tin Tức',
     url: 'https://live.quochoitv.vn/quochoi/index.m3u8',
+  },
+  // 🌐 NGUỒN MỚI
+  {
+    name: 'Quidni IPTV',
+    logo: 'https://placehold.co/200x200?text=TV',
+    group: '🌐 Nguồn Mới',
+    url: 'https://quidniptv.blogspot.com/p/iptv.html',
+  },
+  {
+    name: 'Live Sport Hailab',
+    logo: 'https://placehold.co/200x200?text=TV',
+    group: '🌐 Nguồn Mới',
+    url: 'https://livesport.hailab.cloud/',
+  },
+  {
+    name: 'HQClick',
+    logo: 'https://placehold.co/200x200?text=TV',
+    group: '🌐 Nguồn Mới',
+    url: 'https://tinyurl.com/HQClick',
+  },
+  {
+    name: 'KenhTV5',
+    logo: 'https://placehold.co/200x200?text=TV',
+    group: '🌐 Nguồn Mới',
+    url: 'https://tinyurl.com/kenhtv5',
   }
 ];

@@ -20,6 +20,8 @@ import * as dashjs from 'dashjs';
 import { Account, Channel } from '../types';
 import { firestoreStorage } from '../services/firestoreStorage';
 import { getFullApiUrl } from '../services/apiConfig';
+import { systemApiService } from '../services/systemApiService';
+import { presenceService } from '../services/presenceService';
 import { DEFAULT_CHANNELS } from '../data/defaultChannels';
 
 interface LiveTvViewProps {
@@ -35,6 +37,16 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
   const [showControls, setShowControls] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Source selection state
+  const LIVE_SOURCES = [
+    { id: 'default', name: '✨ Tất Cả Nguồn (Tổng Hợp 400+ Kênh)', url: '' },
+    { id: 'hqclick', name: '📺 Hội Quán Click (JSON 45+ Kênh)', url: 'https://tinyurl.com/HQClick' },
+    { id: 'kenhtv5', name: '⚽ KenhTV5 (M3U 230+ Kênh TH & Thể Thao)', url: 'https://tinyurl.com/kenhtv5' },
+    { id: 'quidni', name: '🌐 Quidni IPTV (HTML/M3U 99+ Kênh Việt Nam & Quốc Tế)', url: 'https://quidniptv.blogspot.com/p/iptv.html' },
+    { id: 'iptvorg', name: '🌏 IPTV Org (Kênh Mở Việt Nam)', url: 'https://iptv-org.github.io/iptv/countries/vn.m3u' },
+  ];
+  const [selectedSource, setSelectedSource] = useState<string>('default');
 
   // Player state
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -116,7 +128,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
 
   useEffect(() => {
     fetchChannels();
-  }, []);
+  }, [selectedSource]);
 
   const parseM3uContent = (text: string): Channel[] => {
     const list: Channel[] = [];
@@ -190,7 +202,13 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 4500);
-        const res = await fetch(getFullApiUrl('/api/tv/channels'), { signal: controller.signal });
+        const sourceObj = LIVE_SOURCES.find(s => s.id === selectedSource);
+        let fetchUrl = getFullApiUrl('/api/tv/channels');
+        if (sourceObj && sourceObj.url) {
+          fetchUrl += `?url=${encodeURIComponent(sourceObj.url)}`;
+        }
+
+        const res = await fetch(fetchUrl, { signal: controller.signal });
         clearTimeout(timer);
         if (res.ok) {
           const data = await res.json();
@@ -202,13 +220,16 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         console.warn('Backend /api/tv/channels failed, falling back to direct IPTV sources...');
       }
 
-      // 2. Direct client-side IPTV source fallbacks (Prioritizing bit.ly/tinhlagitivi)
+      // 2. Direct client-side IPTV source fallbacks (Dynamically resolved from System APIs or fallbacks)
       if (loadedChannels.length === 0) {
-        const directSources = [
-          'https://bit.ly/tinhlagitivi',
-          'https://raw.githubusercontent.com/iptv-org/iptv/master/streams/vn.m3u',
-          'https://iptv-org.github.io/iptv/countries/vn.m3u',
-        ];
+        const dynamicLiveTvApis = systemApiService.getActiveEndpointsForCategory('livetv');
+        const directSources = dynamicLiveTvApis.length > 0
+          ? dynamicLiveTvApis.map((a) => a.baseUrl)
+          : [
+              'https://bit.ly/tinhlagitivi',
+              'https://raw.githubusercontent.com/iptv-org/iptv/master/streams/vn.m3u',
+              'https://iptv-org.github.io/iptv/countries/vn.m3u',
+            ];
 
         for (const url of directSources) {
           try {
@@ -243,6 +264,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       setError(err?.message || 'Lỗi kết nối đến máy chủ truyền hình.');
     } finally {
       setLoading(false);
+      window.dispatchEvent(new Event('app-data-loaded'));
     }
   };
 
@@ -347,28 +369,47 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       }
     } else if (streamUrl.includes('.m3u8') || Hls.isSupported()) {
       if (Hls.isSupported()) {
+        let isProxyAttempt = false;
+        const initialPlayUrl = streamUrl.startsWith('http://')
+          ? getFullApiUrl(`/api/tv/stream-proxy?url=${encodeURIComponent(streamUrl)}`)
+          : streamUrl;
+
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
         });
         hlsRef.current = hls;
-        hls.loadSource(streamUrl);
+
+        hls.loadSource(initialPlayUrl);
         hls.attachMedia(video);
+
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setIsLoadingStream(false);
           video.volume = isMuted ? 0 : volume;
           video.muted = isMuted;
           video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
         });
+
         hls.on(Hls.Events.ERROR, (event, data) => {
           if (data.fatal) {
             console.warn('HLS fatal error:', data);
-            setStreamError('Không thể kết nối luồng phát HLS (404/CORS/Ngoại tuyến).');
-            setIsLoadingStream(false);
+            if (!isProxyAttempt && !streamUrl.startsWith('http://')) {
+              isProxyAttempt = true;
+              console.log('Retrying stream via proxy...', streamUrl);
+              const proxyUrl = getFullApiUrl(`/api/tv/stream-proxy?url=${encodeURIComponent(streamUrl)}`);
+              hls.loadSource(proxyUrl);
+              hls.attachMedia(video);
+            } else {
+              setStreamError('Không thể kết nối luồng phát HLS (Kênh ngoại tuyến hoặc cần ứng dụng chuyên dụng).');
+              setIsLoadingStream(false);
+            }
           }
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = streamUrl;
+        const nativePlayUrl = streamUrl.startsWith('http://')
+          ? getFullApiUrl(`/api/tv/stream-proxy?url=${encodeURIComponent(streamUrl)}`)
+          : streamUrl;
+        video.src = nativePlayUrl;
         video.addEventListener('loadedmetadata', () => {
           setIsLoadingStream(false);
           video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
@@ -380,7 +421,22 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
     }
 
+    if (activeChannel) {
+      presenceService.startHeartbeat({
+        accountId: currentAccount?.id || currentAccount?.username || 'user',
+        accountDisplayName: currentAccount?.displayName || 'Khách LiveTV',
+        profileId: 'tv_profile',
+        profileName: currentAccount?.displayName || 'Người xem TV',
+        type: 'watching_tv',
+        itemTitle: activeChannel.name,
+        itemSubtitle: activeChannel.group || 'Kênh LiveTV',
+        itemCover: activeChannel.logo,
+        apiSourceUsed: 'livetv',
+      });
+    }
+
     return () => {
+      presenceService.stopHeartbeat();
       if (hlsRef.current) {
         try {
           hlsRef.current.destroy();
@@ -397,7 +453,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         dashPlayerRef.current = null;
       }
     };
-  }, [activeChannel]);
+  }, [activeChannel, currentAccount]);
 
   const togglePlay = () => {
     const video = videoRef.current;
@@ -471,8 +527,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
   return (
     <div className="min-h-screen bg-[#070d1b] text-white pt-20 pb-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto space-y-8">
       {/* Header Banner */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-blue-900/60 via-indigo-950/80 to-slate-900 border border-blue-800/40 p-6 sm:p-10 shadow-2xl">
-        <div className="absolute top-0 right-0 -mt-8 -mr-8 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-orange-900/60 via-indigo-950/80 to-slate-900 border border-orange-800/40 p-6 sm:p-10 shadow-2xl">
+        <div className="absolute top-0 right-0 -mt-8 -mr-8 w-64 h-64 bg-orange-500/10 rounded-full blur-3xl pointer-events-none" />
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-3">
             <div className="flex items-center gap-2.5">
@@ -480,8 +536,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                 <Radio className="w-3.5 h-3.5 text-white" />
                 Live IPTV & Thể Thao
               </span>
-              <span className="bg-blue-600/20 text-sky-300 border border-blue-500/30 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">
-                <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+              <span className="bg-orange-600/20 text-amber-300 border border-orange-500/30 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
                 {channels.length} Kênh HD
               </span>
             </div>
@@ -493,13 +549,23 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <button
-              onClick={fetchChannels}
-              className="flex items-center gap-2 bg-slate-900/80 hover:bg-slate-800 text-slate-200 hover:text-white px-4 py-2.5 rounded-xl border border-slate-700 text-xs font-bold transition-all cursor-pointer shadow-lg"
+          <div className="flex flex-col sm:flex-row items-center gap-3">
+            <select
+              value={selectedSource}
+              onChange={(e) => setSelectedSource(e.target.value)}
+              className="bg-slate-900/80 text-slate-200 px-4 py-2.5 rounded-xl border border-slate-700 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 shadow-lg appearance-none cursor-pointer pr-8"
+              style={{ backgroundImage: 'url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%2394a3b8%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.7rem top 50%', backgroundSize: '0.65rem auto' }}
             >
-              <RefreshCw className={`w-4 h-4 text-sky-400 ${loading ? 'animate-spin' : ''}`} />
-              <span>Làm mới danh sách</span>
+              {LIVE_SOURCES.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => fetchChannels()}
+              className="flex w-full sm:w-auto justify-center items-center gap-2 bg-slate-900/80 hover:bg-slate-800 text-slate-200 hover:text-white px-4 py-2.5 rounded-xl border border-slate-700 text-xs font-bold transition-all cursor-pointer shadow-lg"
+            >
+              <RefreshCw className={`w-4 h-4 text-amber-400 ${loading ? 'animate-spin' : ''}`} />
+              <span>Làm mới</span>
             </button>
           </div>
         </div>
@@ -515,7 +581,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
             className={`relative bg-black transition-all duration-300 flex flex-col items-center justify-center cursor-pointer ${
               isFullscreen
                 ? 'fixed inset-0 z-50 w-screen h-screen rounded-none'
-                : 'aspect-video rounded-2xl overflow-hidden border border-blue-900/50 shadow-2xl group'
+                : 'aspect-video rounded-2xl overflow-hidden border border-orange-900/50 shadow-2xl group'
             }`}
           >
             {activeChannel ? (
@@ -530,8 +596,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                 {/* Loading Stream Overlay */}
                 {isLoadingStream && (
                   <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3 z-20">
-                    <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                    <p className="text-xs text-sky-300 font-semibold">Đang kết nối luồng {activeChannel.name}...</p>
+                    <div className="w-10 h-10 border-4 border-orange-600 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-xs text-amber-300 font-semibold">Đang kết nối luồng {activeChannel.name}...</p>
                   </div>
                 )}
 
@@ -550,7 +616,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                           setActiveChannel(null);
                           setTimeout(() => setActiveChannel(ch), 50);
                         }}
-                        className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                        className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer"
                       >
                         Thử lại
                       </button>
@@ -589,7 +655,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                           {activeChannel.name}
                         </h2>
                       </div>
-                      <p className="text-[10px] text-sky-300 font-semibold">{activeChannel.group}</p>
+                      <p className="text-[10px] text-amber-300 font-semibold">{activeChannel.group}</p>
                     </div>
                   </div>
                 </div>
@@ -602,7 +668,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                   <div className="flex items-center gap-3">
                     <button
                       onClick={togglePlay}
-                      className="w-9 h-9 rounded-xl bg-blue-600 hover:bg-blue-500 flex items-center justify-center text-white shadow-lg transition-all cursor-pointer"
+                      className="w-9 h-9 rounded-xl bg-orange-600 hover:bg-orange-500 flex items-center justify-center text-white shadow-lg transition-all cursor-pointer"
                       title={isPlaying ? 'Tạm dừng' : 'Phát'}
                     >
                       {isPlaying ? <Pause className="w-4 h-4 fill-white" /> : <Play className="w-4 h-4 fill-white" />}
@@ -615,7 +681,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                       onMouseDown={(e) => e.stopPropagation()}
                     >
                       <button onClick={toggleMute} className="text-slate-200 hover:text-white cursor-pointer" title="Bật/Tắt tiếng">
-                        {isMuted || volume === 0 ? <VolumeX className="w-5 h-5 text-rose-400" /> : <Volume2 className="w-5 h-5 text-sky-400" />}
+                        {isMuted || volume === 0 ? <VolumeX className="w-5 h-5 text-rose-400" /> : <Volume2 className="w-5 h-5 text-amber-400" />}
                       </button>
                       <input
                         type="range"
@@ -625,7 +691,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                         value={isMuted ? 0 : volume}
                         onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
                         onInput={(e) => handleVolumeChange(parseFloat((e.target as HTMLInputElement).value))}
-                        className="w-20 accent-blue-500 cursor-pointer h-1.5 bg-slate-700 rounded-lg"
+                        className="w-20 accent-orange-500 cursor-pointer h-1.5 bg-slate-700 rounded-lg"
                       />
                     </div>
                   </div>
@@ -648,7 +714,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
               </>
             ) : (
               <div className="flex flex-col items-center justify-center gap-3 p-8 text-center">
-                <div className="w-16 h-16 rounded-2xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-sky-400">
+                <div className="w-16 h-16 rounded-2xl bg-orange-600/20 border border-orange-500/30 flex items-center justify-center text-amber-400">
                   <Tv className="w-8 h-8" />
                 </div>
                 <p className="text-sm font-bold text-white">Chọn một kênh để bắt đầu xem</p>
@@ -659,7 +725,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
 
           {/* Active Channel Details Card */}
           {activeChannel && (
-            <div className="p-5 rounded-2xl bg-[#0c1427] border border-blue-900/40 shadow-xl flex items-center justify-between gap-4">
+            <div className="p-5 rounded-2xl bg-[#0c1427] border border-orange-900/40 shadow-xl flex items-center justify-between gap-4">
               <div className="flex items-center gap-3.5">
                 <img
                   src={activeChannel.logo}
@@ -671,7 +737,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                 />
                 <div>
                   <h3 className="text-base font-bold text-white">{activeChannel.name}</h3>
-                  <p className="text-xs text-sky-400 font-semibold flex items-center gap-1 mt-0.5">
+                  <p className="text-xs text-amber-400 font-semibold flex items-center gap-1 mt-0.5">
                     <Signal className="w-3 h-3 text-emerald-400 animate-pulse" />
                     Đang phát sóng trực tiếp • {activeChannel.group}
                   </p>
@@ -690,10 +756,10 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
 
         {/* Right / Bottom: Channel List & Selector (takes 1 col on lg) */}
         <div className="space-y-4 lg:sticky lg:top-24">
-          <div className="p-5 rounded-2xl bg-[#0c1427] border border-blue-900/50 shadow-xl space-y-4">
+          <div className="p-5 rounded-2xl bg-[#0c1427] border border-orange-900/50 shadow-xl space-y-4">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <Tv className="w-5 h-5 text-sky-400" />
+                <Tv className="w-5 h-5 text-amber-400" />
                 <h3 className="text-base font-bold text-white">Danh Sách Kênh</h3>
               </div>
               <span className="text-xs text-slate-400 bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800">
@@ -709,7 +775,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                 placeholder="Tìm tên kênh (vd: VTV1, K+, Bóng đá...)"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 shadow-inner"
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-orange-500 shadow-inner"
               />
               {searchQuery && (
                 <button
@@ -729,7 +795,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                   onClick={() => setSelectedGroup(grp)}
                   className={`text-xs px-3 py-1.5 rounded-xl font-medium transition-all shrink-0 cursor-pointer ${
                     selectedGroup === grp
-                      ? 'bg-blue-600 text-white font-bold shadow-lg shadow-blue-600/30 border border-blue-400'
+                      ? 'bg-orange-600 text-white font-bold shadow-lg shadow-orange-600/30 border border-orange-400'
                       : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-800'
                   }`}
                 >
@@ -753,7 +819,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                       onClick={() => setActiveChannel(ch)}
                       className={`w-full p-2.5 rounded-xl border transition-all text-left flex items-center justify-between gap-3 cursor-pointer ${
                         isActive
-                          ? 'bg-blue-600/20 border-blue-500 text-white shadow-lg'
+                          ? 'bg-orange-600/20 border-orange-500 text-white shadow-lg'
                           : 'bg-slate-900/80 hover:bg-slate-800/80 border-slate-800/80 text-slate-300'
                       }`}
                     >
@@ -767,7 +833,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                           }}
                         />
                         <div className="min-w-0">
-                          <h4 className={`text-xs font-bold truncate ${isActive ? 'text-sky-300' : 'text-white'}`}>
+                          <h4 className={`text-xs font-bold truncate ${isActive ? 'text-amber-300' : 'text-white'}`}>
                             {ch.name}
                           </h4>
                           <p className="text-[10px] text-slate-400 truncate">{ch.group}</p>
@@ -776,7 +842,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
 
                       <div className="flex items-center gap-1.5 shrink-0">
                         {isActive ? (
-                          <span className="bg-blue-600 text-white p-1.5 rounded-lg shadow">
+                          <span className="bg-orange-600 text-white p-1.5 rounded-lg shadow">
                             <Play className="w-3 h-3 fill-white" />
                           </span>
                         ) : (
@@ -793,6 +859,18 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
               </div>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* Mobile Bottom Dock Navigation for LiveTV */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0f0904]/95 backdrop-blur-md border-t border-orange-900/40 pb-safe">
+        <div className="flex items-center justify-around p-2">
+          <button
+            className="flex flex-col items-center p-2 rounded-xl transition-all text-orange-400"
+          >
+            <Tv className="w-5 h-5 mb-1" />
+            <span className="text-[10px] font-medium">Danh Sách Kênh</span>
+          </button>
         </div>
       </div>
     </div>

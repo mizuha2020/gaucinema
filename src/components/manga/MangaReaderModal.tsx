@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { MangaChapter, MangaItem } from '../../services/mangaApi';
 import { mangaApi } from '../../services/mangaApi';
+import { systemApiService } from '../../services/systemApiService';
+import { presenceService } from '../../services/presenceService';
 import {
   X,
   ChevronLeft,
@@ -56,6 +58,27 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
   const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [restoredToastMsg, setRestoredToastMsg] = useState<string | null>(null);
+  const [sourceWarning, setSourceWarning] = useState<string | null>(null);
+
+  // Monitor if active source gets disabled by admin while reading
+  useEffect(() => {
+    const checkSourceHealth = () => {
+      const endpoints = systemApiService.getActiveEndpointsForCategory('manga');
+      const currentSrcId = currentChapter.source || 'otruyen';
+      const found = endpoints.find((e) => e.id === currentSrcId);
+      if (!found || !found.enabled) {
+        setSourceWarning(`⚠️ Nguồn "${currentSrcId.toUpperCase()}" đang dùng vừa bị Quản trị viên vô hiệu hóa.`);
+      } else {
+        setSourceWarning(null);
+      }
+    };
+
+    checkSourceHealth();
+    const unsubscribe = systemApiService.subscribe(() => {
+      checkSourceHealth();
+    });
+    return () => unsubscribe();
+  }, [currentChapter.source]);
 
   // Settings with persistent localStorage
   const [readerSettings, setReaderSettings] = useState<MangaReaderSettings>(() => {
@@ -196,49 +219,60 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
       handleResetZoom();
       pageRefs.current = [];
 
-      const imgUrls = await mangaApi.getChapterPages(currentChapter);
-      if (isMounted) {
-        setPages(imgUrls);
-        setIsLoading(false);
+      try {
+        const useDataSaver = readerSettings.imageQuality === 'data-saver';
+        const imgUrls = await mangaApi.getChapterPages(currentChapter, { dataSaver: useDataSaver });
+        if (isMounted) {
+          setPages(imgUrls);
 
-        // Check for saved scroll position
-        const scrollKey = `manga_reader_scroll_${manga.id}_${currentChapter.id}`;
-        let targetPage = currentChapter.id === initialChapter.id ? initialPageIndex : 0;
-        let savedScrollTop = 0;
+          // Check for saved scroll position
+          const scrollKey = `manga_reader_scroll_${manga.id}_${currentChapter.id}`;
+          let targetPage = currentChapter.id === initialChapter.id ? initialPageIndex : 0;
+          let savedScrollTop = 0;
 
-        try {
-          const savedPos = localStorage.getItem(scrollKey);
-          if (savedPos) {
-            const parsed = JSON.parse(savedPos);
-            if (typeof parsed.pageIndex === 'number' && parsed.pageIndex >= 0 && parsed.pageIndex < imgUrls.length) {
-              targetPage = parsed.pageIndex;
-            }
-            if (typeof parsed.scrollTop === 'number') {
-              savedScrollTop = parsed.scrollTop;
-            }
-          }
-        } catch (e) {}
-
-        setCurrentPageIndex(targetPage);
-        resetControlsTimer();
-
-        if (onChapterRead) {
-          onChapterRead(currentChapter, targetPage);
-        }
-
-        // Restore scroll position for webtoon mode after render
-        if (targetPage > 0 || savedScrollTop > 0) {
-          setTimeout(() => {
-            if (scrollContainerRef.current) {
-              if (savedScrollTop > 50) {
-                scrollContainerRef.current.scrollTop = savedScrollTop;
-              } else if (pageRefs.current[targetPage]) {
-                pageRefs.current[targetPage]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          try {
+            const savedPos = localStorage.getItem(scrollKey);
+            if (savedPos) {
+              const parsed = JSON.parse(savedPos);
+              if (typeof parsed.pageIndex === 'number' && parsed.pageIndex >= 0 && parsed.pageIndex < imgUrls.length) {
+                targetPage = parsed.pageIndex;
               }
-              setRestoredToastMsg(`Đã khôi phục vị trí đọc: Trang ${targetPage + 1}`);
-              setTimeout(() => setRestoredToastMsg(null), 3200);
+              if (typeof parsed.scrollTop === 'number') {
+                savedScrollTop = parsed.scrollTop;
+              }
             }
-          }, 350);
+          } catch (e) {}
+
+          setCurrentPageIndex(targetPage);
+          resetControlsTimer();
+
+          if (onChapterRead) {
+            onChapterRead(currentChapter, targetPage);
+          }
+
+          // Restore scroll position for webtoon mode after render
+          if (targetPage > 0 || savedScrollTop > 0) {
+            setTimeout(() => {
+              if (scrollContainerRef.current) {
+                if (savedScrollTop > 50) {
+                  scrollContainerRef.current.scrollTop = savedScrollTop;
+                } else if (pageRefs.current[targetPage]) {
+                  pageRefs.current[targetPage]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+                setRestoredToastMsg(`Đã khôi phục vị trí đọc: Trang ${targetPage + 1}`);
+                setTimeout(() => setRestoredToastMsg(null), 3200);
+              }
+            }, 350);
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching chapter pages:', err);
+        if (isMounted) {
+          setPages([]);
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
         }
       }
     };
@@ -247,13 +281,36 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
       isMounted = false;
       if (controlsTimer.current) clearTimeout(controlsTimer.current);
     };
-  }, [currentChapter]);
+  }, [currentChapter, readerSettings.imageQuality]);
+
+  // Presence heartbeat for real-time admin monitoring
+  useEffect(() => {
+    presenceService.startHeartbeat({
+      accountId: 'user',
+      accountDisplayName: 'Độc Giả Manga',
+      profileId: 'manga_profile',
+      profileName: 'Độc Giả',
+      type: 'reading_manga',
+      itemTitle: manga.title || 'Truyện tranh',
+      itemSubtitle: currentChapter.title ? `Chương ${currentChapter.chapterNumber}: ${currentChapter.title}` : `Chương ${currentChapter.chapterNumber}`,
+      itemCover: manga.coverUrl,
+      apiSourceUsed: currentChapter.source || 'otruyen',
+      currentTime: currentPageIndex + 1,
+      duration: pages.length || 1,
+      progressPercent: Math.round(((currentPageIndex + 1) / (pages.length || 1)) * 100),
+    });
+
+    return () => {
+      presenceService.stopHeartbeat();
+    };
+  }, [manga.title, currentChapter.chapterNumber, currentChapter.title, currentChapter.source]);
 
   // Reset zoom on page change in single mode & record read
   useEffect(() => {
     handleResetZoom();
     if (!isLoading && onChapterRead) {
       onChapterRead(currentChapter, currentPageIndex);
+      presenceService.updateProgress(currentPageIndex + 1, pages.length || 1);
       // Persist current page index
       try {
         const scrollKey = `manga_reader_scroll_${manga.id}_${currentChapter.id}`;
@@ -671,6 +728,14 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
         </div>
       )}
 
+      {/* Source Disabled Warning Banner */}
+      {sourceWarning && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-amber-600/95 backdrop-blur-md text-white text-xs font-bold px-4 py-2.5 rounded-2xl shadow-2xl border border-amber-400/50 flex items-center space-x-2 animate-fade-in pointer-events-auto">
+          <span className="w-2 h-2 rounded-full bg-amber-300 animate-ping"></span>
+          <span>{sourceWarning}</span>
+        </div>
+      )}
+
       {/* Top Header Overlay with safe area padding */}
       <div
         className={`absolute top-0 left-0 right-0 z-30 bg-gradient-to-b from-black/95 via-black/80 to-transparent px-3 sm:px-6 pt-[calc(env(safe-area-inset-top)+14px)] pb-4 flex items-center justify-between transition-transform duration-300 ${
@@ -742,18 +807,18 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
             )}
           </button>
 
-          {/* Eye Care & Display Settings Button */}
+          {/* Settings & Display Settings Button */}
           <button
             onClick={() => setShowSettingsModal(true)}
             className={`p-2 sm:px-3 sm:py-2 rounded-xl border text-xs font-semibold transition flex items-center space-x-1.5 ${
-              readerSettings.colorFilter !== 'normal' || readerSettings.brightness !== 100
+              readerSettings.colorFilter !== 'normal' || readerSettings.brightness !== 100 || readerSettings.imageQuality === 'data-saver'
                 ? 'bg-amber-600/25 border-amber-500/40 text-amber-300 hover:bg-amber-600/35'
                 : 'bg-white/10 border-white/10 hover:bg-white/20 text-gray-200'
             }`}
-            title="Tùy biến hiển thị & Mắt đọc"
+            title="Cài đặt đọc truyện & Hiển thị"
           >
-            <Eye className="w-4 h-4" />
-            <span className="hidden md:inline">Hiển thị</span>
+            <Sliders className="w-4 h-4 text-amber-400" />
+            <span className="inline">Cài đặt</span>
           </button>
 
           {/* Fullscreen Button (Desktop & supported mobile) */}
@@ -829,31 +894,16 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
                 ref={(el) => {
                   pageRefs.current[idx] = el;
                 }}
-                className="relative w-full flex flex-col items-center min-h-[250px] sm:min-h-[450px] bg-black/20 rounded-xl overflow-hidden shadow-md"
+                className="relative w-full flex flex-col items-center"
               >
-                {!loadedPages[idx] && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/40 animate-pulse">
-                    <div className="w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                  </div>
-                )}
-                <img
-                  src={pageUrl}
-                  alt={`Page ${idx + 1}`}
-                  style={{ filter: getImageFilterStyle() }}
-                  className={`w-full max-w-full h-auto object-contain transition-all duration-300 ${
-                    loadedPages[idx] ? 'opacity-100' : 'opacity-0'
-                  }`}
-                  loading={idx < 4 ? 'eager' : 'lazy'}
-                  onLoad={() => handleWebtoonImageLoad(idx)}
-                  onError={(e) => {
-                    setLoadedPages((prev) => ({ ...prev, [idx]: true }));
-                    (e.target as HTMLImageElement).src =
-                      'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop';
-                  }}
+                <MangaReaderPageItem
+                  pageUrl={pageUrl}
+                  idx={idx}
+                  totalPages={pages.length}
+                  filterStyle={getImageFilterStyle()}
+                  onLoaded={() => handleWebtoonImageLoad(idx)}
+                  mode="webtoon"
                 />
-                <div className="w-full py-1 text-center bg-black/50 text-[11px] text-gray-400 font-mono">
-                  Trang {idx + 1} / {pages.length}
-                </div>
               </div>
             ))}
 
@@ -883,24 +933,13 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
                   transform: `scale(${scale}) translate(${pan.x / scale}px, ${pan.y / scale}px)`,
                 }}
               >
-                {!loadedPages[currentPageIndex] && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/40 animate-pulse">
-                    <div className="w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                  </div>
-                )}
-                <img
-                  src={pages[currentPageIndex]}
-                  alt={`Page ${currentPageIndex + 1}`}
-                  style={{ filter: getImageFilterStyle() }}
-                  className={`max-h-[calc(100vh-200px)] max-w-full object-contain rounded-lg transition-all duration-300 shadow-2xl ${
-                    loadedPages[currentPageIndex] ? 'opacity-100' : 'opacity-0'
-                  }`}
-                  onLoad={() => setLoadedPages((prev) => ({ ...prev, [currentPageIndex]: true }))}
-                  onError={(e) => {
-                    setLoadedPages((prev) => ({ ...prev, [currentPageIndex]: true }));
-                    (e.target as HTMLImageElement).src =
-                      'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop';
-                  }}
+                <MangaReaderPageItem
+                  pageUrl={pages[currentPageIndex]}
+                  idx={currentPageIndex}
+                  totalPages={pages.length}
+                  filterStyle={getImageFilterStyle()}
+                  onLoaded={() => setLoadedPages((prev) => ({ ...prev, [currentPageIndex]: true }))}
+                  mode="single"
                 />
               </div>
             )}
@@ -1145,3 +1184,125 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
     </div>
   );
 };
+
+interface MangaReaderPageItemProps {
+  pageUrl: string;
+  idx: number;
+  totalPages: number;
+  filterStyle?: string;
+  onLoaded?: () => void;
+  mode?: 'webtoon' | 'single';
+}
+
+const MangaReaderPageItem: React.FC<MangaReaderPageItemProps> = ({
+  pageUrl,
+  idx,
+  totalPages,
+  filterStyle,
+  onLoaded,
+  mode = 'webtoon',
+}) => {
+  const [currentSrc, setCurrentSrc] = useState<string>(pageUrl);
+  const [attempt, setAttempt] = useState<number>(0);
+  const [hasError, setHasError] = useState<boolean>(false);
+  const [isLoaded, setIsLoaded] = useState<boolean>(false);
+
+  useEffect(() => {
+    setCurrentSrc(pageUrl);
+    setAttempt(0);
+    setHasError(false);
+    setIsLoaded(false);
+  }, [pageUrl]);
+
+  const handleError = () => {
+    if (attempt === 0) {
+      // Step 1: Retry via dedicated server proxy
+      setAttempt(1);
+      setCurrentSrc(`/api/proxy/image?url=${encodeURIComponent(pageUrl)}`);
+    } else if (attempt === 1) {
+      // Step 2: Try data-saver / official CDN fallback for MangaDex
+      const mdMatch = pageUrl.match(/(?:mangadex\.network|uploads\.mangadex\.org)\/(data|data-saver)\/([a-f0-9]+)\/([^?#]+)/i);
+      if (mdMatch) {
+        const [, , hash, file] = mdMatch;
+        setAttempt(2);
+        const fallbackUrl = `/api/proxy/image?url=${encodeURIComponent(`https://uploads.mangadex.org/data-saver/${hash}/${file}`)}`;
+        setCurrentSrc(fallbackUrl);
+      } else {
+        setHasError(true);
+        setIsLoaded(true);
+        onLoaded?.();
+      }
+    } else {
+      setHasError(true);
+      setIsLoaded(true);
+      onLoaded?.();
+    }
+  };
+
+  const handleManualRetry = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setHasError(false);
+    setIsLoaded(false);
+    setAttempt(1);
+    setCurrentSrc(`/api/proxy/image?url=${encodeURIComponent(pageUrl)}&retry=${Date.now()}`);
+  };
+
+  if (hasError) {
+    return (
+      <div
+        className={`flex flex-col items-center justify-center p-6 bg-[#16161a] border border-white/10 rounded-2xl text-center my-3 ${
+          mode === 'single' ? 'min-h-[420px] w-full max-w-md shadow-2xl' : 'w-full min-h-[260px]'
+        }`}
+      >
+        <BookOpen className="w-8 h-8 text-red-400 mb-2 opacity-80" />
+        <p className="text-sm font-semibold text-gray-200 mb-1">Không tải được trang {idx + 1}</p>
+        <p className="text-xs text-gray-400 mb-4 max-w-xs leading-relaxed">
+          Máy chủ MangaDex node tạm thời bận hoặc kết nối mạng bị gián đoạn.
+        </p>
+        <button
+          onClick={handleManualRetry}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white text-xs font-semibold rounded-xl transition flex items-center space-x-2 shadow-lg shadow-blue-600/30"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+          <span>Tải lại trang {idx + 1}</span>
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`relative w-full flex flex-col items-center overflow-hidden ${
+        mode === 'webtoon' ? 'min-h-[300px] sm:min-h-[500px] bg-black/20 rounded-xl shadow-md' : 'max-h-[calc(100vh-200px)]'
+      }`}
+    >
+      {!isLoaded && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xs animate-pulse z-10 min-h-[250px]">
+          <div className="w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full animate-spin mb-2" />
+          <span className="text-[11px] text-gray-300 font-mono font-medium">Đang tải trang {idx + 1}...</span>
+        </div>
+      )}
+      <img
+        src={currentSrc}
+        alt={`Trang ${idx + 1}`}
+        referrerPolicy="no-referrer"
+        style={{ filter: filterStyle }}
+        className={`w-full max-w-full h-auto object-contain transition-all duration-300 ${
+          isLoaded ? 'opacity-100' : 'opacity-0'
+        } ${mode === 'single' ? 'max-h-[calc(100vh-200px)] rounded-lg shadow-2xl' : ''}`}
+        loading={idx < 4 ? 'eager' : 'lazy'}
+        onLoad={() => {
+          setIsLoaded(true);
+          onLoaded?.();
+        }}
+        onError={handleError}
+      />
+      {mode === 'webtoon' && (
+        <div className="w-full py-1 text-center bg-black/50 text-[11px] text-gray-400 font-mono">
+          Trang {idx + 1} / {totalPages}
+        </div>
+      )}
+    </div>
+  );
+};
+

@@ -8,6 +8,7 @@ import {
   NavTab,
   UserProfile,
   WatchHistoryItem,
+  ActiveApp,
 } from './types';
 import { authService } from './services/authService';
 import { firestoreStorage } from './services/firestoreStorage';
@@ -26,8 +27,9 @@ import { ProfileSelector } from './components/ProfileSelector';
 import { FilterSection } from './components/FilterSection';
 import { MyListView } from './components/MyListView';
 import { HistoryView } from './components/HistoryView';
-import { LiveTvView } from './components/LiveTvView';
-import { MangaView } from './components/manga/MangaView';
+import { MangaAppWrapper } from './apps/MangaAppWrapper';
+import { LiveTvAppWrapper } from './apps/LiveTvAppWrapper';
+import { AppSwitcherLoading } from './components/AppSwitcherLoading';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { App as CapApp } from '@capacitor/app';
 import {
@@ -46,11 +48,33 @@ import {
 } from 'lucide-react';
 
 export default function App() {
-  // Auth State (Gatekeeper: Require login)
-  const [currentAccount, setCurrentAccount] = useState<Account | null>(() =>
-    authService.getSessionAccount()
-  );
+  // Gatekeeper state...
+  const [currentAccount, setCurrentAccount] = useState<Account | null>(() => authService.getSessionAccount());
   const [showAdminDashboard, setShowAdminDashboard] = useState<boolean>(false);
+
+  // App Switcher State
+  const [activeApp, setActiveApp] = useState<ActiveApp>('cinema');
+  const [isSwitchingApp, setIsSwitchingApp] = useState<boolean>(false);
+  const [targetApp, setTargetApp] = useState<ActiveApp | null>(null);
+
+  const handleSwitchApp = (app: ActiveApp) => {
+    if (app === activeApp) return;
+    setTargetApp(app);
+    setActiveApp(app); // Mount target immediately to fetch data in background
+    setIsSwitchingApp(true);
+    
+    if (app === 'cinema') {
+      setTimeout(() => {
+        window.dispatchEvent(new Event('app-data-loaded'));
+      }, 100);
+    }
+  };
+
+  const handleSwitchAppComplete = () => {
+    setTargetApp(null);
+    setIsSwitchingApp(false);
+  };
+
 
   // Profiles State per logged-in account
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
@@ -172,91 +196,80 @@ export default function App() {
   }, [refreshProfileData]);
 
   // Fetch Home collections
-  useEffect(() => {
-    let isMounted = true;
+  const fetchHomeData = useCallback(async () => {
     setIsLoadingHome(true);
+    try {
+      const [newRes, trendingAllRes, topSeriesRes, topSingleRes, theaterRes] = await Promise.all([
+        movieApi.getNewUpdated(1, 36).catch(() => null),
+        movieApi.getTrending(12).catch(() => null),
+        movieApi.getTrending(10, 'series').catch(() => null),
+        movieApi.getTrending(10, 'single').catch(() => null),
+        movieApi.getTheaterMovies(1, 10).catch(() => null),
+      ]);
 
-    const loadHomeData = async () => {
-      try {
-        const [newRes, trendingAllRes, topSeriesRes, topSingleRes, theaterRes] = await Promise.all([
-          movieApi.getNewUpdated(1, 36).catch(() => null),
-          movieApi.getTrending(12).catch(() => null),
-          movieApi.getTrending(10, 'series').catch(() => null),
-          movieApi.getTrending(10, 'single').catch(() => null),
-          movieApi.getTheaterMovies(1, 10).catch(() => null),
+      const trendingItems = trendingAllRes?.items || [];
+      if (trendingItems.length) setTopHotAll(trendingItems);
+
+      if (theaterRes?.items?.length) setTheaterList(theaterRes.items);
+
+      if (newRes?.items?.length) {
+        // Lọc bỏ các phim đã có trong Top Hot (All, Series, Single) để tránh trùng lặp
+        const hotSlugs = new Set([
+          ...trendingItems.map((m: any) => m.slug),
+          ...(topSeriesRes?.items || []).map((m: any) => m.slug),
+          ...(topSingleRes?.items || []).map((m: any) => m.slug)
         ]);
-
-        if (isMounted) {
-          const trendingItems = trendingAllRes?.items || [];
-          if (trendingItems.length) setTopHotAll(trendingItems);
-
-          if (theaterRes?.items?.length) setTheaterList(theaterRes.items);
-
-          if (newRes?.items?.length) {
-            // Lọc bỏ các phim đã có trong Top Hot (All, Series, Single) để tránh trùng lặp
-            const hotSlugs = new Set([
-              ...trendingItems.map((m: any) => m.slug),
-              ...(topSeriesRes?.items || []).map((m: any) => m.slug),
-              ...(topSingleRes?.items || []).map((m: any) => m.slug)
-            ]);
-            const filteredNew = newRes.items.filter((m: any) => !hotSlugs.has(m.slug));
-            setNewUpdated(filteredNew);
-          }
-
-          if (topSeriesRes?.items?.length) setTopSeries(topSeriesRes.items);
-          if (topSingleRes?.items?.length) setTopSingle(topSingleRes.items);
-          if (newRes?.items?.length || trendingItems.length || topSeriesRes?.items?.length || topSingleRes?.items?.length) {
-            setIsLoadingHome(false);
-          }
-        }
-
-        const [
-          seriesRes,
-          singleRes,
-          animeRes,
-          actionRes,
-          romanceRes,
-          horrorRes,
-          sciFiRes,
-          koreanRes,
-        ] = await Promise.allSettled([
-          movieApi.getSeries(1, 24),
-          movieApi.getSingleMovies(1, 24),
-          movieApi.getAnime(1, 16),
-          movieApi.getByGenre('hanh-dong', 1, 16),
-          movieApi.getByGenre('tinh-cam', 1, 16),
-          movieApi.getByGenre('kinh-di', 1, 16),
-          movieApi.getByGenre('vien-tuong', 1, 16),
-          movieApi.getByCountry('han-quoc', 1, 16),
-        ]);
-
-        if (isMounted) {
-          if (!newUpdated.length && newRes?.items?.length) {
-            setNewUpdated(newRes.items);
-          }
-          if (seriesRes.status === 'fulfilled') setSeriesList(seriesRes.value.items?.slice(10) || []);
-          if (singleRes.status === 'fulfilled') setSingleList(singleRes.value.items?.slice(10) || []);
-          if (animeRes.status === 'fulfilled') setAnimeList(animeRes.value.items || []);
-          if (actionRes.status === 'fulfilled') setActionList(actionRes.value.items || []);
-          if (romanceRes.status === 'fulfilled') setRomanceList(romanceRes.value.items || []);
-          if (horrorRes.status === 'fulfilled') setHorrorList(horrorRes.value.items || []);
-          if (sciFiRes.status === 'fulfilled') setSciFiList(sciFiRes.value.items || []);
-          if (koreanRes.status === 'fulfilled') setKoreanList(koreanRes.value.items || []);
-        }
-      } catch (e) {
-        console.error('Failed to load initial movie data', e);
-      } finally {
-        if (isMounted) {
-          setIsLoadingHome(false);
-        }
+        const filteredNew = newRes.items.filter((m: any) => !hotSlugs.has(m.slug));
+        setNewUpdated(filteredNew);
       }
-    };
 
-    loadHomeData();
-    return () => {
-      isMounted = false;
-    };
+      if (topSeriesRes?.items?.length) setTopSeries(topSeriesRes.items);
+      if (topSingleRes?.items?.length) setTopSingle(topSingleRes.items);
+      if (newRes?.items?.length || trendingItems.length || topSeriesRes?.items?.length || topSingleRes?.items?.length) {
+        setIsLoadingHome(false);
+      }
+
+      const [
+        seriesRes,
+        singleRes,
+        animeRes,
+        actionRes,
+        romanceRes,
+        horrorRes,
+        sciFiRes,
+        koreanRes,
+      ] = await Promise.allSettled([
+        movieApi.getSeries(1, 24),
+        movieApi.getSingleMovies(1, 24),
+        movieApi.getAnime(1, 16),
+        movieApi.getByGenre('hanh-dong', 1, 16),
+        movieApi.getByGenre('tinh-cam', 1, 16),
+        movieApi.getByGenre('kinh-di', 1, 16),
+        movieApi.getByGenre('vien-tuong', 1, 16),
+        movieApi.getByCountry('han-quoc', 1, 16),
+      ]);
+
+      if (newRes?.items?.length && !newUpdated.length) {
+        setNewUpdated(newRes.items);
+      }
+      if (seriesRes.status === 'fulfilled') setSeriesList(seriesRes.value.items?.slice(10) || []);
+      if (singleRes.status === 'fulfilled') setSingleList(singleRes.value.items?.slice(10) || []);
+      if (animeRes.status === 'fulfilled') setAnimeList(animeRes.value.items || []);
+      if (actionRes.status === 'fulfilled') setActionList(actionRes.value.items || []);
+      if (romanceRes.status === 'fulfilled') setRomanceList(romanceRes.value.items || []);
+      if (horrorRes.status === 'fulfilled') setHorrorList(horrorRes.value.items || []);
+      if (sciFiRes.status === 'fulfilled') setSciFiList(sciFiRes.value.items || []);
+      if (koreanRes.status === 'fulfilled') setKoreanList(koreanRes.value.items || []);
+    } catch (e) {
+      console.error('Failed to load initial movie data', e);
+    } finally {
+      setIsLoadingHome(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchHomeData();
+  }, [fetchHomeData]);
 
   // Auth Handlers
   const handleLoginSuccess = (account: Account) => {
@@ -344,15 +357,18 @@ export default function App() {
     return myList.some((item) => item.movieSlug === slug);
   };
 
-  // Prevent body scroll ONLY when modal dialog or player overlay is open
+  // Prevent background scroll ONLY when modal dialog or player overlay is open
   useEffect(() => {
     const shouldLock = Boolean(playingMovie || selectedMovieForDetail);
     if (shouldLock) {
+      document.documentElement.style.overflow = 'hidden';
       document.body.style.overflow = 'hidden';
     } else {
+      document.documentElement.style.overflow = '';
       document.body.style.overflow = '';
     }
     return () => {
+      document.documentElement.style.overflow = '';
       document.body.style.overflow = '';
     };
   }, [playingMovie, selectedMovieForDetail]);
@@ -625,10 +641,33 @@ export default function App() {
     );
   }
 
-  return (
-    <div className="min-h-screen bg-[#070b16] text-white font-sans selection:bg-blue-600 selection:text-white">
-      {/* 1. Who's Watching Profile Selector Screen */}
-      {showProfileSelector && (
+  let appContent = null;
+
+  if (activeApp === 'manga') {
+    appContent = (
+      <MangaAppWrapper
+        currentAccount={currentAccount}
+        activeProfile={activeProfile}
+        profiles={profiles}
+        onSelectProfile={handleSelectProfile}
+        onSwitchApp={handleSwitchApp}
+      />
+    );
+  } else if (activeApp === 'livetv') {
+    appContent = (
+      <LiveTvAppWrapper
+        currentAccount={currentAccount}
+        activeProfile={activeProfile}
+        profiles={profiles}
+        onSelectProfile={handleSelectProfile}
+        onSwitchApp={handleSwitchApp}
+      />
+    );
+  } else {
+    appContent = (
+      <div className="min-h-screen bg-[#070b16] text-white font-sans selection:bg-blue-600 selection:text-white">
+        {/* 1. Who's Watching Profile Selector Screen */}
+        {showProfileSelector && (
         <ProfileSelector
           currentAccount={currentAccount}
           profiles={profiles}
@@ -678,6 +717,8 @@ export default function App() {
             currentAccount.role === 'admin' ? openAdminDashboard : undefined
           }
           onLogout={handleLogout}
+          onSwitchApp={handleSwitchApp}
+          onRefreshHome={fetchHomeData}
         />
       )}
 
@@ -1022,14 +1063,18 @@ export default function App() {
             </div>
           )}
 
-          {/* LIVE TV & SPORTS TAB */}
+          {/* LIVE TV & SPORTS TAB (Now handled by Sub-App, but keep fallback) */}
           {activeTab === 'tv-live' && (
-            <LiveTvView currentAccount={currentAccount} />
+            <div className="pt-20 text-center text-slate-400">
+              Vui lòng sử dụng tính năng App Switcher để chuyển sang Gấu LiveTV
+            </div>
           )}
 
-          {/* MANGA READER TAB */}
+          {/* MANGA READER TAB (Now handled by Sub-App, but keep fallback) */}
           {activeTab === 'manga' && (
-            <MangaView activeProfile={activeProfile} currentAccount={currentAccount} />
+            <div className="pt-20 text-center text-slate-400">
+              Vui lòng sử dụng tính năng App Switcher để chuyển sang Gấu Manga
+            </div>
           )}
         </main>
       )}
@@ -1146,5 +1191,18 @@ export default function App() {
         />
       )}
     </div>
+    );
+  }
+
+  return (
+    <>
+      {appContent}
+      {isSwitchingApp && targetApp && (
+        <AppSwitcherLoading
+          targetApp={targetApp}
+          onLoadingComplete={handleSwitchAppComplete}
+        />
+      )}
+    </>
   );
 }

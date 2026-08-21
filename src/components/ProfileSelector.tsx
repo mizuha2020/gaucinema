@@ -148,15 +148,15 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
   return (
     <div
       id="qtb-profile-selector"
-      className="fixed inset-0 z-50 bg-[#070b16] overflow-y-auto overflow-x-hidden p-3.5 sm:p-6 md:p-8"
+      className="relative min-h-screen w-full bg-[#070b16] overflow-y-auto overflow-x-hidden p-3.5 sm:p-6 md:p-8 flex flex-col justify-between safe-pt safe-pb"
       style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
     >
-      <div className="min-h-full flex flex-col justify-between max-w-5xl mx-auto py-2 space-y-6">
+      <div className="min-h-full flex flex-col justify-between max-w-5xl mx-auto py-2 space-y-6 w-full">
         {/* Top Bar: Brand + User Info & Logout / Admin */}
         <div className="w-full flex items-center justify-between gap-2 pt-1 pb-2 shrink-0">
           {/* Brand */}
           <div className="flex items-center gap-2 shrink-0">
-            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg overflow-hidden border border-blue-500/30">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg overflow-hidden border border-blue-500/30 bg-[#0f172a]">
               <img
                 src={appLogo}
                 alt="Gấu Cinema Logo"
@@ -206,7 +206,7 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
 
         {/* Main Center Profiles Grid */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.97, y: 10 }}
+          initial={{ opacity: 1, scale: 1, y: 0 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           className="w-full max-w-4xl mx-auto flex flex-col items-center text-center my-auto py-2 sm:py-4"
         >

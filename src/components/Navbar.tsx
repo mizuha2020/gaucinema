@@ -41,6 +41,8 @@ interface NavbarProps {
   onSearchSubmit: (query: string) => void;
   onOpenAdminDashboard?: () => void;
   onLogout?: () => void;
+  onSwitchApp: (app: 'cinema' | 'manga' | 'livetv') => void;
+  onRefreshHome?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -56,6 +58,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSearchSubmit,
   onOpenAdminDashboard,
   onLogout,
+  onSwitchApp,
+  onRefreshHome,
 }) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -161,19 +165,20 @@ export const Navbar: React.FC<NavbarProps> = ({
     };
   }, []);
 
-  // Prevent body scroll when search or mobile menu is open
+  // Prevent body scroll ONLY when mobile menu or mobile search overlay is open (not on desktop PC)
   useEffect(() => {
-    const shouldLock = isSearchOpen || isMobileMenuOpen;
+    const isMobileScreen = typeof window !== 'undefined' && window.innerWidth < 640;
+    const shouldLock = isMobileMenuOpen || (isSearchOpen && isMobileScreen);
     if (shouldLock) {
       document.body.style.overflow = 'hidden';
       document.body.style.height = '100vh';
     } else {
-      document.body.style.overflow = 'unset';
-      document.body.style.height = 'unset';
+      document.body.style.overflow = '';
+      document.body.style.height = '';
     }
     return () => {
-      document.body.style.overflow = 'unset';
-      document.body.style.height = 'unset';
+      document.body.style.overflow = '';
+      document.body.style.height = '';
     };
   }, [isSearchOpen, isMobileMenuOpen]);
 
@@ -259,8 +264,16 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Gấu Brand */}
           <button
             id="brand-logo-btn"
-            onClick={() => onTabChange('home')}
+            onClick={() => {
+              if (activeTab === 'home') {
+                onRefreshHome?.();
+              } else {
+                onTabChange('home');
+              }
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
             className="flex items-center gap-2.5 cursor-pointer focus:outline-none group text-left shrink-0"
+            title="Về đầu trang & Làm mới"
           >
             <div className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl overflow-hidden border-2 border-blue-500/50 shadow-lg shadow-blue-500/20 group-hover:scale-110 group-hover:border-blue-400 transition-all duration-300">
               <img
@@ -276,7 +289,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 Gấu
               </span>
               <span className="text-[9px] sm:text-[10px] uppercase font-black tracking-[0.2em] text-sky-400/90 -mt-1">
-                CINEMA HD
+                CINEMA
               </span>
             </div>
           </button>
@@ -553,7 +566,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <div className="space-y-1">
                   <button
                     onClick={() => {
-                      onTabChange('tv-live');
+                      onSwitchApp('livetv');
                       setIsAppMenuOpen(false);
                     }}
                     className="w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium text-slate-200 hover:bg-sky-900/30 hover:text-sky-300 transition-colors cursor-pointer group"
@@ -562,23 +575,23 @@ export const Navbar: React.FC<NavbarProps> = ({
                       <Tv className="w-4 h-4 text-sky-400" />
                     </div>
                     <div className="flex flex-col items-start">
-                      <span>Truyền Hình & Thể Thao</span>
+                      <span>Gấu LiveTV</span>
                       <span className="text-[10px] text-slate-400 font-normal">Kênh thể thao trực tiếp</span>
                     </div>
                   </button>
 
                   <button
                     onClick={() => {
-                      onTabChange('manga');
+                      onSwitchApp('manga');
                       setIsAppMenuOpen(false);
                     }}
-                    className="w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium text-slate-200 hover:bg-orange-900/30 hover:text-orange-300 transition-colors cursor-pointer group"
+                    className="w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium text-slate-200 hover:bg-purple-900/30 hover:text-purple-300 transition-colors cursor-pointer group"
                   >
-                    <div className="w-8 h-8 rounded-lg bg-orange-900/40 flex items-center justify-center group-hover:bg-orange-500/20 shrink-0">
-                      <BookOpen className="w-4 h-4 text-orange-400" />
+                    <div className="w-8 h-8 rounded-lg bg-purple-900/40 flex items-center justify-center group-hover:bg-purple-500/20 shrink-0">
+                      <BookOpen className="w-4 h-4 text-purple-400" />
                     </div>
                     <div className="flex flex-col items-start">
-                      <span>Đọc Truyện Manga</span>
+                      <span>Gấu Manga</span>
                       <span className="text-[10px] text-slate-400 font-normal">Thế giới truyện tranh manga</span>
                     </div>
                   </button>

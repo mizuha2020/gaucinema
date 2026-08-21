@@ -10,14 +10,11 @@ import {
   Globe,
   Tv,
   Sparkles,
-  Volume2,
-  VolumeX,
   Video,
   Share2,
   Bookmark,
   Info,
   X,
-  Image as ImageIcon,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -79,21 +76,39 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
 
   // Trailer states
   const [showTrailer, setShowTrailer] = useState(false);
-  // Default muted on mount for browser autoplay policy compliance
-  const [isTrailerMuted, setIsTrailerMuted] = useState(true);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Close on Escape
+  // Lock background scroll while modal is open to ensure only 1 scrollbar exists
+  useEffect(() => {
+    const originalHtmlOverflow = document.documentElement.style.overflow;
+    const originalBodyOverflow = document.body.style.overflow;
+
+    document.documentElement.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.documentElement.style.overflow = originalHtmlOverflow;
+      document.body.style.overflow = originalBodyOverflow;
+    };
+  }, []);
+
+  // Close on Escape (closes trailer popup if open, else closes detail modal)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (showTrailer) {
+          setShowTrailer(false);
+        } else {
+          onClose();
+        }
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [showTrailer, onClose]);
 
   // Scroll to top on mount or movie change
   useEffect(() => {
@@ -110,7 +125,6 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
     setIsLoading(true);
     setError(null);
     setShowTrailer(false);
-    setIsTrailerMuted(true);
 
     const loadDetail = async () => {
       try {
@@ -167,77 +181,28 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
 
   const hasTrailer = Boolean(trailerInfo);
 
-  // Static YouTube embed URL: Does NOT change on mute toggle, preventing video restarts!
+  // Static YouTube embed URL for trailer popup modal
   const youtubeEmbedUrl = useMemo(() => {
     if (!trailerInfo || trailerInfo.type !== 'youtube') return '';
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    return `${trailerInfo.embedUrl}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1&iv_load_policy=3&cc_load_policy=0&origin=${origin}`;
+    return `${trailerInfo.embedUrl}?autoplay=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1&origin=${origin}`;
   }, [trailerInfo]);
 
-  // Send command to YouTube iframe via postMessage safely
-  const sendIframeCommand = (func: string, args: any[] = []) => {
-    if (iframeRef.current?.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
-        JSON.stringify({
-          event: 'command',
-          func,
-          args,
-        }),
-        '*'
-      );
-    }
-  };
-
-  // Toggle Mute seamlessly without restarting trailer
-  const handleToggleMute = (e?: React.MouseEvent) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    const nextMuted = !isTrailerMuted;
-    setIsTrailerMuted(nextMuted);
-
-    if (trailerInfo?.type === 'youtube') {
-      sendIframeCommand(nextMuted ? 'mute' : 'unMute');
-      if (!nextMuted) {
-        sendIframeCommand('setVolume', [100]);
-        sendIframeCommand('playVideo');
-      }
-    } else if (videoRef.current) {
-      videoRef.current.muted = nextMuted;
-      if (!nextMuted) {
-        videoRef.current.volume = 1;
-        videoRef.current.play().catch(() => {});
-      }
-    }
-  };
-
-  // User explicitly clicks "Xem Trailer" -> Auto switch to trailer, unmute and play smoothly
+  // User clicks "Xem Trailer" -> Open centered popup modal
   const handleUserWatchTrailer = (e?: React.MouseEvent) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
-    setIsTrailerMuted(false);
     setShowTrailer(true);
+  };
 
-    // Send unMute & play immediately and at intervals to ensure player is ready
-    const triggerPlayer = () => {
-        if (trailerInfo?.type === 'youtube') {
-          sendIframeCommand('unMute');
-          sendIframeCommand('setVolume', [100]);
-          sendIframeCommand('playVideo');
-        } else if (videoRef.current) {
-          videoRef.current.muted = false;
-          videoRef.current.volume = 1;
-          videoRef.current.play().catch(() => {});
-        }
-    };
-
-    triggerPlayer(); // Immediate attempt
-    [100, 300, 600].forEach((delay) => {
-      setTimeout(triggerPlayer, delay);
-    });
+  const handleCloseTrailer = (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    setShowTrailer(false);
   };
 
   // Copy share link
@@ -305,101 +270,45 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         transition={{ duration: 0.2, ease: 'easeOut' }}
-        className="fixed inset-0 z-[60] bg-[#060a14] overflow-y-auto text-white flex flex-col selection:bg-blue-600 selection:text-white"
+        className="fixed inset-0 z-[60] bg-[#060a14] overflow-y-auto text-white flex flex-col selection:bg-blue-600 selection:text-white overscroll-contain"
+        style={{ WebkitOverflowScrolling: 'touch' }}
       >
-        {/* Full-bleed Hero Stage (Trailer Video or Panoramic Backdrop) */}
+        {/* Top-Right Circular Close Button (Positioned safely below Mobile Status Bar / PWA Notch & Safe Area) */}
+        <button
+          id="detail-floating-close-btn"
+          onClick={onClose}
+          style={{
+            top: 'max(52px, calc(env(safe-area-inset-top, 0px) + 16px))',
+            right: 'max(16px, calc(env(safe-area-inset-right, 0px) + 16px))',
+          }}
+          className="fixed z-50 flex items-center justify-center w-11 h-11 rounded-full bg-black/85 hover:bg-rose-600/95 text-white backdrop-blur-md border border-white/25 hover:border-rose-400 shadow-2xl transition-all hover:scale-110 active:scale-95 cursor-pointer group sm:!top-6 sm:!right-6"
+          title="Đóng (Esc)"
+          aria-label="Đóng chi tiết phim"
+        >
+          <X className="w-5 h-5 transition-transform group-hover:rotate-90" />
+        </button>
+
+        {/* Full-bleed Hero Stage (Panoramic Backdrop) */}
         <section
           id="detail-hero-stage"
-          className="relative w-full h-[50vh] sm:h-[62vh] md:h-[70vh] lg:h-[78vh] min-h-[340px] max-h-[820px] bg-black overflow-hidden select-none"
+          className="relative w-full min-h-[480px] sm:min-h-[520px] md:min-h-[580px] lg:min-h-[640px] bg-black select-none flex flex-col justify-end"
         >
-          {/* Top-Right Circular Close Button (Dấu X kèm hình tròn) */}
-          <button
-            id="detail-floating-close-btn"
-            onClick={onClose}
-            className="absolute top-4 right-4 sm:top-6 sm:right-6 z-40 flex items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-black/70 hover:bg-rose-600/90 text-white backdrop-blur-md border border-white/20 hover:border-rose-400 shadow-2xl transition-all hover:scale-110 active:scale-95 cursor-pointer group"
-            title="Đóng (Esc)"
-            aria-label="Đóng chi tiết phim"
-          >
-            <X className="w-5 h-5 transition-transform group-hover:rotate-90" />
-          </button>
-
-          {hasTrailer && showTrailer && trailerInfo ? (
-            <div
-              className="absolute inset-0 w-full h-full bg-black flex items-center justify-center overflow-hidden"
-            >
-              {/* Native Aspect Ratio Container - Prevents cropping on tablets/desktops and avoids subtitle cut-off */}
-              <div className="w-full h-full max-w-full max-h-full aspect-video flex items-center justify-center bg-black mx-auto">
-                {trailerInfo.type === 'youtube' ? (
-                  <iframe
-                    ref={iframeRef}
-                    src={youtubeEmbedUrl}
-                    title={`Trailer ${currentData.name}`}
-                    className="w-full h-full border-0 pointer-events-auto"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                  />
-                ) : (
-                  <video
-                    ref={videoRef}
-                    src={trailerInfo.directUrl}
-                    autoPlay
-                    loop
-                    muted={isTrailerMuted}
-                    controls
-                    playsInline
-                    className="w-full h-full object-contain"
-                  />
-                )}
-              </div>
-
-              {/* Seamless Bottom Gradient Mask over video */}
-              <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[#060a14] via-[#060a14]/60 to-transparent pointer-events-none" />
-
-              {/* Floating Action Controls at Bottom-Right: Turn off trailer (Show cover) & Mute/Unmute */}
-              <div className="absolute bottom-4 right-4 sm:bottom-6 sm:right-6 z-30 flex items-center gap-2 sm:gap-3">
-                <button
-                  id="trailer-turn-off-btn"
-                  onClick={() => setShowTrailer(false)}
-                  className="px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-full bg-black/75 hover:bg-black/90 text-white backdrop-blur-md border border-white/25 hover:border-white/50 shadow-2xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2 text-xs sm:text-sm font-semibold cursor-pointer"
-                  title="Tắt trailer (Xem ảnh bìa phim)"
-                  aria-label="Tắt trailer"
-                >
-                  <ImageIcon className="w-4 h-4 text-sky-400" />
-                  <span>Tắt trailer</span>
-                </button>
-
-                <button
-                  id="trailer-bottom-mute-btn"
-                  onClick={handleToggleMute}
-                  className="flex items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-black/75 hover:bg-black/90 text-white backdrop-blur-md border border-white/25 hover:border-white/50 shadow-2xl transition-transform hover:scale-110 active:scale-95 cursor-pointer"
-                  title={isTrailerMuted ? 'Bật âm thanh trailer' : 'Tắt âm thanh trailer'}
-                  aria-label={isTrailerMuted ? 'Bật âm thanh' : 'Tắt âm thanh'}
-                >
-                  {isTrailerMuted ? (
-                    <VolumeX className="w-4 h-4 sm:w-5 sm:h-5 text-rose-400" />
-                  ) : (
-                    <Volume2 className="w-4 h-4 sm:w-5 sm:h-5 text-sky-400" />
-                  )}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="relative w-full h-full">
+            <div className="relative w-full h-full min-h-[480px] sm:min-h-[520px] md:min-h-[580px] lg:min-h-[640px] flex flex-col justify-end pt-24 sm:pt-28 pb-8 sm:pb-12">
               <img
                 src={getImageUrl(currentData.poster_url || currentData.thumb_url)}
                 alt={currentData.name}
-                className="w-full h-full object-cover object-top"
+                className="absolute inset-0 w-full h-full object-cover object-top sm:object-center pointer-events-none"
                 onError={(e) => {
                   (e.target as HTMLImageElement).src =
                     'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
                 }}
               />
               {/* Multi-layered cinematic gradients */}
-              <div className="absolute inset-0 bg-gradient-to-t from-[#060a14] via-[#060a14]/60 to-black/20" />
-              <div className="absolute inset-0 bg-gradient-to-r from-[#060a14]/95 via-[#060a14]/40 to-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#060a14] via-[#060a14]/65 to-black/30 pointer-events-none" />
+              <div className="absolute inset-0 bg-gradient-to-r from-[#060a14]/95 via-[#060a14]/50 to-transparent pointer-events-none" />
 
               {/* Hero Banner Content Overlay */}
-              <div className="absolute bottom-6 sm:bottom-10 left-0 right-0 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 z-20">
+              <div className="relative z-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
                 <div className="max-w-3xl space-y-3 sm:space-y-4">
                   {/* Badges */}
                   <div className="flex flex-wrap items-center gap-2">
@@ -496,88 +405,87 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                 </div>
               </div>
             </div>
+          </section>
+
+        {/* Dedicated Centered Trailer Popup Modal */}
+        <AnimatePresence>
+          {showTrailer && hasTrailer && trailerInfo && (
+            <motion.div
+              id="trailer-modal-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-[80] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 md:p-8"
+              onClick={handleCloseTrailer}
+            >
+              <motion.div
+                id="trailer-modal-card"
+                initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className="relative w-full max-w-4xl bg-[#090e1a] border border-slate-700/90 rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Header of Trailer Modal */}
+                <div className="flex items-center justify-between px-4 py-3 sm:px-6 sm:py-3.5 bg-slate-900/95 border-b border-slate-800">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="flex items-center justify-center w-7 h-7 rounded-lg bg-rose-600/20 text-rose-400 border border-rose-500/30 shrink-0">
+                      <Video className="w-4 h-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <h3 className="text-sm sm:text-base font-bold text-white truncate">
+                        Trailer: {currentData.name}
+                      </h3>
+                      {currentData.origin_name && (
+                        <p className="text-xs text-slate-400 truncate hidden sm:block">
+                          {currentData.origin_name}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    id="trailer-modal-close-btn"
+                    onClick={handleCloseTrailer}
+                    className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white transition-all cursor-pointer border border-slate-700 hover:border-rose-500 shrink-0"
+                    title="Đóng trailer (Esc)"
+                    aria-label="Đóng trailer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Video Stage */}
+                <div className="relative w-full aspect-video bg-black flex items-center justify-center">
+                  {trailerInfo.type === 'youtube' ? (
+                    <iframe
+                      ref={iframeRef}
+                      src={youtubeEmbedUrl}
+                      title={`Trailer ${currentData.name}`}
+                      className="w-full h-full border-0"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      allowFullScreen
+                    />
+                  ) : (
+                    <video
+                      ref={videoRef}
+                      src={trailerInfo.directUrl}
+                      autoPlay
+                      controls
+                      playsInline
+                      className="w-full h-full object-contain"
+                    />
+                  )}
+                </div>
+              </motion.div>
+            </motion.div>
           )}
-        </section>
+        </AnimatePresence>
 
         {/* Main Content Body - Optimized for Desktop, Tablet, and Mobile */}
         <main className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-8 sm:space-y-10 flex-1">
-          {/* Header Action Strip when Trailer is actively playing */}
-          {hasTrailer && showTrailer && (
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:p-5 rounded-2xl bg-[#0c1427] border border-blue-900/60 shadow-xl">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-[10px] sm:text-[11px] font-black uppercase px-2.5 py-0.5 rounded-full">
-                    Gấu Cinema
-                  </span>
-                  <span className="bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] sm:text-[11px] font-bold px-2.5 py-0.5 rounded-md flex items-center gap-1.5">
-                    <Video className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-rose-400" />
-                    <span>Đang phát Trailer HD</span>
-                  </span>
-                  {currentData.quality && (
-                    <span className="bg-slate-800 text-sky-200 text-[10px] sm:text-[11px] font-semibold px-2 py-0.5 rounded">
-                      {currentData.quality}
-                    </span>
-                  )}
-                </div>
-                <h1 className="text-xl sm:text-2xl md:text-3xl font-black text-white">
-                  {currentData.name}
-                </h1>
-                {currentData.origin_name && (
-                  <p className="text-xs sm:text-sm text-slate-400 font-medium">
-                    {currentData.origin_name}
-                  </p>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2.5 sm:gap-3 shrink-0 flex-wrap">
-                <button
-                  id="trailer-strip-play-btn"
-                  onClick={handleStartPlay}
-                  className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-5 sm:px-6 py-2.5 sm:py-3 rounded-xl font-bold text-xs sm:text-sm shadow-xl shadow-blue-600/30 transition-transform hover:scale-105 active:scale-95 cursor-pointer"
-                >
-                  <Play className="w-4 h-4 fill-white" />
-                  <span>Xem Phim Full</span>
-                </button>
-
-                <button
-                  id="trailer-strip-cover-btn"
-                  onClick={() => setShowTrailer(false)}
-                  className="flex items-center gap-1.5 px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-slate-900 border border-slate-700 text-slate-200 hover:text-white hover:bg-slate-800 text-xs sm:text-sm font-semibold transition-all cursor-pointer"
-                  title="Tắt trailer để xem ảnh bìa"
-                >
-                  <ImageIcon className="w-4 h-4 text-sky-400" />
-                  <span>Xem ảnh bìa</span>
-                </button>
-
-                <button
-                  id="trailer-strip-toggle-list-btn"
-                  onClick={() => onToggleMyList(currentData)}
-                  className={`p-2.5 sm:p-3 rounded-xl border transition-all cursor-pointer ${
-                    inList
-                      ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg'
-                      : 'bg-slate-900 border-slate-700 text-slate-300 hover:text-white'
-                  }`}
-                  title={inList ? 'Đã lưu' : 'Lưu phim'}
-                >
-                  {inList ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                </button>
-
-                <button
-                  id="trailer-strip-share-btn"
-                  onClick={handleShareMovie}
-                  className="p-2.5 sm:p-3 rounded-xl bg-slate-900 border border-slate-700 text-slate-300 hover:text-white transition-all cursor-pointer relative"
-                  title="Sao chép link phim"
-                >
-                  <Share2 className="w-4 h-4" />
-                  {isCopiedLink && (
-                    <span className="absolute -top-8 right-0 whitespace-nowrap bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg animate-in fade-in">
-                      Đã sao chép!
-                    </span>
-                  )}
-                </button>
-              </div>
-            </div>
-          )}
 
           {/* Details & Metadata Grid */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">

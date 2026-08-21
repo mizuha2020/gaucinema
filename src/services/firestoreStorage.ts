@@ -16,41 +16,76 @@ import { MangaItem, MangaHistoryItem } from './mangaApi';
 import { DEFAULT_AVATARS } from './authService';
 
 const ACTIVE_PROFILE_KEY = 'qtb_active_profile_id_v2';
+const PROFILES_CACHE_PREFIX = 'qtb_profiles_cache_v2_';
+
+function getLocalProfilesCache(accountId: string): UserProfile[] | null {
+  try {
+    const raw = localStorage.getItem(`${PROFILES_CACHE_PREFIX}${accountId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('Error reading profiles cache', e);
+  }
+  return null;
+}
+
+function saveLocalProfilesCache(accountId: string, profiles: UserProfile[]): void {
+  try {
+    localStorage.setItem(`${PROFILES_CACHE_PREFIX}${accountId}`, JSON.stringify(profiles));
+  } catch (e) {
+    console.warn('Error saving profiles cache', e);
+  }
+}
 
 export const firestoreStorage = {
   // --- PROFILES MANAGEMENT (Max 5 per account) ---
 
   async getProfiles(accountId: string): Promise<UserProfile[]> {
     if (!accountId) return [];
+    
+    const cached = getLocalProfilesCache(accountId);
+
     const profilesCol = collection(db, 'accounts', accountId, 'profiles');
     try {
-      // 3.5s timeout protection
-      const snap = await Promise.race([
-        getDocs(profilesCol),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Profile fetch timeout')), 3500)),
-      ]);
-      if (snap.empty) {
-        // Fallback: If for any reason no profile exists, create the primary profile
-        const primaryId = `prof_${accountId}_primary`;
-        const primaryProf: UserProfile = {
-          id: primaryId,
-          name: accountId,
-          avatar: DEFAULT_AVATARS[0],
-          color: '#2563EB',
-          isPrimary: true,
-          createdAt: Date.now(),
-        };
-        setDoc(doc(db, 'accounts', accountId, 'profiles', primaryId), sanitizeData(primaryProf)).catch(() => {});
-        return [primaryProf];
+      const snap = await getDocs(profilesCol);
+      if (!snap.empty) {
+        const profiles = snap.docs.map((d) => d.data() as UserProfile);
+        profiles.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+        saveLocalProfilesCache(accountId, profiles);
+        return profiles;
       }
 
-      const profiles = snap.docs.map((d) => d.data() as UserProfile);
-      return profiles.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      // If Firestore returns empty but local cache exists, return cached
+      if (cached && cached.length > 0) {
+        return cached;
+      }
+
+      // Otherwise, create default primary profile once
+      const primaryId = accountId === 'admin' ? 'admin_primary' : `prof_${accountId}_primary`;
+      const primaryProf: UserProfile = {
+        id: primaryId,
+        name: accountId === 'admin' ? 'Quản trị viên' : accountId,
+        avatar: DEFAULT_AVATARS[0],
+        color: '#2563EB',
+        isPrimary: true,
+        createdAt: Date.now(),
+      };
+      await setDoc(doc(db, 'accounts', accountId, 'profiles', primaryId), sanitizeData(primaryProf));
+      const newProfiles = [primaryProf];
+      saveLocalProfilesCache(accountId, newProfiles);
+      return newProfiles;
     } catch (e) {
       console.warn('getProfiles warning:', e);
+      if (cached && cached.length > 0) {
+        return cached;
+      }
       const fallbackProf: UserProfile = {
-        id: `prof_${accountId}_primary`,
-        name: accountId,
+        id: accountId === 'admin' ? 'admin_primary' : `prof_${accountId}_primary`,
+        name: accountId === 'admin' ? 'Quản trị viên' : accountId,
         avatar: DEFAULT_AVATARS[0],
         color: '#2563EB',
         isPrimary: true,
@@ -77,6 +112,8 @@ export const firestoreStorage = {
     const docRef = doc(db, 'accounts', accountId, 'profiles', profileId);
     try {
       await setDoc(docRef, sanitizeData(fullProfile));
+      const updatedList = [...current, fullProfile];
+      saveLocalProfilesCache(accountId, updatedList);
       return fullProfile;
     } catch (e) {
       handleFirestoreError(e, OperationType.CREATE, `accounts/${accountId}/profiles/${profileId}`);
@@ -88,13 +125,15 @@ export const firestoreStorage = {
     const docRef = doc(db, 'accounts', accountId, 'profiles', profile.id);
     try {
       await setDoc(docRef, sanitizeData(profile));
+      const current = getLocalProfilesCache(accountId) || [];
+      const updatedList = current.map((p) => (p.id === profile.id ? profile : p));
+      saveLocalProfilesCache(accountId, updatedList);
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `accounts/${accountId}/profiles/${profile.id}`);
     }
   },
 
   async deleteProfile(accountId: string, profileId: string): Promise<void> {
-    // Check if is primary
     const profileRef = doc(db, 'accounts', accountId, 'profiles', profileId);
     try {
       const snap = await getDoc(profileRef);
@@ -105,6 +144,9 @@ export const firestoreStorage = {
         }
       }
       await deleteDoc(profileRef);
+      const current = getLocalProfilesCache(accountId) || [];
+      const updatedList = current.filter((p) => p.id !== profileId);
+      saveLocalProfilesCache(accountId, updatedList);
     } catch (e: any) {
       if (e.message && e.message.includes('hồ sơ chính')) {
         throw e;

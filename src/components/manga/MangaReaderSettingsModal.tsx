@@ -10,6 +10,8 @@ import {
   Sliders,
   Check,
   BookOpen,
+  Zap,
+  Sparkles,
 } from 'lucide-react';
 
 export interface MangaReaderSettings {
@@ -18,6 +20,7 @@ export interface MangaReaderSettings {
   readingDirection: 'ltr' | 'rtl'; // For single page mode
   backgroundColor: 'black' | 'dark-gray' | 'warm-paper' | 'navy';
   autoScrollSpeed: number; // 0 (off), 1 (slow), 2 (medium), 3 (fast)
+  imageQuality: 'data-saver' | 'original'; // Fast data-saver vs full original HD
 }
 
 export const DEFAULT_READER_SETTINGS: MangaReaderSettings = {
@@ -26,6 +29,7 @@ export const DEFAULT_READER_SETTINGS: MangaReaderSettings = {
   readingDirection: 'ltr',
   backgroundColor: 'black',
   autoScrollSpeed: 0,
+  imageQuality: 'data-saver',
 };
 
 interface MangaReaderSettingsModalProps {
@@ -244,6 +248,55 @@ export const MangaReaderSettingsModal: React.FC<MangaReaderSettingsModalProps> =
                 <p className="text-[10px] text-gray-400">Manga Nhật Bản</p>
               </div>
               {settings.readingDirection === 'rtl' && <Check className="w-4 h-4 text-indigo-400" />}
+            </button>
+          </div>
+        </div>
+
+        {/* Image Quality & Loading Speed */}
+        <div className="space-y-2">
+          <label className="text-xs font-semibold uppercase tracking-wider text-gray-400 flex items-center space-x-2">
+            <Zap className="w-3.5 h-3.5 text-amber-400" />
+            <span>Tốc độ tải & Chất lượng ảnh</span>
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => updateSetting('imageQuality', 'data-saver')}
+              className={`p-2.5 rounded-2xl border text-left transition flex items-center justify-between ${
+                settings.imageQuality === 'data-saver' || !settings.imageQuality
+                  ? 'bg-amber-600/20 border-amber-500 text-white ring-1 ring-amber-500/30'
+                  : 'bg-white/5 border-white/10 text-gray-300 hover:bg-white/10'
+              }`}
+            >
+              <div>
+                <div className="flex items-center space-x-1">
+                  <Zap className="w-3 h-3 text-amber-400" />
+                  <p className="text-xs font-bold text-amber-300">Siêu Tốc (Nén Data-Saver)</p>
+                </div>
+                <p className="text-[10px] text-gray-400 mt-0.5">Tải nhanh gấp 3 lần, tiết kiệm mạng</p>
+              </div>
+              {(settings.imageQuality === 'data-saver' || !settings.imageQuality) && (
+                <Check className="w-4 h-4 text-amber-400 shrink-0 ml-1" />
+              )}
+            </button>
+
+            <button
+              onClick={() => updateSetting('imageQuality', 'original')}
+              className={`p-2.5 rounded-2xl border text-left transition flex items-center justify-between ${
+                settings.imageQuality === 'original'
+                  ? 'bg-blue-600/20 border-blue-500 text-white ring-1 ring-blue-500/30'
+                  : 'bg-white/5 border-white/10 text-gray-300 hover:bg-white/10'
+              }`}
+            >
+              <div>
+                <div className="flex items-center space-x-1">
+                  <Sparkles className="w-3 h-3 text-blue-400" />
+                  <p className="text-xs font-bold text-blue-300">Gốc (Độ Phân Giải Cao)</p>
+                </div>
+                <p className="text-[10px] text-gray-400 mt-0.5">Nét tối đa chuẩn MangaDex</p>
+              </div>
+              {settings.imageQuality === 'original' && (
+                <Check className="w-4 h-4 text-blue-400 shrink-0 ml-1" />
+              )}
             </button>
           </div>
         </div>

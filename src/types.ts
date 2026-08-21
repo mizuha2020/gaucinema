@@ -155,4 +155,48 @@ export interface MyListItem {
   addedAt: number;
 }
 
+export type ActiveApp = 'cinema' | 'manga' | 'livetv';
+
 export type NavTab = 'home' | 'series' | 'single' | 'cinema' | 'anime' | 'tv-shows' | 'manga' | 'filter' | 'my-list' | 'history' | 'tv-live';
+
+export type ApiCategory = 'movie' | 'manga' | 'livetv' | 'utility';
+export type ApiHealthStatus = 'live' | 'slow' | 'down';
+
+export interface SystemApiEndpoint {
+  id: string;
+  name: string;
+  category: ApiCategory;
+  baseUrl: string;
+  testUrl: string;
+  description?: string;
+  enabled: boolean;
+  isDefault?: boolean;
+  priority: number;
+  headers?: Record<string, string>;
+  lastChecked?: number;
+  lastLatencyMs?: number;
+  lastStatusCode?: number;
+  lastStatus: ApiHealthStatus;
+  lastErrorMessage?: string;
+  updatedAt?: number;
+  updatedBy?: string;
+}
+
+export interface ActiveViewerSession {
+  sessionId: string;
+  accountId: string;
+  accountDisplayName?: string;
+  profileId: string;
+  profileName: string;
+  profileAvatar?: string;
+  type: 'watching_movie' | 'reading_manga' | 'watching_tv' | 'browsing';
+  itemTitle: string;
+  itemSubtitle?: string;
+  itemCover?: string;
+  apiSourceUsed?: string;
+  progressPercent?: number;
+  currentTime?: number;
+  duration?: number;
+  lastHeartbeat: number;
+  deviceInfo?: string;
+}

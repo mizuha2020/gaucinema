@@ -1,5 +1,6 @@
 import { Movie, MovieDetailResponse, MovieListResponse, EpisodeServer, ApiSource } from '../types';
 import { getFullApiUrl } from './apiConfig';
+import { systemApiService } from './systemApiService';
 
 export interface SourceOption {
   id: ApiSource;
@@ -49,6 +50,22 @@ export const API_SOURCES: SourceOption[] = [
     hasEmbed: true,
   },
 ];
+
+// Base fetchers using dynamic active base URLs
+const getKKPhimUrl = (endpoint: string) => {
+  const base = systemApiService.getActiveBaseUrl('movie', 'kkphim', 'https://phimapi.com');
+  return `${base.replace(/\/$/, '')}/${endpoint.replace(/^\//, '')}`;
+};
+
+const getOPhimUrl = (endpoint: string) => {
+  const base = systemApiService.getActiveBaseUrl('movie', 'ophim', 'https://ophim1.com');
+  return `${base.replace(/\/$/, '')}/${endpoint.replace(/^\//, '')}`;
+};
+
+const getNguonCUrl = (endpoint: string) => {
+  const base = systemApiService.getActiveBaseUrl('movie', 'nguonc', 'https://phim.nguonc.com');
+  return `${base.replace(/\/$/, '')}/api/${endpoint.replace(/^\//, '')}`;
+};
 
 // Current active source preference stored in memory/localStorage
 let activeApiSource: ApiSource = (typeof window !== 'undefined' && (localStorage.getItem('qtb_api_source') as ApiSource)) || 'all';
@@ -164,7 +181,8 @@ async function fetchKKPhim<T>(endpoint: string, params?: Record<string, any>): P
 
   // 2. Try direct
   try {
-    const res = await fetch(`https://phimapi.com/${clean}${query}`);
+    const directUrl = `${getKKPhimUrl(clean)}${query}`;
+    const res = await fetch(directUrl);
     if (res.ok) {
       return await res.json();
     }
@@ -188,7 +206,8 @@ async function fetchOPhim<T>(endpoint: string, params?: Record<string, any>): Pr
 
   // 2. Try direct
   try {
-    const res = await fetch(`https://ophim1.com/${clean}${query}`);
+    const directUrl = `${getOPhimUrl(clean)}${query}`;
+    const res = await fetch(directUrl);
     if (res.ok) {
       return await res.json();
     }
@@ -212,7 +231,8 @@ async function fetchNguonC<T>(endpoint: string, params?: Record<string, any>): P
 
   // 2. Try direct
   try {
-    const res = await fetch(`https://phim.nguonc.com/api/${clean}${query}`);
+    const directUrl = `${getNguonCUrl(clean)}${query}`;
+    const res = await fetch(directUrl);
     if (res.ok) {
       return await res.json();
     }

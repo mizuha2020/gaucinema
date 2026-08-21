@@ -1,0 +1,265 @@
+import React, { useState } from 'react';
+import { NavTab, UserProfile, Account } from '../../types';
+import { BookOpen, User, ChevronDown, Check, Home, Lock, LayoutGrid, Tv, Shield, Settings, LogOut } from 'lucide-react';
+import appLogo from '../../assets/images/app_logo.jpg';
+import { motion, AnimatePresence } from 'motion/react';
+
+interface MangaNavbarProps {
+  currentAccount?: Account | null;
+  activeProfile: UserProfile | null;
+  profiles: UserProfile[];
+  onSelectProfile: (profile: UserProfile) => void;
+  onSwitchApp: (app: 'cinema' | 'manga' | 'livetv') => void;
+  onSwitchProfileScreen?: () => void;
+  onOpenAdminDashboard?: () => void;
+  onLogout?: () => void;
+  onLogoClick?: () => void;
+}
+
+export const MangaNavbar: React.FC<MangaNavbarProps> = ({
+  currentAccount,
+  activeProfile,
+  profiles,
+  onSelectProfile,
+  onSwitchApp,
+  onSwitchProfileScreen,
+  onOpenAdminDashboard,
+  onLogout,
+  onLogoClick
+}) => {
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isAppMenuOpen, setIsAppMenuOpen] = useState(false);
+
+  // Profile PIN prompt state
+  const [pinPromptProfile, setPinPromptProfile] = useState<UserProfile | null>(null);
+  const [enteredPin, setEnteredPin] = useState('');
+  const [pinError, setPinError] = useState(false);
+
+  const handleProfileClickInDropdown = (p: UserProfile) => {
+    if (p.id === activeProfile?.id) {
+      setIsProfileMenuOpen(false);
+      return;
+    }
+    if (p.pin) {
+      setPinPromptProfile(p);
+      setEnteredPin('');
+      setPinError(false);
+      setIsProfileMenuOpen(false);
+    } else {
+      onSelectProfile(p);
+      setIsProfileMenuOpen(false);
+    }
+  };
+
+  const handlePinSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pinPromptProfile && enteredPin === pinPromptProfile.pin) {
+      onSelectProfile(pinPromptProfile);
+      setPinPromptProfile(null);
+      setEnteredPin('');
+      setPinError(false);
+    } else {
+      setPinError(true);
+    }
+  };
+  
+  return (
+    <>
+      <header className="fixed top-0 left-0 right-0 z-50 transition-all duration-300 bg-[#0b0c16]/95 backdrop-blur-md border-b border-purple-900/40 pb-3 pt-[max(12px,env(safe-area-inset-top))]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4">
+          
+          {/* Brand */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                onLogoClick?.();
+              }}
+              className="flex items-center gap-2.5 cursor-pointer focus:outline-none group text-left shrink-0"
+              title="Về đầu trang & Làm mới"
+            >
+              <div className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-xl overflow-hidden border-2 border-purple-500/50 shadow-lg shadow-purple-500/20 group-hover:scale-110 group-hover:border-purple-400 transition-all duration-300">
+                <img src={appLogo} alt="Gấu Manga Logo" className="w-full h-full object-cover" />
+                <div className="absolute inset-0 bg-gradient-to-t from-purple-600/20 to-transparent" />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-xl sm:text-2xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-fuchsia-300 to-indigo-400 drop-shadow-[0_2px_12px_rgba(168,85,247,0.5)] leading-none">
+                  Gấu
+                </span>
+                <span className="text-[9px] sm:text-[10px] uppercase font-black tracking-[0.2em] text-purple-400/90 mt-0.5">
+                  MANGA
+                </span>
+              </div>
+            </button>
+          </div>
+
+          {/* Right Nav */}
+          <div className="flex items-center gap-3">
+            {/* App Switcher */}
+            <div className="relative">
+              <button
+                onClick={() => setIsAppMenuOpen(!isAppMenuOpen)}
+                className="flex items-center justify-center w-9 h-9 rounded-full bg-slate-900/60 hover:bg-[#131f37] border border-slate-800/80 hover:border-purple-500/60 text-slate-300 hover:text-purple-300 cursor-pointer transition-all hover:scale-105"
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </button>
+              {isAppMenuOpen && (
+                <div className="absolute right-[-2rem] sm:right-0 top-12 w-64 bg-[#0f172a] border border-purple-900/60 rounded-2xl shadow-2xl p-3 z-50 animate-in fade-in zoom-in-95">
+                  <div className="text-xs font-bold text-slate-400 mb-2 px-2">HỆ SINH THÁI</div>
+                  <div className="space-y-1">
+                    <button onClick={() => { onSwitchApp('cinema'); setIsAppMenuOpen(false); }} className="w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium text-slate-200 hover:bg-blue-900/30 hover:text-blue-300 transition-colors">
+                      <div className="w-8 h-8 rounded-lg bg-blue-900/40 flex items-center justify-center"><Home className="w-4 h-4 text-blue-400"/></div>
+                      <div className="flex flex-col items-start"><span>Gấu Cinema HD</span><span className="text-[10px] text-slate-400">Xem phim thả ga</span></div>
+                    </button>
+                    <button onClick={() => { onSwitchApp('livetv'); setIsAppMenuOpen(false); }} className="w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium text-slate-200 hover:bg-orange-900/30 hover:text-orange-300 transition-colors">
+                      <div className="w-8 h-8 rounded-lg bg-orange-900/40 flex items-center justify-center"><Tv className="w-4 h-4 text-orange-400"/></div>
+                      <div className="flex flex-col items-start"><span>Gấu LiveTV</span><span className="text-[10px] text-slate-400">Truyền hình & Thể thao</span></div>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* User Profile Menu */}
+            <div className="relative">
+              <button onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)} className="flex items-center gap-1.5 cursor-pointer focus:outline-none group p-1">
+                <div className="w-8 h-8 rounded-lg overflow-hidden border-2 border-purple-500 shadow-md group-hover:scale-105 transition-transform" style={{ borderColor: activeProfile?.color || '#a855f7' }}>
+                  <img src={activeProfile?.avatar} alt="Profile" className="w-full h-full object-cover" />
+                </div>
+                <ChevronDown className={`w-3.5 h-3.5 text-slate-400 group-hover:text-white transition-transform ${isProfileMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {isProfileMenuOpen && (
+                <div className="absolute right-0 top-12 w-64 bg-[#0f172a] border border-purple-900/60 rounded-2xl shadow-2xl p-3 z-50 animate-in fade-in zoom-in-95">
+                  {currentAccount && (
+                    <div className="px-2 py-1.5 mb-2 bg-[#131f37] rounded-xl border border-slate-800 flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Shield className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                        <span className="text-xs font-bold text-white truncate">@{currentAccount.username}</span>
+                      </div>
+                      {currentAccount.role === 'admin' && (
+                        <span className="text-[9px] bg-red-950 text-red-300 border border-red-800/80 px-1.5 py-0.2 rounded font-bold">
+                          ADMIN
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="pb-3 mb-3 border-b border-slate-800">
+                    <div className="text-xs text-purple-400 uppercase font-bold tracking-wider px-2 mb-2">
+                      Chuyển hồ sơ ({profiles.length}/5)
+                    </div>
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {profiles.map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => handleProfileClickInDropdown(p)}
+                          className={`w-full flex items-center justify-between p-2 rounded-xl text-left text-sm transition-colors cursor-pointer ${
+                            activeProfile?.id === p.id
+                              ? 'bg-purple-600/20 text-purple-300 font-semibold border border-purple-500/40'
+                              : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <img src={p.avatar} alt={p.name} className="w-7 h-7 rounded-md object-cover border shrink-0" style={{ borderColor: p.color }} />
+                            <span className="truncate">{p.name}</span>
+                            {p.isPrimary && <span className="text-[9px] bg-purple-900/60 text-purple-300 px-1 rounded font-bold shrink-0">Chính</span>}
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0 ml-1">
+                            {p.pin && <Lock className="w-3.5 h-3.5 text-slate-400" />}
+                            {activeProfile?.id === p.id && <Check className="w-4 h-4 text-purple-400" />}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    {currentAccount?.role === 'admin' && onOpenAdminDashboard && (
+                      <button
+                        onClick={() => {
+                          onOpenAdminDashboard();
+                          setIsProfileMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2.5 p-2 rounded-xl text-sm font-bold text-indigo-300 hover:bg-indigo-950/80 hover:text-indigo-200 transition-colors cursor-pointer border border-indigo-900/60"
+                      >
+                        <Settings className="w-4 h-4 text-indigo-400" />
+                        <span>Quản Trị Hệ Thống (Admin)</span>
+                      </button>
+                    )}
+
+                    {onSwitchProfileScreen && (
+                      <button
+                        onClick={() => {
+                          onSwitchProfileScreen();
+                          setIsProfileMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2.5 p-2 rounded-xl text-sm text-slate-300 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+                      >
+                        <User className="w-4 h-4 text-slate-400" />
+                        <span>Màn hình chọn người xem</span>
+                      </button>
+                    )}
+
+                    {onLogout && (
+                      <button
+                        onClick={() => {
+                          onLogout();
+                          setIsProfileMenuOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2.5 p-2 rounded-xl text-sm text-red-300 hover:bg-red-950/70 hover:text-red-200 transition-colors cursor-pointer border-t border-slate-800/80 mt-1"
+                      >
+                        <LogOut className="w-4 h-4 text-red-400" />
+                        <span>Đăng xuất tài khoản</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* PIN Prompt Modal */}
+      {pinPromptProfile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+          <div className="bg-[#0f172a] border border-purple-900/80 rounded-3xl p-6 w-full max-w-sm shadow-2xl text-center">
+            <div className="w-16 h-16 rounded-2xl overflow-hidden mx-auto mb-4 border-2 border-purple-500 shadow-lg">
+              <img src={pinPromptProfile.avatar} alt={pinPromptProfile.name} className="w-full h-full object-cover" />
+            </div>
+            <h3 className="text-lg font-bold text-white mb-1">Nhập mã PIN của {pinPromptProfile.name}</h3>
+            <p className="text-xs text-slate-400 mb-6">Hồ sơ này được bảo vệ bằng mã PIN 4 chữ số.</p>
+
+            <form onSubmit={handlePinSubmit} className="space-y-4">
+              <input
+                type="password"
+                maxLength={4}
+                value={enteredPin}
+                onChange={(e) => setEnteredPin(e.target.value)}
+                placeholder="••••"
+                autoFocus
+                className="w-full bg-slate-900 border border-purple-800/60 rounded-xl px-4 py-3 text-center text-2xl tracking-widest text-white focus:outline-none focus:border-purple-500"
+              />
+              {pinError && <p className="text-xs text-red-400 font-medium">Mã PIN không chính xác. Vui lòng thử lại.</p>}
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPinPromptProfile(null)}
+                  className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-2.5 rounded-xl text-sm transition-colors cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-purple-600 hover:bg-purple-500 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors cursor-pointer shadow-lg shadow-purple-600/30"
+                >
+                  Xác nhận
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};

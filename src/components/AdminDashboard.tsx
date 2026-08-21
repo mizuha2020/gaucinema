@@ -3,6 +3,8 @@ import { Account, CustomAvatar } from '../types';
 import { authService, DEFAULT_AVATARS } from '../services/authService';
 import { firestoreStorage } from '../services/firestoreStorage';
 import { AdminConfirmModal } from './AdminConfirmModal';
+import { AdminOverviewTab } from './admin/AdminOverviewTab';
+import { AdminApisTab } from './admin/AdminApisTab';
 import {
   Users,
   Image as ImageIcon,
@@ -23,6 +25,8 @@ import {
   User,
   Shield,
   Check,
+  Server,
+  Activity,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -37,7 +41,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onBackToCinema,
   onShowToast,
 }) => {
-  const [activeTab, setActiveTab] = useState<'accounts' | 'avatars'>('accounts');
+  const [activeTab, setActiveTab] = useState<'overview' | 'apis' | 'accounts' | 'avatars'>('overview');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [customAvatars, setCustomAvatars] = useState<CustomAvatar[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -354,11 +358,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             >
               <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
-            <div className="flex items-center p-1 bg-[#131f37] rounded-2xl border border-slate-800 flex-1 sm:flex-initial">
+            <div className="flex items-center p-1 bg-[#131f37] rounded-2xl border border-slate-800 flex-1 sm:flex-initial overflow-x-auto">
+              <button
+                id="admin-tab-overview-btn"
+                onClick={() => setActiveTab('overview')}
+                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                  activeTab === 'overview'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Activity className="w-3.5 h-3.5" />
+                <span>Thống Kê & Đang Xem</span>
+              </button>
+              <button
+                id="admin-tab-apis-btn"
+                onClick={() => setActiveTab('apis')}
+                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                  activeTab === 'apis'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Server className="w-3.5 h-3.5" />
+                <span>Quản Lý API</span>
+              </button>
               <button
                 id="admin-tab-accounts-btn"
                 onClick={() => setActiveTab('accounts')}
-                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
                   activeTab === 'accounts'
                     ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
                     : 'text-slate-400 hover:text-white'
@@ -370,7 +398,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <button
                 id="admin-tab-avatars-btn"
                 onClick={() => setActiveTab('avatars')}
-                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
                   activeTab === 'avatars'
                     ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
                     : 'text-slate-400 hover:text-white'
@@ -382,6 +410,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
         </div>
+
+        {/* --- TAB 0: OVERVIEW & REAL-TIME STATS --- */}
+        {activeTab === 'overview' && (
+          <div className="animate-in fade-in duration-200">
+            <AdminOverviewTab onSwitchToApisTab={() => setActiveTab('apis')} />
+          </div>
+        )}
+
+        {/* --- TAB 0.5: API MANAGEMENT --- */}
+        {activeTab === 'apis' && (
+          <div className="animate-in fade-in duration-200">
+            <AdminApisTab onShowToast={onShowToast} />
+          </div>
+        )}
 
         {/* --- TAB 1: ACCOUNTS MANAGEMENT --- */}
         {activeTab === 'accounts' && (
