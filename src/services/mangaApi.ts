@@ -1,5 +1,6 @@
 import { NavTab } from '../types';
 import { systemApiService } from './systemApiService';
+import { getFullApiUrl } from './apiConfig';
 
 export type MangaSource = 'otruyen' | 'mangadex' | 'cuutruyen';
 
@@ -46,7 +47,7 @@ const getMangadexBase = () => systemApiService.getActiveBaseUrl('manga', 'mangad
 const getCuutruyenBase = () => systemApiService.getActiveBaseUrl('manga', 'cuutruyen', 'https://api.cuutruyen.net/v1');
 
 async function fetchProxy(url: string): Promise<any> {
-  const proxyUrl = `/api/proxy/generic?url=${btoa(url)}`;
+  const proxyUrl = getFullApiUrl(`/api/proxy/generic?url=${btoa(url)}`);
   const res = await fetch(proxyUrl);
   if (!res.ok) throw new Error(`HTTP error ${res.status}`);
   const contentType = res.headers.get('content-type');
@@ -461,7 +462,7 @@ export const mangaApi = {
               // Construct official Cloudflare-accelerated CDN links routed via image proxy for caching & failover
               return fileNames.map((fn: string) => {
                 const directCdnUrl = `https://uploads.mangadex.org/${folder}/${hash}/${fn}`;
-                return `/api/proxy/image?url=${encodeURIComponent(directCdnUrl)}`;
+                return getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(directCdnUrl)}`);
               });
             }
           }
@@ -499,5 +500,5 @@ export function getMangaImageUrl(url: string): string {
 
 export function getProxyImageUrl(url: string): string {
   if (!url || !url.startsWith('http')) return url;
-  return `/api/proxy/image?url=${encodeURIComponent(url)}`;
+  return getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(url)}`);
 }

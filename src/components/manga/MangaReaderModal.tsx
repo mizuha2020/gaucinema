@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { MangaChapter, MangaItem } from '../../services/mangaApi';
+import { MangaChapter, MangaItem, getProxyImageUrl } from '../../services/mangaApi';
 import { mangaApi } from '../../services/mangaApi';
 import { systemApiService } from '../../services/systemApiService';
 import { presenceService } from '../../services/presenceService';
@@ -1218,14 +1218,14 @@ const MangaReaderPageItem: React.FC<MangaReaderPageItemProps> = ({
     if (attempt === 0) {
       // Step 1: Retry via dedicated server proxy
       setAttempt(1);
-      setCurrentSrc(`/api/proxy/image?url=${encodeURIComponent(pageUrl)}`);
+      setCurrentSrc(getProxyImageUrl(pageUrl));
     } else if (attempt === 1) {
       // Step 2: Try data-saver / official CDN fallback for MangaDex
       const mdMatch = pageUrl.match(/(?:mangadex\.network|uploads\.mangadex\.org)\/(data|data-saver)\/([a-f0-9]+)\/([^?#]+)/i);
       if (mdMatch) {
         const [, , hash, file] = mdMatch;
         setAttempt(2);
-        const fallbackUrl = `/api/proxy/image?url=${encodeURIComponent(`https://uploads.mangadex.org/data-saver/${hash}/${file}`)}`;
+        const fallbackUrl = getProxyImageUrl(`https://uploads.mangadex.org/data-saver/${hash}/${file}`);
         setCurrentSrc(fallbackUrl);
       } else {
         setHasError(true);
@@ -1244,7 +1244,7 @@ const MangaReaderPageItem: React.FC<MangaReaderPageItemProps> = ({
     setHasError(false);
     setIsLoaded(false);
     setAttempt(1);
-    setCurrentSrc(`/api/proxy/image?url=${encodeURIComponent(pageUrl)}&retry=${Date.now()}`);
+    setCurrentSrc(`${getProxyImageUrl(pageUrl)}&retry=${Date.now()}`);
   };
 
   if (hasError) {

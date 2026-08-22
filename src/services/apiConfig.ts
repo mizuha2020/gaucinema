@@ -1,8 +1,13 @@
 export const getApiBaseUrl = (): string => {
   if (typeof window !== 'undefined') {
     const isCapacitorNative = !!(window as any).Capacitor?.isNative;
-    if (!isCapacitorNative) {
-      return ''; // For all standard web environments, use relative path!
+    const isLocalhostOrigin = window.location.origin.includes('localhost') || 
+                              window.location.origin.includes('capacitor://') || 
+                              window.location.protocol === 'file:';
+    
+    // Use relative path only when running on a real web domain (not Capacitor / localhost app)
+    if (!isCapacitorNative && !isLocalhostOrigin) {
+      return '';
     }
   }
   

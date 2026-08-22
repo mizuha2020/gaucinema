@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MangaItem, MangaChapter, MangaHistoryItem } from '../../services/mangaApi';
+import { MangaItem, MangaChapter, MangaHistoryItem, getProxyImageUrl } from '../../services/mangaApi';
 import { ArrowLeft, BookOpen, Heart, Bookmark, User, Calendar, Play, Search, CheckCircle } from 'lucide-react';
 
 interface MangaDetailViewProps {
@@ -49,7 +49,7 @@ export const MangaDetailView: React.FC<MangaDetailViewProps> = ({
             onError={(e) => {
               const target = e.target as HTMLImageElement;
               if (!target.src.includes('/api/proxy/image') && manga.coverUrl && manga.coverUrl.startsWith('http')) {
-                target.src = `/api/proxy/image?url=${encodeURIComponent(manga.coverUrl)}`;
+                target.src = getProxyImageUrl(manga.coverUrl);
               } else {
                 target.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
               }

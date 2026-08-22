@@ -651,6 +651,7 @@ export default function App() {
         profiles={profiles}
         onSelectProfile={handleSelectProfile}
         onSwitchApp={handleSwitchApp}
+        onSwitchProfileScreen={() => setShowProfileSelector(true)}
       />
     );
   } else if (activeApp === 'livetv') {
@@ -661,6 +662,7 @@ export default function App() {
         profiles={profiles}
         onSelectProfile={handleSelectProfile}
         onSwitchApp={handleSwitchApp}
+        onSwitchProfileScreen={() => setShowProfileSelector(true)}
       />
     );
   } else {

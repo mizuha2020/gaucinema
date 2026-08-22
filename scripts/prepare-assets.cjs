@@ -128,6 +128,20 @@ async function run() {
   const icon512 = await sharp(rawSourceBuf).resize(512, 512, { fit: 'cover' }).png().toBuffer();
   fs.writeFileSync(path.join(publicDir, 'icon-512.png'), icon512);
 
+  const icon180 = await sharp(rawSourceBuf).resize(180, 180, { fit: 'cover' }).png().toBuffer();
+  fs.writeFileSync(path.join(publicDir, 'icon-180.png'), icon180);
+  fs.writeFileSync(path.join(publicDir, 'apple-touch-icon.png'), icon180);
+  fs.writeFileSync(path.join(publicDir, 'apple-touch-icon-precomposed.png'), icon180);
+
+  const icon167 = await sharp(rawSourceBuf).resize(167, 167, { fit: 'cover' }).png().toBuffer();
+  fs.writeFileSync(path.join(publicDir, 'icon-167.png'), icon167);
+
+  const icon152 = await sharp(rawSourceBuf).resize(152, 152, { fit: 'cover' }).png().toBuffer();
+  fs.writeFileSync(path.join(publicDir, 'icon-152.png'), icon152);
+
+  const icon32 = await sharp(rawSourceBuf).resize(32, 32, { fit: 'cover' }).png().toBuffer();
+  fs.writeFileSync(path.join(publicDir, 'icon-32.png'), icon32);
+
   console.log('✓ Master assets and public icons updated successfully.');
 
   // 3. Inject directly into Android Project (Res directory)

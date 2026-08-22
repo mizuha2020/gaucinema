@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MangaItem, MangaSource, mangaApi, MangaChapter, MangaHistoryItem } from '../../services/mangaApi';
+import { MangaItem, MangaSource, mangaApi, MangaChapter, MangaHistoryItem, getProxyImageUrl } from '../../services/mangaApi';
 import { systemApiService } from '../../services/systemApiService';
 import { firestoreStorage } from '../../services/firestoreStorage';
 import { MangaDetailView } from './MangaDetailView';
@@ -399,7 +399,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
                           if (!target.src.includes('/api/proxy/image') && item.coverUrl && item.coverUrl.startsWith('http')) {
-                            target.src = `/api/proxy/image?url=${encodeURIComponent(item.coverUrl)}`;
+                            target.src = getProxyImageUrl(item.coverUrl);
                           } else {
                             target.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
                           }
@@ -548,7 +548,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
                     onError={(e) => {
                       const target = e.target as HTMLImageElement;
                       if (!target.src.includes('/api/proxy/image') && mangaList[0]?.coverUrl && mangaList[0].coverUrl.startsWith('http')) {
-                        target.src = `/api/proxy/image?url=${encodeURIComponent(mangaList[0].coverUrl)}`;
+                        target.src = getProxyImageUrl(mangaList[0].coverUrl);
                       } else {
                         target.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop';
                       }
