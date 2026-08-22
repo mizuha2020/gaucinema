@@ -22,15 +22,22 @@ import {
   Check,
   SkipForward,
   SkipBack,
+  Key,
+  Globe,
+  ShieldCheck,
+  Zap,
 } from 'lucide-react';
 import Hls from 'hls.js';
-import * as dashjs from 'dashjs';
+import shaka from 'shaka-player';
 import { Account, Channel } from '../types';
 import { firestoreStorage } from '../services/firestoreStorage';
 import { getFullApiUrl } from '../services/apiConfig';
 import { systemApiService } from '../services/systemApiService';
 import { presenceService } from '../services/presenceService';
 import { DEFAULT_CHANNELS } from '../data/defaultChannels';
+import { parseClearkeyToHexMap, parseM3uWithDrmAndUA } from '../utils/drmParser';
+import { CloudflareWorkerModal } from './livetv/CloudflareWorkerModal';
+import { DrmChannelTesterModal } from './livetv/DrmChannelTesterModal';
 
 interface LiveTvViewProps {
   currentAccount: Account | null;
@@ -48,6 +55,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
   const [mobileTab, setMobileTab] = useState<'player' | 'channels'>('player');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [showSourceModal, setShowSourceModal] = useState(false);
+  const [showDrmTesterModal, setShowDrmTesterModal] = useState(false);
+  const [showCloudflareModal, setShowCloudflareModal] = useState(false);
 
   // Favorites state
   const [favorites, setFavorites] = useState<string[]>(() => {
@@ -76,12 +85,21 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
   const LIVE_SOURCES = [
     {
       id: 'default',
-      name: 'Nguồn Tổng Hợp Premium',
+      name: 'Nguồn Tổng Hợp Premium (Hỗ trợ DRM ClearKey)',
       shortName: 'Nguồn Tổng Hợp',
       count: '400+ Kênh',
       badge: 'Ổn định nhất',
-      desc: 'Kho kênh chất lượng cao đầy đủ VTV, HTV, K+, Thể Thao & Quốc Tế',
+      desc: 'Kho kênh chất lượng cao đầy đủ VTV, HTV, K+, HBO, Thể Thao & Quốc Tế DRM ClearKey',
       url: '',
+    },
+    {
+      id: 'vmttv',
+      name: 'VMT TV (Vũ Minh Thanh)',
+      shortName: 'VMT TV',
+      count: '440+ Kênh',
+      badge: 'ASEAN Cup & Thể Thao',
+      desc: 'Nguồn VMT TV: VTV6 HD, ASEAN Cup 2026, Sky Sport, Canal+ Live 1-7',
+      url: 'https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/main/vmttv',
     },
     {
       id: 'hqclick',
@@ -127,12 +145,21 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
   // Player state
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const dashPlayerRef = useRef<dashjs.MediaPlayerClass | null>(null);
+  const shakaPlayerRef = useRef<shaka.Player | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(1.0);
   const [isLoadingStream, setIsLoadingStream] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+
+  // Initialize Shaka polyfill
+  useEffect(() => {
+    try {
+      shaka.polyfill.installAll();
+    } catch (e) {
+      console.warn('Shaka polyfill notice:', e);
+    }
+  }, []);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -218,55 +245,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
   }, [selectedSource]);
 
   const parseM3uContent = (text: string): Channel[] => {
-    const list: Channel[] = [];
-    if (!text || text.length < 50) return list;
-
-    if (text.trim().startsWith('{')) {
-      try {
-        const json = JSON.parse(text);
-        if (Array.isArray(json.channels)) return json.channels;
-      } catch {}
-    }
-
-    const lines = text.split(/\r?\n/);
-    let currentGroup = 'Truyền Hình';
-    let currentLogo = '';
-    let currentName = '';
-    let currentKey = '';
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (line.startsWith('#EXTINF:')) {
-        const groupMatch = line.match(/group-title="([^"]*)"/);
-        if (groupMatch) currentGroup = groupMatch[1];
-
-        const logoMatch = line.match(/tvg-logo="([^"]*)"/);
-        if (logoMatch) currentLogo = logoMatch[1];
-
-        const commaIndex = line.lastIndexOf(',');
-        if (commaIndex !== -1) {
-          currentName = line.substring(commaIndex + 1).trim();
-        }
-      } else if (line.startsWith('#KODIPROP:inputstream.adaptive.license_key=')) {
-        currentKey = line.replace('#KODIPROP:inputstream.adaptive.license_key=', '').trim();
-      } else if (line && !line.startsWith('#')) {
-        if (currentName) {
-          list.push({
-            name: currentName,
-            logo:
-              currentLogo ||
-              'https://images.unsplash.com/photo-1593784991095-a205069470b6?w=100&auto=format&fit=crop&q=60',
-            group: currentGroup,
-            url: line,
-            drmKey: currentKey || undefined,
-          });
-        }
-        currentName = '';
-        currentLogo = '';
-        currentKey = '';
-      }
-    }
-    return list;
+    return parseM3uWithDrmAndUA(text);
   };
 
   const fetchChannels = async () => {
@@ -374,7 +353,36 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     return matchesGroup && matchesSearch;
   });
 
-  // Handle stream playback
+  // Safe Play helper to prevent AbortError when switching streams rapidly
+  const safePlay = (mediaEl: HTMLVideoElement | null) => {
+    if (!mediaEl) return;
+    try {
+      mediaEl.volume = isMuted ? 0 : volume;
+      mediaEl.muted = isMuted;
+      const promise = mediaEl.play();
+      if (promise !== undefined) {
+        promise
+          .then(() => {
+            setIsPlaying(true);
+          })
+          .catch((err: any) => {
+            if (err?.name === 'AbortError' || String(err?.message || '').includes('interrupted')) {
+              // Benign: switching streams interrupted previous play request
+              return;
+            }
+            if (err?.name === 'NotAllowedError') {
+              // Autoplay restricted by browser policy
+              setIsPlaying(false);
+              return;
+            }
+            console.warn('Playback interrupted:', err?.message || err);
+            setIsPlaying(false);
+          });
+      }
+    } catch (e) {}
+  };
+
+  // Handle stream playback (Auto choose Shaka for MPD / ClearKey DRM, HLS.js for M3U8)
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !activeChannel) return;
@@ -389,88 +397,165 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       } catch (e) {}
       hlsRef.current = null;
     }
-    if (dashPlayerRef.current) {
+    if (shakaPlayerRef.current) {
       try {
-        dashPlayerRef.current.destroy();
+        shakaPlayerRef.current.destroy();
       } catch (e) {}
-      try {
-        dashPlayerRef.current.reset();
-      } catch (e) {}
-      dashPlayerRef.current = null;
+      shakaPlayerRef.current = null;
     }
+    try {
+      video.pause();
+    } catch (e) {}
 
     const streamUrl = activeChannel.url;
+    const isMpd =
+      streamUrl.includes('.mpd') ||
+      streamUrl.includes('manifest') ||
+      !!activeChannel.drmKey ||
+      activeChannel.licenseType === 'org.w3.clearkey';
 
-    if (streamUrl.includes('.mpd')) {
+    if (isMpd) {
+      // ===== 1. SHAKA PLAYER FOR MPD & CLEARKEY DRM =====
       try {
-        const player = dashjs.MediaPlayer().create();
-        dashPlayerRef.current = player;
-
-        player.updateSettings({ debug: { logLevel: dashjs.Debug.LOG_LEVEL_NONE } });
-
-        if (activeChannel.drmKey) {
-          try {
-            if (activeChannel.drmKey.trim().startsWith('{')) {
-              const parsedKey = JSON.parse(activeChannel.drmKey);
-              if (parsedKey.keys && Array.isArray(parsedKey.keys)) {
-                const clearkeyMap: Record<string, string> = {};
-                for (const item of parsedKey.keys) {
-                  if (item.kid && item.k) {
-                    clearkeyMap[item.kid] = item.k;
-                  }
-                }
-                if (Object.keys(clearkeyMap).length > 0) {
-                  player.setProtectionData({
-                    'org.w3.clearkey': {
-                      clearkeys: clearkeyMap,
-                    },
-                  });
-                }
-              }
-            } else if (activeChannel.drmKey.includes(':')) {
-              const [kid, k] = activeChannel.drmKey.split(':');
-              player.setProtectionData({
-                'org.w3.clearkey': {
-                  clearkeys: {
-                    [kid.trim()]: k.trim(),
-                  },
-                },
-              });
-            }
-          } catch (e) {
-            console.warn('Error applying ClearKey DRM config:', e);
-          }
+        if (!shaka.Player.isBrowserSupported()) {
+          setStreamError('Trình duyệt hiện tại không hỗ trợ Shaka Player / EME DRM.');
+          setIsLoadingStream(false);
+          return;
         }
 
-        player.initialize(video, streamUrl, true);
-        player.on(dashjs.MediaPlayer.events.CAN_PLAY, () => {
-          setIsLoadingStream(false);
-          video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+        const player = new shaka.Player();
+        player.attach(video);
+        shakaPlayerRef.current = player;
+
+        // Parse ClearKey hex map (KID -> KEY)
+        const clearKeysHexMap = activeChannel.drmKey
+          ? parseClearkeyToHexMap(activeChannel.drmKey)
+          : {};
+
+        const drmConfig: any = {};
+        if (Object.keys(clearKeysHexMap).length > 0) {
+          drmConfig.clearKeys = clearKeysHexMap;
+        }
+
+        player.configure({
+          drm: drmConfig,
+          streaming: {
+            lowLatencyMode: true,
+            bufferingGoal: 10,
+            rebufferingGoal: 2,
+            retryParameters: {
+              maxAttempts: 3,
+              baseDelay: 1000,
+              backoffFactor: 2,
+              fuzzFactor: 0.5,
+              timeout: 10000,
+            },
+          },
+          manifest: {
+            dash: {
+              ignoreMinBufferTime: true,
+              autoCorrectDrift: true,
+            },
+          },
         });
-        player.on(dashjs.MediaPlayer.events.ERROR, (e) => {
-          console.warn('DashJS error:', e);
-          const errMsg =
-            typeof e?.error === 'object' && e?.error !== null && 'message' in e.error
-              ? String(e.error.message)
-              : String(e?.error || '');
-          if (
-            errMsg.includes('DRM') ||
-            errMsg.includes('NotSupportedError') ||
-            errMsg.includes('key request')
-          ) {
-            setStreamError(
-              'Kênh này sử dụng mã hóa bản quyền DRM (Widevine/Clearkey) không được trình duyệt hỗ trợ.'
+
+        // Register Shaka RequestFilter & ResponseFilter for custom User-Agent (Dalvik/2.1.0) & CORS Proxy
+        const targetUA = activeChannel.userAgent || 'Dalvik/2.1.0';
+        const networkingEngine = player.getNetworkingEngine();
+        if (networkingEngine) {
+          networkingEngine.clearAllRequestFilters();
+          networkingEngine.clearAllResponseFilters();
+
+          networkingEngine.registerRequestFilter((type, request) => {
+            const originalUri = request.uris[0];
+            if (!originalUri) return;
+
+            // Prevent double proxying
+            if (originalUri.includes('/api/tv/stream-proxy')) return;
+
+            // Resolve relative URLs against the stream's original base URL
+            let absoluteUrl = originalUri;
+            if (!originalUri.startsWith('http://') && !originalUri.startsWith('https://')) {
+              try {
+                absoluteUrl = new URL(originalUri, streamUrl).href;
+              } catch (e) {
+                absoluteUrl = originalUri;
+              }
+            }
+
+            const proxyUri = getFullApiUrl(
+              `/api/tv/stream-proxy?url=${encodeURIComponent(absoluteUrl)}&ua=${encodeURIComponent(
+                targetUA
+              )}`
             );
+            request.uris = [proxyUri];
+          });
+
+          // Reset response.uri to original target URL so DASH manifests resolve relative segments correctly
+          networkingEngine.registerResponseFilter((type, response) => {
+            if (response.uri && response.uri.includes('/api/tv/stream-proxy')) {
+              try {
+                const u = new URL(response.uri, window.location.href);
+                const originalUrl = u.searchParams.get('url');
+                if (originalUrl) {
+                  response.uri = originalUrl;
+                }
+              } catch (e) {}
+            }
+          });
+        }
+
+        // Shaka Player error listeners
+        player.addEventListener('error', (event: any) => {
+          const err = event.detail;
+          console.warn('Shaka Player error:', err);
+          let errText = 'Lỗi phát luồng MPD.';
+          if (err?.code === 1001) {
+            const httpStatus = err.data && err.data[1] ? ` (Mã HTTP ${err.data[1]})` : '';
+            errText = `Lỗi kết nối${httpStatus}: Kênh trực tiếp không phản hồi, luồng đã kết thúc hoặc link bị chặn/hết hạn.`;
+          } else if (err?.code === 1002) {
+            errText = 'Phản hồi từ máy chủ phát không đúng định dạng.';
+          } else if (err?.code === 1003) {
+            errText = 'Kết nối tới luồng phát quá thời gian chờ (Timeout).';
+          } else if (err?.category === 6) {
+            errText = 'Lỗi giải mã DRM ClearKey (Kiểm tra lại KID:KEY hoặc khóa bản quyền đã hết hạn).';
+          } else if (err?.category === 1) {
+            errText = 'Lỗi mạng luồng phát MPD (Kênh ngoại tuyến hoặc cần đổi nguồn).';
           } else {
-            setStreamError('Không thể phát luồng DASH (Lỗi kết nối hoặc mã hóa).');
+            errText = `Lỗi phát luồng MPD: ${err?.message || 'Code ' + err?.code}`;
           }
+          setStreamError(errText);
           setIsLoadingStream(false);
+          setIsPlaying(false);
         });
+
+        player
+          .load(streamUrl)
+          .then(() => {
+            setIsLoadingStream(false);
+            safePlay(video);
+          })
+          .catch((loadErr) => {
+            console.warn('Shaka load error:', loadErr);
+            let loadMsg = 'Không thể tải luồng MPD';
+            if (loadErr?.code === 1001) {
+              const httpStatus = loadErr.data && loadErr.data[1] ? ` (Mã HTTP ${loadErr.data[1]})` : '';
+              loadMsg = `Không thể kết nối luồng MPD${httpStatus}: Kênh tạm thời ngoại tuyến hoặc sự kiện phát sóng đã kết thúc.`;
+            } else if (loadErr?.category === 6) {
+              loadMsg = 'Lỗi bản quyền DRM ClearKey (Khóa giải mã không chính xác hoặc hết hạn).';
+            } else if (loadErr?.message) {
+              loadMsg = `Không thể tải luồng MPD: ${loadErr.message}`;
+            }
+            setStreamError(loadMsg);
+            setIsLoadingStream(false);
+            setIsPlaying(false);
+          });
       } catch (err: any) {
-        setStreamError('Lỗi khởi tạo trình phát DASH: ' + err.message);
+        setStreamError('Lỗi khởi tạo Shaka Player: ' + err.message);
         setIsLoadingStream(false);
       }
     } else if (streamUrl.includes('.m3u8') || Hls.isSupported()) {
+      // ===== 2. HLS.JS FOR M3U8 STREAMS =====
       if (Hls.isSupported()) {
         let isProxyAttempt = false;
         const initialPlayUrl = streamUrl;
@@ -486,9 +571,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setIsLoadingStream(false);
-          video.volume = isMuted ? 0 : volume;
-          video.muted = isMuted;
-          video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+          safePlay(video);
         });
 
         hls.on(Hls.Events.ERROR, (event, data) => {
@@ -496,8 +579,11 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
             console.warn('HLS fatal error:', data);
             if (!isProxyAttempt) {
               isProxyAttempt = true;
+              const targetUA = activeChannel.userAgent || 'Dalvik/2.1.0';
               const proxyUrl = getFullApiUrl(
-                `/api/tv/stream-proxy?url=${encodeURIComponent(streamUrl)}`
+                `/api/tv/stream-proxy?url=${encodeURIComponent(streamUrl)}&ua=${encodeURIComponent(
+                  targetUA
+                )}`
               );
               hls.loadSource(proxyUrl);
               hls.attachMedia(video);
@@ -506,6 +592,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                 'Không thể kết nối luồng phát HLS (Kênh ngoại tuyến hoặc cần đổi nguồn).'
               );
               setIsLoadingStream(false);
+              setIsPlaying(false);
             }
           }
         });
@@ -513,13 +600,13 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         video.src = streamUrl;
         video.addEventListener('loadedmetadata', () => {
           setIsLoadingStream(false);
-          video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+          safePlay(video);
         });
       }
     } else {
       video.src = streamUrl;
       setIsLoadingStream(false);
-      video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+      safePlay(video);
     }
 
     if (activeChannel) {
@@ -538,20 +625,22 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
 
     return () => {
       presenceService.stopHeartbeat();
+      if (video) {
+        try {
+          video.pause();
+        } catch (e) {}
+      }
       if (hlsRef.current) {
         try {
           hlsRef.current.destroy();
         } catch (e) {}
         hlsRef.current = null;
       }
-      if (dashPlayerRef.current) {
+      if (shakaPlayerRef.current) {
         try {
-          dashPlayerRef.current.destroy();
+          shakaPlayerRef.current.destroy();
         } catch (e) {}
-        try {
-          dashPlayerRef.current.reset();
-        } catch (e) {}
-        dashPlayerRef.current = null;
+        shakaPlayerRef.current = null;
       }
     };
   }, [activeChannel, currentAccount]);
@@ -563,7 +652,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       video.pause();
       setIsPlaying(false);
     } else {
-      video.play().then(() => setIsPlaying(true));
+      safePlay(video);
     }
   };
 
@@ -679,11 +768,29 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
           </div>
         </div>
 
-        {/* Source Selector Trigger Button */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Source Selector & Tool Trigger Buttons */}
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          <button
+            onClick={() => setShowDrmTesterModal(true)}
+            title="Thử nghiệm kênh DRM ClearKey (KID:KEY)"
+            className="bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 hover:border-amber-400 px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-md flex items-center gap-1.5"
+          >
+            <Key className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Thử DRM ClearKey</span>
+          </button>
+
+          <button
+            onClick={() => setShowCloudflareModal(true)}
+            title="Hướng dẫn cấu hình Cloudflare Worker Proxy Dalvik User-Agent"
+            className="bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/40 hover:border-sky-400 px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-md flex items-center gap-1.5"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-sky-400" />
+            <span className="hidden sm:inline">Cloudflare Worker</span>
+          </button>
+
           <button
             onClick={() => setShowSourceModal(true)}
-            className="flex-1 sm:flex-none bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700/80 hover:border-orange-500/60 px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-lg flex items-center justify-between gap-2.5 group"
+            className="bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700/80 hover:border-orange-500/60 px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-lg flex items-center justify-between gap-2.5 group"
           >
             <div className="flex items-center gap-2 min-w-0">
               <Server className="w-3.5 h-3.5 text-orange-400 shrink-0" />
@@ -948,53 +1055,86 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
 
           {/* Active Channel Info & Quick Actions Card */}
           {activeChannel && (
-            <div className="p-3.5 sm:p-4 rounded-2xl bg-[#0c1427] border border-slate-800 shadow-xl flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <img
-                  src={activeChannel.logo}
-                  alt={activeChannel.name}
-                  className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl object-contain bg-slate-950 p-1 border border-slate-700 shrink-0"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src =
-                      'https://images.unsplash.com/photo-1593784991095-a205069470b6?w=100&auto=format&fit=crop&q=60';
-                  }}
-                />
-                <div className="min-w-0">
-                  <h3 className="text-sm sm:text-base font-bold text-white truncate">
-                    {activeChannel.name}
-                  </h3>
-                  <p className="text-[11px] text-amber-400 font-medium flex items-center gap-1.5 truncate">
-                    <Signal className="w-3 h-3 text-emerald-400 animate-pulse shrink-0" />
-                    <span className="truncate">{activeChannel.group}</span>
-                  </p>
+            <div className="p-3.5 sm:p-4 rounded-2xl bg-[#0c1427] border border-slate-800 shadow-xl space-y-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <img
+                    src={activeChannel.logo}
+                    alt={activeChannel.name}
+                    className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl object-contain bg-slate-950 p-1 border border-slate-700 shrink-0"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src =
+                        'https://images.unsplash.com/photo-1593784991095-a205069470b6?w=100&auto=format&fit=crop&q=60';
+                    }}
+                  />
+                  <div className="min-w-0">
+                    <h3 className="text-sm sm:text-base font-bold text-white truncate">
+                      {activeChannel.name}
+                    </h3>
+                    <p className="text-[11px] text-amber-400 font-medium flex items-center gap-1.5 truncate">
+                      <Signal className="w-3 h-3 text-emerald-400 animate-pulse shrink-0" />
+                      <span className="truncate">{activeChannel.group}</span>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={(e) => toggleFavorite(activeChannel.url, e)}
+                    className={`p-2.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                      favorites.includes(activeChannel.url)
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        : 'bg-slate-900 text-slate-300 border-slate-700 hover:text-white'
+                    }`}
+                  >
+                    <Star
+                      className={`w-4 h-4 ${
+                        favorites.includes(activeChannel.url) ? 'fill-amber-400 text-amber-400' : ''
+                      }`}
+                    />
+                    <span className="hidden sm:inline">
+                      {favorites.includes(activeChannel.url) ? 'Đã thích' : 'Yêu thích'}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setMobileTab('channels')}
+                    className="lg:hidden bg-orange-600 text-white font-bold px-3 py-2.5 rounded-xl text-xs transition-all cursor-pointer shadow-md"
+                  >
+                    Đổi kênh
+                  </button>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={(e) => toggleFavorite(activeChannel.url, e)}
-                  className={`p-2.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    favorites.includes(activeChannel.url)
-                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                      : 'bg-slate-900 text-slate-300 border-slate-700 hover:text-white'
-                  }`}
-                >
-                  <Star
-                    className={`w-4 h-4 ${
-                      favorites.includes(activeChannel.url) ? 'fill-amber-400 text-amber-400' : ''
-                    }`}
-                  />
-                  <span className="hidden sm:inline">
-                    {favorites.includes(activeChannel.url) ? 'Đã thích' : 'Yêu thích'}
+              {/* Stream Specs & DRM ClearKey Status Badges */}
+              <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-slate-800/80 text-[10px]">
+                {activeChannel.drmKey ? (
+                  <span className="bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-md font-mono font-medium flex items-center gap-1">
+                    <Key className="w-3 h-3 text-amber-400" />
+                    DRM ClearKey: {activeChannel.drmKey.substring(0, 16)}...
                   </span>
-                </button>
+                ) : (
+                  <span className="bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-md font-medium flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                    Luồng Chuẩn
+                  </span>
+                )}
 
-                <button
-                  onClick={() => setMobileTab('channels')}
-                  className="lg:hidden bg-orange-600 text-white font-bold px-3 py-2.5 rounded-xl text-xs transition-all cursor-pointer shadow-md"
-                >
-                  Đổi kênh
-                </button>
+                {activeChannel.url.includes('.mpd') ? (
+                  <span className="bg-purple-500/15 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-md font-medium">
+                    ⚡ Shaka Player (DASH .mpd)
+                  </span>
+                ) : (
+                  <span className="bg-sky-500/15 text-sky-300 border border-sky-500/30 px-2 py-0.5 rounded-md font-medium">
+                    📺 HLS.js (.m3u8)
+                  </span>
+                )}
+
+                {activeChannel.userAgent && (
+                  <span className="bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5 rounded-md font-mono">
+                    📱 UA: {activeChannel.userAgent}
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -1303,6 +1443,23 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
           </div>
         </div>
       )}
+
+      {/* DRM ClearKey Channel Tester Modal */}
+      <DrmChannelTesterModal
+        isOpen={showDrmTesterModal}
+        onClose={() => setShowDrmTesterModal(false)}
+        onPlayCustomChannel={(customChannel) => {
+          setChannels((prev) => [customChannel, ...prev.filter((c) => c.url !== customChannel.url)]);
+          setActiveChannel(customChannel);
+          setMobileTab('player');
+        }}
+      />
+
+      {/* Cloudflare Worker Deployment & Dalvik UA Proxy Guide Modal */}
+      <CloudflareWorkerModal
+        isOpen={showCloudflareModal}
+        onClose={() => setShowCloudflareModal(false)}
+      />
     </div>
   );
 };

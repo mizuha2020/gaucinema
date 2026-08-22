@@ -591,12 +591,24 @@ async function startServer() {
   app.get("/api/tv/channels", async (req, res) => {
     try {
       const requestedUrl = req.query.url as string;
-      const candidateUrls = requestedUrl ? [requestedUrl] : [
-        "https://tinyurl.com/HQClick",
-        "https://tinyurl.com/kenhtv5",
-        "https://quidniptv.blogspot.com/p/iptv.html",
-        "https://iptv-org.github.io/iptv/countries/vn.m3u"
-      ];
+      const candidateUrls: string[] = [];
+      if (requestedUrl) {
+        candidateUrls.push(requestedUrl);
+        if (requestedUrl.includes("vmttv.duckdns.org") || requestedUrl.includes("vmttv")) {
+          candidateUrls.push(
+            "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/main/vmttv",
+            "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/main/tv.m3u"
+          );
+        }
+      } else {
+        candidateUrls.push(
+          "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/main/vmttv",
+          "https://tinyurl.com/HQClick",
+          "https://tinyurl.com/kenhtv5",
+          "https://quidniptv.blogspot.com/p/iptv.html",
+          "https://iptv-org.github.io/iptv/countries/vn.m3u"
+        );
+      }
 
       const allChannels: Array<{
         name: string;
@@ -604,6 +616,8 @@ async function startServer() {
         group: string;
         url: string;
         drmKey?: string;
+        licenseType?: string;
+        userAgent?: string;
       }> = [];
 
       // Helper to parse JSON format (e.g. HQClick mon.json)
@@ -620,7 +634,9 @@ async function startServer() {
                 logo: ch.logo || ch.image?.url || "",
                 group: ch.group || "Truyền Hình",
                 url: ch.url,
-                drmKey: ch.drmKey
+                drmKey: ch.drmKey,
+                licenseType: ch.licenseType,
+                userAgent: ch.userAgent || ch.http_user_agent,
               });
             }
           }
@@ -634,6 +650,7 @@ async function startServer() {
               for (const ch of grp.channels) {
                 const chName = ch.name || "Kênh TV";
                 const logo = ch.image?.url || ch.logo || "";
+                const chUA = ch.userAgent || ch.http_user_agent || ch.headers?.['User-Agent'];
 
                 // Find stream links recursively
                 const findStreamUrls = (obj: any): string[] => {
@@ -671,7 +688,10 @@ async function startServer() {
                       name: chName,
                       logo: logo || "https://images.unsplash.com/photo-1593784991095-a205069470b6?w=100&auto=format&fit=crop&q=60",
                       group: groupName,
-                      url: streamUrl
+                      url: streamUrl,
+                      drmKey: ch.drmKey || ch.license_key,
+                      licenseType: ch.licenseType || ch.license_type,
+                      userAgent: chUA,
                     });
                     break; // Take primary stream link
                   }
@@ -725,7 +745,7 @@ async function startServer() {
         return list;
       };
 
-      // Helper to parse standard M3U
+      // Helper to parse standard M3U with Kodi DRM tags and VLC User-Agent tags
       const parseM3uChannels = (text: string) => {
         const list: typeof allChannels = [];
         const lines = text.split(/\r?\n/);
@@ -733,37 +753,65 @@ async function startServer() {
         let currentLogo = "";
         let currentName = "";
         let currentKey = "";
+        let currentLicenseType = "";
+        let currentUserAgent = "";
 
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i].trim();
           if (line.startsWith("#EXTINF:")) {
-            const groupMatch = line.match(/group-title="([^"]*)"/);
+            const groupMatch = line.match(/group-title="([^"]*)"/i);
             if (groupMatch) {
               currentGroup = groupMatch[1];
             }
-            const logoMatch = line.match(/tvg-logo="([^"]*)"/);
+            const logoMatch = line.match(/tvg-logo="([^"]*)"/i);
             if (logoMatch) {
               currentLogo = logoMatch[1];
+            }
+            const uaMatch = line.match(/(?:http-)?user-agent="([^"]*)"/i);
+            if (uaMatch) {
+              currentUserAgent = uaMatch[1];
             }
             const commaIndex = line.lastIndexOf(",");
             if (commaIndex !== -1) {
               currentName = line.substring(commaIndex + 1).trim();
             }
-          } else if (line.startsWith("#KODIPROP:inputstream.adaptive.license_key=")) {
-            currentKey = line.replace("#KODIPROP:inputstream.adaptive.license_key=", "").trim();
-          } else if (line && !line.startsWith("#") && line.startsWith("http")) {
-            if (currentName) {
+          } else if (line.match(/(?:#KODIPROP:)?(?:inputstream\.adaptive\.)?license_key\s*=\s*(.+)/i)) {
+            const keyMatch = line.match(/(?:#KODIPROP:)?(?:inputstream\.adaptive\.)?license_key\s*=\s*(.+)/i);
+            if (keyMatch) {
+              currentKey = keyMatch[1].trim();
+            }
+          } else if (line.match(/(?:#KODIPROP:)?(?:inputstream\.adaptive\.)?license_type\s*=\s*(.+)/i)) {
+            const typeMatch = line.match(/(?:#KODIPROP:)?(?:inputstream\.adaptive\.)?license_type\s*=\s*(.+)/i);
+            if (typeMatch) {
+              currentLicenseType = typeMatch[1].trim();
+            }
+          } else if (line.match(/(?:#EXTVLCOPT:)?(?:http-user-agent|user-agent)\s*=\s*(.+)/i)) {
+            const uaMatch = line.match(/(?:#EXTVLCOPT:)?(?:http-user-agent|user-agent)\s*=\s*(.+)/i);
+            if (uaMatch) {
+              currentUserAgent = uaMatch[1].trim();
+            }
+          } else if (line.startsWith("#EXTHTTP:")) {
+            try {
+              const obj = JSON.parse(line.replace("#EXTHTTP:", "").trim());
+              if (obj["User-Agent"]) currentUserAgent = obj["User-Agent"];
+            } catch {}
+          } else if (line && !line.startsWith("#") && (line.startsWith("http://") || line.startsWith("https://") || line.startsWith("/"))) {
+            if (currentName || line) {
               list.push({
-                name: currentName,
+                name: currentName || "Kênh LiveTV",
                 logo: currentLogo || "https://images.unsplash.com/photo-1593784991095-a205069470b6?w=100&auto=format&fit=crop&q=60",
                 group: currentGroup,
                 url: line,
                 drmKey: currentKey || undefined,
+                licenseType: currentLicenseType || undefined,
+                userAgent: currentUserAgent || undefined,
               });
             }
             currentName = "";
             currentLogo = "";
             currentKey = "";
+            currentLicenseType = "";
+            currentUserAgent = "";
           }
         }
         return list;
@@ -826,31 +874,72 @@ async function startServer() {
     }
   });
 
-  // Stream proxy endpoint to bypass CORS and Mixed Content (HTTP on HTTPS)
-  app.get("/api/tv/stream-proxy", async (req, res) => {
+  // Stream proxy endpoint to bypass CORS, Mixed Content, and enforce custom User-Agent (e.g. Dalvik/2.1.0)
+  app.all("/api/tv/stream-proxy", async (req, res) => {
+    // Handle CORS preflight
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range, User-Agent, X-Custom-UA, Authorization, Accept");
+    res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Type");
+
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(204);
+    }
+
     try {
       const targetUrl = req.query.url as string;
+      const customUA =
+        (req.query.ua as string) ||
+        (req.headers["x-custom-ua"] as string) ||
+        "Dalvik/2.1.0 (Linux; U; Android 10; Build/QP1A.190711.020)";
+
       if (!targetUrl || !targetUrl.startsWith("http")) {
         return res.status(400).send("Invalid stream URL");
       }
 
-      const upstreamRes = await fetch(targetUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "*/*",
-        },
-      });
+      const forwardHeaders: Record<string, string> = {
+        "User-Agent": customUA,
+        "Accept": "*/*",
+      };
 
-      if (!upstreamRes.ok) {
-        return res.status(upstreamRes.status).send("Upstream stream error");
+      if (req.headers.range) {
+        forwardHeaders["Range"] = req.headers.range;
       }
 
-      const contentType = upstreamRes.headers.get("content-type") || "application/x-mpegURL";
-      res.setHeader("Content-Type", contentType);
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+      const upstreamRes = await fetch(targetUrl, {
+        method: req.method === "HEAD" ? "HEAD" : "GET",
+        headers: forwardHeaders,
+        redirect: "follow",
+      });
 
-      // Handle M3U8 Playlist rewriting so nested segment URLs pass through proxy
+      if (!upstreamRes.ok && upstreamRes.status !== 206) {
+        return res
+          .status(upstreamRes.status)
+          .send(`Upstream stream error (${upstreamRes.status})`);
+      }
+
+      let contentType = upstreamRes.headers.get("content-type") || "application/octet-stream";
+      if (targetUrl.includes(".mpd") && !contentType.includes("xml")) {
+        contentType = "application/dash+xml";
+      } else if (targetUrl.includes(".m3u8") && !contentType.includes("mpegurl")) {
+        contentType = "application/vnd.apple.mpegurl";
+      }
+
+      res.setHeader("Content-Type", contentType);
+
+      if (upstreamRes.headers.get("accept-ranges")) {
+        res.setHeader("Accept-Ranges", upstreamRes.headers.get("accept-ranges")!);
+      }
+      if (upstreamRes.headers.get("content-range")) {
+        res.setHeader("Content-Range", upstreamRes.headers.get("content-range")!);
+      }
+      if (upstreamRes.headers.get("content-length")) {
+        res.setHeader("Content-Length", upstreamRes.headers.get("content-length")!);
+      }
+
+      res.status(upstreamRes.status);
+
+      // Handle M3U8 Playlist rewriting so nested segment URLs pass through proxy with custom UA
       if (contentType.includes("mpegurl") || targetUrl.includes(".m3u8")) {
         const playlistText = await upstreamRes.text();
         const baseUrl = new URL(targetUrl);
@@ -860,7 +949,7 @@ async function startServer() {
           if (trimmed && !trimmed.startsWith("#")) {
             try {
               const absoluteSegmentUrl = new URL(trimmed, baseUrl.href).href;
-              return `/api/tv/stream-proxy?url=${encodeURIComponent(absoluteSegmentUrl)}`;
+              return `/api/tv/stream-proxy?url=${encodeURIComponent(absoluteSegmentUrl)}&ua=${encodeURIComponent(customUA)}`;
             } catch (e) {
               return line;
             }
@@ -871,7 +960,21 @@ async function startServer() {
         return res.send(rewritten.join("\n"));
       }
 
-      // Stream binary data for TS or AAC segments
+      // Handle MPD XML manifest: inject <BaseURL> so DASH players properly resolve relative segment paths
+      if (contentType.includes("dash+xml") || contentType.includes("xml") || targetUrl.includes(".mpd")) {
+        const mpdText = await upstreamRes.text();
+        if (mpdText.includes("<MPD") && !mpdText.includes("<BaseURL>http")) {
+          const baseUrlStr = targetUrl.substring(0, targetUrl.lastIndexOf("/") + 1);
+          const injectedMpd = mpdText.replace(
+            /(<MPD[^>]*>)/i,
+            `$1\n  <BaseURL>${baseUrlStr}</BaseURL>`
+          );
+          return res.send(injectedMpd);
+        }
+        return res.send(mpdText);
+      }
+
+      // Stream binary data for DASH MPD segments (m4s/mp4), TS, AAC
       const arrayBuffer = await upstreamRes.arrayBuffer();
       return res.send(Buffer.from(arrayBuffer));
     } catch (err: any) {

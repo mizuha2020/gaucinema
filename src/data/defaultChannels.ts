@@ -20,27 +20,33 @@ export const DEFAULT_CHANNELS: Channel[] = [
     group: '⚽ Thể Thao',
     url: 'https://vtv5-hls.vtvgo.vn/vtv5/vtv5.m3u8',
   },
-  // ⭐ KÊNH YÊU THÍCH / PHIM TRUYỆN
+  // ⭐ KÊNH YÊU THÍCH / PHIM TRUYỆN (DRM CLEARKEY & MPD)
   {
-    name: 'HBO HD',
+    name: 'HBO HD (ClearKey Base64)',
     logo: 'https://i.pinimg.com/originals/8b/02/00/8b020050690f955ccb306cdf51324aea.png',
     group: '⭐ KÊNH YÊU THÍCH',
     url: 'https://s2129134.cdn.mytvnet.vn/pkg20/live_dzones/hbo.smil/manifest.mpd',
     drmKey: 'Cd3+PWOGPK+ut50FRrCYqw:PeDzjc8BSCff1b7Dh0PGog',
+    licenseType: 'org.w3.clearkey',
+    userAgent: 'Dalvik/2.1.0',
   },
   {
-    name: 'Cinemax HD',
+    name: 'Cinemax HD (ClearKey Hex)',
     logo: 'https://raw.githubusercontent.com/vuminhthanh12/Logo/refs/heads/main/cinemax.png',
     group: '⭐ KÊNH YÊU THÍCH',
     url: 'https://s2129134.cdn.mytvnet.vn/pkg20/live_dzones/max.smil/manifest.mpd',
-    drmKey: 'rLTCNHEGMyetxzLig8CEfw:6YaPX0c9D9hpnt5I1THCsA',
+    drmKey: 'acb4c23471063327adc732e283c0847f:e9868f5f473d0fd8699ede48d531c2b0',
+    licenseType: 'org.w3.clearkey',
+    userAgent: 'Dalvik/2.1.0',
   },
   {
-    name: 'Cinema World',
+    name: 'Cinema World (ClearKey JSON JWK)',
     logo: 'https://www.voilah.sg/wp-content/uploads/2020/04/cinema-world-2.png',
     group: '⭐ KÊNH YÊU THÍCH',
     url: 'https://s2129134.cdn.mytvnet.vn/pkg20/live_dzones/cinemaworld.smil/manifest.mpd',
-    drmKey: '7nkVVk10OdCb01Vv/MyHpA:s14Sp1pCpvkYRyOpD/QtnA',
+    drmKey: '{"keys":[{"kty":"oct","k":"s14Sp1pCpvkYRyOpD/QtnA","kid":"7nkVVk10OdCb01Vv/MyHpA"}]}',
+    licenseType: 'org.w3.clearkey',
+    userAgent: 'Dalvik/2.1.0',
   },
   // 📺 VTV
   {

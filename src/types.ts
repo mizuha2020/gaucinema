@@ -10,6 +10,8 @@ export interface Channel {
   group: string;
   url: string;
   drmKey?: string;
+  licenseType?: string;
+  userAgent?: string;
 }
 
 export interface Country {
