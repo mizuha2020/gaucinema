@@ -46,15 +46,58 @@ const getOtruyenBase = () => systemApiService.getActiveBaseUrl('manga', 'otruyen
 const getMangadexBase = () => systemApiService.getActiveBaseUrl('manga', 'mangadex', 'https://api.mangadex.org');
 const getCuutruyenBase = () => systemApiService.getActiveBaseUrl('manga', 'cuutruyen', 'https://api.cuutruyen.net/v1');
 
-async function fetchProxy(url: string): Promise<any> {
-  const proxyUrl = getFullApiUrl(`/api/proxy/generic?url=${btoa(url)}`);
-  const res = await fetch(proxyUrl);
-  if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-  const contentType = res.headers.get('content-type');
-  if (!contentType || !contentType.includes('application/json')) {
-     throw new Error('Received non-JSON response from proxy');
+async function fetchMangaApi(url: string): Promise<any> {
+  // 1. Try Direct Fetch first (works on Android APK, Capacitor, and CORS-enabled browsers)
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'Accept': 'application/json, text/plain, */*',
+      }
+    });
+    clearTimeout(timer);
+    if (res.ok) {
+      const data = await res.json();
+      if (data) return data;
+    }
+  } catch (e) {
+    // Direct fetch failed or CORS blocked, fallback to proxies below
   }
-  return res.json();
+
+  // 2. Try Backend Server Generic Proxy (if running in full-stack web/preview)
+  try {
+    const proxyUrl = getFullApiUrl(`/api/proxy/generic?url=${btoa(url)}`);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(proxyUrl, { signal: controller.signal });
+    clearTimeout(timer);
+    if (res.ok) {
+      const contentType = res.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        return await res.json();
+      }
+    }
+  } catch (e) {
+    // Backend proxy unavailable (e.g. standalone APK without live backend server)
+  }
+
+  // 3. Try Public Web CORS Proxy fallback
+  try {
+    const publicProxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(publicProxyUrl, { signal: controller.signal });
+    clearTimeout(timer);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (e) {
+    // Fallback failed
+  }
+
+  throw new Error(`Failed to fetch manga data from ${url}`);
 }
 
 export const mangaApi = {
@@ -67,7 +110,7 @@ export const mangaApi = {
           if (keyword) {
             url = `${getOtruyenBase()}/tim-kiem?keyword=${encodeURIComponent(keyword)}&page=${page}`;
           }
-          const data = await fetchProxy(url);
+          const data = await fetchMangaApi(url);
           if (data.status === 'success' || data.data) {
             const rawItems = data.data?.items || data.items || [];
             const domainCdn = data.data?.domain_cdn || 'https://otruyenapi.com/uploads/comics';
@@ -91,14 +134,14 @@ export const mangaApi = {
             return { items, totalPages };
           }
         } catch (e) {
-          console.warn('OTruyen API offline/cors. Using fallback demo items.');
+          console.warn('OTruyen API error, using demo fallback:', e);
         }
 
         return {
           items: [
             {
               id: 'ot-demo-1',
-              title: 'One Piece (OTruyen Mirror)',
+              title: 'One Piece (Đảo Hải Tặc)',
               slug: 'one-piece',
               coverUrl: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=500&auto=format&fit=crop',
               description: 'Hành trình vĩ đại tìm kho báu One Piece.',
@@ -109,20 +152,6 @@ export const mangaApi = {
               chapters: [
                 { id: 'ot-ch-1', chapterNumber: '1', title: 'Chapter 1', source: 'otruyen', chapterApiUrl: `${getOtruyenBase()}/chapter/1` },
                 { id: 'ot-ch-2', chapterNumber: '2', title: 'Chapter 2', source: 'otruyen', chapterApiUrl: `${getOtruyenBase()}/chapter/2` }
-              ]
-            },
-            {
-              id: 'ot-demo-2',
-              title: 'Naruto (OTruyen Mirror)',
-              slug: 'naruto',
-              coverUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop',
-              description: 'Hành trình trở thành Hokage vĩ đại.',
-              status: 'completed',
-              authors: ['Masashi Kishimoto'],
-              genres: ['Action', 'Adventure', 'Ninja'],
-              source: 'otruyen',
-              chapters: [
-                { id: 'ot-ch-n1', chapterNumber: '1', title: 'Chapter 1', source: 'otruyen', chapterApiUrl: `${getOtruyenBase()}/chapter/1` }
               ]
             }
           ],
@@ -138,7 +167,7 @@ export const mangaApi = {
             url += `&availableTranslatedLanguage[]=vi&hasAvailableChapters=true&order[latestUploadedChapter]=desc`;
           }
 
-          const data = await fetchProxy(url);
+          const data = await fetchMangaApi(url);
           if (data.result === 'ok' && Array.isArray(data.data)) {
             const items: MangaItem[] = data.data.map((manga: any) => {
               const rels = manga.relationships || [];
@@ -180,7 +209,7 @@ export const mangaApi = {
           console.warn('MangaDex API network restriction or CORS. Using fallback demo items.', e);
         }
 
-        // Fallback MangaDex list if network/CORS fails
+        // Fallback MangaDex list if network fails
         return {
           items: [
             {
@@ -200,7 +229,7 @@ export const mangaApi = {
         };
       } else if (source === 'cuutruyen') {
         try {
-          const data = await fetchProxy(`${getCuutruyenBase()}/mangas?page=${page}${keyword ? `&query=${encodeURIComponent(keyword)}` : ''}`);
+          const data = await fetchMangaApi(`${getCuutruyenBase()}/mangas?page=${page}${keyword ? `&query=${encodeURIComponent(keyword)}` : ''}`);
           const raw = data.data || data.mangas || data || [];
           const items: MangaItem[] = (Array.isArray(raw) ? raw : []).map((m: any) => ({
             id: String(m.id || m.slug),
@@ -243,62 +272,75 @@ export const mangaApi = {
   // 2. Get Manga Detail & Chapters
   async getMangaDetail(source: MangaSource, idOrSlug: string): Promise<MangaItem | null> {
     try {
-      if (source === 'otruyen') {
-        try {
-          const data = await fetchProxy(`${getOtruyenBase()}/truyen-tranh/${idOrSlug}`);
-          if (data.status === 'success' && data.data?.item) {
-            const item = data.data.item;
-            const domainCdn = data.data.domain_cdn || 'https://otruyenapi.com/uploads/comics';
-            const coverUrl = item.thumb_url
-              ? (item.thumb_url.startsWith('http') ? item.thumb_url : `${domainCdn}/${item.thumb_url}`)
-              : '';
-            
-            const rawChapters = item.chapters?.[0]?.server_data || [];
-            const chapters: MangaChapter[] = rawChapters.map((ch: any) => ({
-              id: ch.chapter_api_data || ch.chapter_name,
-              chapterNumber: ch.chapter_name,
-              title: `Chapter ${ch.chapter_name}${ch.chapter_title ? `: ${ch.chapter_title}` : ''}`,
-              source: 'otruyen',
-              chapterApiUrl: ch.chapter_api_data
-            }));
+      // Auto-detect source if ID format unambiguously identifies the platform
+      let effectiveSource: MangaSource = source;
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug);
+      const isNumeric = /^\d+$/.test(idOrSlug);
 
-            return {
-              id: item.slug,
-              title: item.name,
-              altTitles: item.origin_name,
-              slug: item.slug,
-              coverUrl,
-              description: item.content,
-              status: item.status,
-              authors: item.author || [],
-              genres: item.category?.map((c: any) => c.name) || [],
-              chapters,
-              source: 'otruyen',
-              updatedAt: item.updatedAt
-            };
+      if (isUuid) {
+        effectiveSource = 'mangadex';
+      } else if (isNumeric && effectiveSource !== 'cuutruyen') {
+        effectiveSource = 'cuutruyen';
+      }
+
+      if (effectiveSource === 'otruyen') {
+        try {
+          const data = await fetchMangaApi(`${getOtruyenBase()}/truyen-tranh/${idOrSlug}`);
+          if (data && (data.status === 'success' || data.data?.item)) {
+            const item = data.data?.item || data.item;
+            if (item) {
+              const domainCdn = data.data?.domain_cdn || data.domain_cdn || 'https://otruyenapi.com/uploads/comics';
+              const coverUrl = item.thumb_url
+                ? (item.thumb_url.startsWith('http') ? item.thumb_url : `${domainCdn}/${item.thumb_url}`)
+                : '';
+              
+              const rawChapters = item.chapters?.[0]?.server_data || [];
+              const chapters: MangaChapter[] = rawChapters.map((ch: any) => ({
+                id: ch.chapter_api_data || ch.chapter_name,
+                chapterNumber: ch.chapter_name,
+                title: `Chapter ${ch.chapter_name}${ch.chapter_title ? `: ${ch.chapter_title}` : ''}`,
+                source: 'otruyen',
+                chapterApiUrl: ch.chapter_api_data
+              }));
+
+              return {
+                id: item.slug || idOrSlug,
+                title: item.name || 'Truyện Tranh',
+                altTitles: item.origin_name,
+                slug: item.slug || idOrSlug,
+                coverUrl,
+                description: item.content,
+                status: item.status,
+                authors: item.author || [],
+                genres: item.category?.map((c: any) => c.name) || [],
+                chapters,
+                source: 'otruyen',
+                updatedAt: item.updatedAt
+              };
+            }
           }
         } catch (e) {
-          console.warn('OTruyen detail fallback triggered.');
+          console.warn('OTruyen detail fetch error or fallback:', e);
         }
 
         return {
           id: idOrSlug,
-          title: 'One Piece (Demo Mirror)',
+          title: 'Truyện Tranh (Đang cập nhật)',
           slug: idOrSlug,
           coverUrl: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=500&auto=format&fit=crop',
-          description: 'Hành trình vĩ đại tìm kho báu One Piece.',
+          description: 'Hành trình khám phá truyện tranh.',
           status: 'ongoing',
-          authors: ['Eiichiro Oda'],
-          genres: ['Action', 'Adventure', 'Shounen'],
+          authors: ['Tác giả'],
+          genres: ['Action', 'Adventure'],
           chapters: [
             { id: 'ot-ch-1', chapterNumber: '1', title: 'Chapter 1', source: 'otruyen', chapterApiUrl: `${getOtruyenBase()}/chapter/1` },
             { id: 'ot-ch-2', chapterNumber: '2', title: 'Chapter 2', source: 'otruyen', chapterApiUrl: `${getOtruyenBase()}/chapter/2` }
           ],
           source: 'otruyen'
         };
-      } else if (source === 'mangadex') {
+      } else if (effectiveSource === 'mangadex') {
         try {
-          const data = await fetchProxy(`${getMangadexBase()}/manga/${idOrSlug}?includes[]=cover_art&includes[]=author`);
+          const data = await fetchMangaApi(`${getMangadexBase()}/manga/${idOrSlug}?includes[]=cover_art&includes[]=author`);
           if (data.result === 'ok' && data.data) {
             const m = data.data;
             const rels = m.relationships || [];
@@ -320,14 +362,14 @@ export const mangaApi = {
             const description = descObj.vi || descObj.en || '';
 
             // Fetch chapter feed: 1. Try Vietnamese first
-            let feedData = await fetchProxy(
+            let feedData = await fetchMangaApi(
               `${getMangadexBase()}/manga/${idOrSlug}/feed?translatedLanguage[]=vi&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&order[chapter]=asc&limit=100`
             );
             let rawChapters = (feedData?.data || []).filter((ch: any) => !ch.attributes.externalUrl);
 
             // 2. If no internal Vietnamese chapters found, fallback to English/all chapters
             if (rawChapters.length === 0) {
-              feedData = await fetchProxy(
+              feedData = await fetchMangaApi(
                 `${getMangadexBase()}/manga/${idOrSlug}/feed?translatedLanguage[]=en&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&order[chapter]=asc&limit=100`
               );
               rawChapters = (feedData?.data || []).filter((ch: any) => !ch.attributes.externalUrl);
@@ -378,7 +420,7 @@ export const mangaApi = {
         };
       } else if (source === 'cuutruyen') {
         try {
-          const data = await fetchProxy(`${getCuutruyenBase()}/mangas/${idOrSlug}`);
+          const data = await fetchMangaApi(`${getCuutruyenBase()}/mangas/${idOrSlug}`);
           const m = data.data || data;
           const chapters: MangaChapter[] = (m.chapters || []).map((ch: any) => ({
             id: String(ch.id),
@@ -423,7 +465,7 @@ export const mangaApi = {
     try {
       if (chapter.source === 'otruyen' && chapter.chapterApiUrl) {
         try {
-          const data = await fetchProxy(chapter.chapterApiUrl);
+          const data = await fetchMangaApi(chapter.chapterApiUrl);
           if (data.status === 'success' && data.data?.item) {
             const domainCdn = data.data.domain_cdn || 'https://otruyenapi.com/uploads/comics';
             const chapterPath = data.data.item.chapter_path;
@@ -438,7 +480,7 @@ export const mangaApi = {
         return [];
       } else if (chapter.source === 'mangadex') {
         try {
-          const data = await fetchProxy(`${getMangadexBase()}/at-home/server/${chapter.id}`);
+          const data = await fetchMangaApi(`${getMangadexBase()}/at-home/server/${chapter.id}`);
           if (data && data.chapter) {
             const hash = data.chapter.hash;
             const useDataSaver = options?.dataSaver ?? false;
@@ -459,11 +501,8 @@ export const mangaApi = {
             }
 
             if (fileNames.length > 0) {
-              // Construct official Cloudflare-accelerated CDN links routed via image proxy for caching & failover
-              return fileNames.map((fn: string) => {
-                const directCdnUrl = `https://uploads.mangadex.org/${folder}/${hash}/${fn}`;
-                return getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(directCdnUrl)}`);
-              });
+              // Direct MangaDex CDN image URLs (works directly on Web and Android APK)
+              return fileNames.map((fn: string) => `https://uploads.mangadex.org/${folder}/${hash}/${fn}`);
             }
           }
         } catch (e) {
@@ -472,7 +511,7 @@ export const mangaApi = {
         return [];
       } else if (chapter.source === 'cuutruyen') {
         try {
-          const data = await fetchProxy(`${getCuutruyenBase()}/chapters/${chapter.id}`);
+          const data = await fetchMangaApi(`${getCuutruyenBase()}/chapters/${chapter.id}`);
           const pages = data.data?.pages || data.pages || [];
           return pages.map((p: any) => p.url || p);
         } catch (e) {
@@ -489,16 +528,14 @@ export const mangaApi = {
 };
 
 /**
- * Helper to generate resilient proxied image URLs
+ * Helper to generate resilient image URLs
  */
 export function getMangaImageUrl(url: string): string {
   if (!url) return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
-  // If already relative or proxied
-  if (url.startsWith('/')) return url;
   return url;
 }
 
 export function getProxyImageUrl(url: string): string {
   if (!url || !url.startsWith('http')) return url;
-  return getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(url)}`);
+  return url;
 }

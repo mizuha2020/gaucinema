@@ -129,7 +129,8 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
 
   const handleOpenDetail = async (item: MangaItem) => {
     setIsLoading(true);
-    const detail = await mangaApi.getMangaDetail(selectedSource, item.id);
+    const sourceToUse = item.source || selectedSource;
+    const detail = await mangaApi.getMangaDetail(sourceToUse, item.id || item.slug);
     setIsLoading(false);
     const fullManga = detail || item;
     setSelectedManga(fullManga);
@@ -591,11 +592,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
                         className="w-full h-full object-cover opacity-60 group-hover:opacity-70 group-hover:scale-105 transition duration-700"
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
-                          if (!target.src.includes('/api/proxy/image') && manga.coverUrl && manga.coverUrl.startsWith('http')) {
-                            target.src = `/api/proxy/image?url=${encodeURIComponent(manga.coverUrl)}`;
-                          } else {
-                            target.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
-                          }
+                          target.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
                         }}
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-[#0f0f11] to-transparent" />
@@ -658,11 +655,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
                               loading="lazy"
                               onError={(e) => {
                                 const target = e.target as HTMLImageElement;
-                                if (!target.src.includes('/api/proxy/image') && manga.coverUrl && manga.coverUrl.startsWith('http')) {
-                                  target.src = `/api/proxy/image?url=${encodeURIComponent(manga.coverUrl)}`;
-                                } else {
-                                  target.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
-                                }
+                                target.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
                               }}
                             />
                             <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center backdrop-blur-[2px]">

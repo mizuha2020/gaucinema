@@ -105,6 +105,12 @@ export const DEFAULT_CHANNELS: Channel[] = [
     group: '📍 Địa Phương',
     url: 'https://live.thvli.vn/thvl2/index.m3u8',
   },
+  {
+    name: 'Hà Nội 1 (HN1)',
+    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Logo_HanoiTV.png/200px-Logo_HanoiTV.png',
+    group: '📍 Địa Phương',
+    url: 'https://live.hanoitv.vn/hanoitv1/index.m3u8',
+  },
   // 📰 TIN TỨC
   {
     name: 'Truyền Hình Quốc Phòng (QPVN)',
@@ -124,29 +130,16 @@ export const DEFAULT_CHANNELS: Channel[] = [
     group: '📰 Tin Tức',
     url: 'https://live.quochoitv.vn/quochoi/index.m3u8',
   },
-  // 🌐 NGUỒN MỚI
   {
-    name: 'Quidni IPTV',
-    logo: 'https://placehold.co/200x200?text=TV',
-    group: '🌐 Nguồn Mới',
-    url: 'https://quidniptv.blogspot.com/p/iptv.html',
+    name: 'VTC1 HD Tin Tức',
+    logo: 'https://upload.wikimedia.org/wikipedia/vi/thumb/a/a2/Logo_VTC1.svg/200px-Logo_VTC1.svg.png',
+    group: '📰 Tin Tức',
+    url: 'https://live.vtc.gov.vn/vtc1/index.m3u8',
   },
   {
-    name: 'Live Sport Hailab',
-    logo: 'https://placehold.co/200x200?text=TV',
-    group: '🌐 Nguồn Mới',
-    url: 'https://livesport.hailab.cloud/',
-  },
-  {
-    name: 'HQClick',
-    logo: 'https://placehold.co/200x200?text=TV',
-    group: '🌐 Nguồn Mới',
-    url: 'https://tinyurl.com/HQClick',
-  },
-  {
-    name: 'KenhTV5',
-    logo: 'https://placehold.co/200x200?text=TV',
-    group: '🌐 Nguồn Mới',
-    url: 'https://tinyurl.com/kenhtv5',
+    name: 'VOV TV',
+    logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/4/41/Logo_VOVTV.svg/200px-Logo_VOVTV.svg.png',
+    group: '📰 Tin Tức',
+    url: 'https://live.vov.vn/vovtv/index.m3u8',
   }
 ];

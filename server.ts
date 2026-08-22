@@ -415,7 +415,11 @@ async function startServer() {
       proxyCache.set(cacheKey, { data, timestamp: Date.now() });
       return res.json(data);
     } catch (err: any) {
-      console.error(`Proxy Error for ${url}:`, err.message);
+      if (err.message && err.message.includes('404')) {
+        console.warn(`[Proxy 404] Upstream not found for ${url}`);
+        return res.status(404).json({ error: "Upstream not found", status: 404 });
+      }
+      console.warn(`[Proxy Warning] ${url}:`, err.message);
       if (cached) return res.json(cached.data);
       return res.status(502).json({ error: err.message });
     }

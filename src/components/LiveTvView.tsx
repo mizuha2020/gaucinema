@@ -274,9 +274,10 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       setLoading(true);
       setError(null);
 
-      // Load cached channels first for instant display
+      // Check cache first for instant responsiveness
+      const cacheKey = `qtb_tv_channels_${selectedSource}`;
       try {
-        const cached = localStorage.getItem('qtb_tv_channels_cache');
+        const cached = localStorage.getItem(cacheKey);
         if (cached) {
           const parsed = JSON.parse(cached);
           if (Array.isArray(parsed) && parsed.length > 0) {
@@ -286,15 +287,17 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         }
       } catch {}
 
-      // 1. Try Backend Proxy with 4.5s timeout
+      const sourceObj = LIVE_SOURCES.find((s) => s.id === selectedSource);
+      const targetUrl = sourceObj?.url;
       let loadedChannels: Channel[] = [];
+
+      // 1. Try Backend Proxy first (Handles multi-source aggregation & HTML/JSON/M3U parsing)
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 4500);
-        const sourceObj = LIVE_SOURCES.find((s) => s.id === selectedSource);
+        const timer = setTimeout(() => controller.abort(), 6000);
         let fetchUrl = getFullApiUrl('/api/tv/channels');
-        if (sourceObj && sourceObj.url) {
-          fetchUrl += `?url=${encodeURIComponent(sourceObj.url)}`;
+        if (targetUrl) {
+          fetchUrl += `?url=${encodeURIComponent(targetUrl)}`;
         }
 
         const res = await fetch(fetchUrl, { signal: controller.signal });
@@ -306,52 +309,47 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
           }
         }
       } catch (e) {
-        console.warn('Backend /api/tv/channels failed, falling back to direct IPTV sources...');
+        console.warn('Backend /api/tv/channels fetch failed, attempting client-side fallback...', e);
       }
 
-      // 2. Direct client-side IPTV source fallbacks
-      if (loadedChannels.length === 0) {
-        const dynamicLiveTvApis = systemApiService.getActiveEndpointsForCategory('livetv');
-        const directSources =
-          dynamicLiveTvApis.length > 0
-            ? dynamicLiveTvApis.map((a) => a.baseUrl)
-            : [
-                'https://bit.ly/tinhlagitivi',
-                'https://raw.githubusercontent.com/iptv-org/iptv/master/streams/vn.m3u',
-                'https://iptv-org.github.io/iptv/countries/vn.m3u',
-              ];
-
-        for (const url of directSources) {
-          try {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 5000);
-            const res = await fetch(url, { signal: controller.signal });
-            clearTimeout(timer);
-            if (res.ok) {
-              const text = await res.text();
-              const parsed = parseM3uContent(text);
-              if (parsed.length > 0) {
-                loadedChannels = parsed;
-                break;
-              }
+      // 2. Direct client-side fetch fallback (useful for mobile/direct m3u)
+      if (loadedChannels.length === 0 && targetUrl) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 6000);
+          const res = await fetch(targetUrl, { signal: controller.signal });
+          clearTimeout(timer);
+          if (res.ok) {
+            const text = await res.text();
+            const parsed = parseM3uContent(text);
+            if (parsed.length > 0) {
+              loadedChannels = parsed;
             }
-          } catch {}
+          }
+        } catch (e) {
+          console.warn('Direct client-side fetch failed:', e);
         }
       }
 
+      // 3. Fallback or update state
       if (loadedChannels.length > 0) {
         setChannels(loadedChannels);
-        if (!activeChannel) {
+        if (!activeChannel || !loadedChannels.some((c) => c.url === activeChannel.url)) {
           setActiveChannel(loadedChannels[0]);
         }
         try {
-          localStorage.setItem('qtb_tv_channels_cache', JSON.stringify(loadedChannels));
+          localStorage.setItem(cacheKey, JSON.stringify(loadedChannels));
         } catch {}
       } else {
-        setError('Không thể kết nối đến nguồn phát sóng truyền hình. Vui lòng thử đổi nguồn khác.');
+        // Safe fallback to built-in default channels
+        setChannels(DEFAULT_CHANNELS);
+        if (!activeChannel || !DEFAULT_CHANNELS.some((c) => c.url === activeChannel.url)) {
+          setActiveChannel(DEFAULT_CHANNELS[0]);
+        }
       }
     } catch (err: any) {
-      setError(err?.message || 'Lỗi kết nối đến máy chủ truyền hình.');
+      console.warn('Error loading TV channels:', err);
+      setChannels(DEFAULT_CHANNELS);
     } finally {
       setLoading(false);
       window.dispatchEvent(new Event('app-data-loaded'));
@@ -475,9 +473,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     } else if (streamUrl.includes('.m3u8') || Hls.isSupported()) {
       if (Hls.isSupported()) {
         let isProxyAttempt = false;
-        const initialPlayUrl = streamUrl.startsWith('http://')
-          ? getFullApiUrl(`/api/tv/stream-proxy?url=${encodeURIComponent(streamUrl)}`)
-          : streamUrl;
+        const initialPlayUrl = streamUrl;
 
         const hls = new Hls({
           enableWorker: true,
@@ -498,7 +494,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         hls.on(Hls.Events.ERROR, (event, data) => {
           if (data.fatal) {
             console.warn('HLS fatal error:', data);
-            if (!isProxyAttempt && !streamUrl.startsWith('http://')) {
+            if (!isProxyAttempt) {
               isProxyAttempt = true;
               const proxyUrl = getFullApiUrl(
                 `/api/tv/stream-proxy?url=${encodeURIComponent(streamUrl)}`
@@ -514,10 +510,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
           }
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        const nativePlayUrl = streamUrl.startsWith('http://')
-          ? getFullApiUrl(`/api/tv/stream-proxy?url=${encodeURIComponent(streamUrl)}`)
-          : streamUrl;
-        video.src = nativePlayUrl;
+        video.src = streamUrl;
         video.addEventListener('loadedmetadata', () => {
           setIsLoadingStream(false);
           video.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
