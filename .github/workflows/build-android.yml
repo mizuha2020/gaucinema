@@ -37,7 +37,9 @@ jobs:
 
       - name: Sync Android Project (Capacitor)
         run: |
-          if [ ! -d "android" ]; then
+          if [ ! -f "android/gradlew" ]; then
+            echo "android/gradlew missing, regenerating Capacitor Android platform..."
+            rm -rf android
             npx cap add android
           fi
           npx cap sync android
@@ -48,9 +50,16 @@ jobs:
           node scripts/prepare-assets.cjs
 
       - name: Build Android APK with Gradle
-        working-directory: android
         run: |
-          chmod +x gradlew
+          if [ ! -f "android/gradlew" ]; then
+            echo "android/gradlew missing, ensuring platform..."
+            rm -rf android
+            npx cap add android
+            npx cap sync android
+            node scripts/prepare-assets.cjs
+          fi
+          chmod +x android/gradlew
+          cd android
           ./gradlew clean assembleDebug --stacktrace
 
       - name: Upload APK Artifact

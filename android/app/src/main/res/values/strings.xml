@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Gấu Cinema HD</string>
+    <string name="title_activity_main">Gấu Cinema HD</string>
+    <string name="package_name">com.qtbcinema.app</string>
+    <string name="custom_url_scheme">com.qtbcinema.app</string>
+</resources>
