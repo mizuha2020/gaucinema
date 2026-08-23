@@ -13,8 +13,19 @@ import {
   Tv,
   BookOpen,
   Film,
+  Home,
+  Flame,
+  Heart,
+  History,
 } from 'lucide-react';
 import appLogo from '../../assets/images/app_logo.jpg';
+
+const YT_TABS: { id: string; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: 'home', label: 'Trang chủ', icon: Home },
+  { id: 'trending', label: 'Thịnh hành', icon: Flame },
+  { id: 'saved', label: 'Đã lưu', icon: Heart },
+  { id: 'history', label: 'Lịch sử', icon: History },
+];
 
 interface YouTubeNavbarProps {
   currentAccount?: Account | null;
@@ -27,6 +38,8 @@ interface YouTubeNavbarProps {
   onLogout?: () => void;
   onLogoClick?: () => void;
   onSearch: (query: string) => void;
+  activeCategory?: string;
+  onCategoryChange?: (category: string) => void;
 }
 
 export const YouTubeNavbar: React.FC<YouTubeNavbarProps> = ({
@@ -40,6 +53,8 @@ export const YouTubeNavbar: React.FC<YouTubeNavbarProps> = ({
   onLogout,
   onLogoClick,
   onSearch,
+  activeCategory = 'home',
+  onCategoryChange,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
@@ -360,6 +375,28 @@ export const YouTubeNavbar: React.FC<YouTubeNavbarProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Category Tab Bar */}
+          <nav className="flex items-center gap-2 overflow-x-auto scrollbar-none -mx-1 px-1 pb-0.5">
+            {YT_TABS.map((tab) => {
+              const Icon = tab.icon;
+              const isActive = activeCategory === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => onCategoryChange?.(tab.id)}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 border ${
+                    isActive
+                      ? 'bg-red-600 text-white border-red-500 shadow-md shadow-red-600/30'
+                      : 'bg-[#181114] text-slate-300 border-red-900/50 hover:bg-[#221419] hover:text-white'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
 
           {/* Mobile Search Input */}
           <form onSubmit={handleSearchSubmit} className="md:hidden flex items-center w-full">

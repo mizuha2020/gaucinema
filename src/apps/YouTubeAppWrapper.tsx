@@ -14,6 +14,22 @@ interface YouTubeAppWrapperProps {
   onLogout?: () => void;
 }
 
+export type GauYtCategory = 'home' | 'trending' | 'saved' | 'history';
+
+const YT_CATEGORY_KEY = 'gau_yt_active_category';
+
+const loadInitialCategory = (): GauYtCategory => {
+  try {
+    const saved = localStorage.getItem(YT_CATEGORY_KEY);
+    if (saved === 'home' || saved === 'trending' || saved === 'saved' || saved === 'history') {
+      return saved;
+    }
+  } catch {
+    // Ignore
+  }
+  return 'home';
+};
+
 export const YouTubeAppWrapper: React.FC<YouTubeAppWrapperProps> = ({
   currentAccount,
   activeProfile,
@@ -27,11 +43,22 @@ export const YouTubeAppWrapper: React.FC<YouTubeAppWrapperProps> = ({
   const [resetKey, setResetKey] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [isChannelViewOpen, setIsChannelViewOpen] = useState(false);
+  const [activeCategory, setActiveCategory] = useState<GauYtCategory>(loadInitialCategory);
+
+  const handleCategoryChange = (cat: string) => {
+    setActiveCategory(cat as GauYtCategory);
+    try {
+      localStorage.setItem(YT_CATEGORY_KEY, cat);
+    } catch {
+      // Ignore
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const handleLogoClick = () => {
     setResetKey((prev) => prev + 1);
     setSearchQuery('');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    handleCategoryChange('home');
   };
 
   const handleSearch = (q: string) => {
@@ -53,6 +80,8 @@ export const YouTubeAppWrapper: React.FC<YouTubeAppWrapperProps> = ({
           onLogout={onLogout}
           onLogoClick={handleLogoClick}
           onSearch={handleSearch}
+          activeCategory={activeCategory}
+          onCategoryChange={handleCategoryChange}
         />
       )}
 
@@ -62,7 +91,7 @@ export const YouTubeAppWrapper: React.FC<YouTubeAppWrapperProps> = ({
           currentAccount={currentAccount}
           activeProfile={activeProfile}
           searchQuery={searchQuery}
-          activeCategory="all"
+          activeCategory={activeCategory}
           onChannelViewChange={setIsChannelViewOpen}
         />
       </main>

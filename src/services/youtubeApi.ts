@@ -355,13 +355,33 @@ export const youtubeApi = {
     return [];
   },
 
-  // Full search returns both channels and videos
-  searchFull: async (query: string): Promise<SearchResultsResponse> => {
-    if (!query || !query.trim()) {
-      return { channels: [], items: CURATED_YOUTUBE_VIDEOS };
+  // Full search returns both channels and videos; pass token to fetch the next page (infinite scroll)
+  searchFull: async (query: string, token?: string | null): Promise<SearchResultsResponse> => {
+    const trimmed = (query || '').trim();
+
+    // Continuation page request
+    if (token) {
+      try {
+        const res = await fetch(
+          `/api/youtube/search?q=${encodeURIComponent(trimmed)}&token=${encodeURIComponent(token)}`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          return {
+            channels: data.channels || [],
+            items: Array.isArray(data.items) ? data.items : [],
+            nextToken: data.nextToken || null,
+          };
+        }
+      } catch {
+        // Ignore
+      }
+      return { channels: [], items: [], nextToken: null };
     }
 
-    const trimmed = query.trim();
+    if (!trimmed) {
+      return { channels: [], items: CURATED_YOUTUBE_VIDEOS };
+    }
 
     // Direct YouTube Link or Video ID paste check
     const extractedId = extractYouTubeId(trimmed);
@@ -389,7 +409,8 @@ export const youtubeApi = {
         if (data?.items || data?.channels) {
           return {
             channels: data.channels || [],
-            items: data.items || []
+            items: data.items || [],
+            nextToken: data.nextToken || null,
           };
         }
       }

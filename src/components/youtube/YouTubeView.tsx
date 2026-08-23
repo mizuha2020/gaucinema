@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { YouTubeVideo, YouTubeChannel, UserProfile, Account } from '../../types';
 import { youtubeApi, formatViews, extractYouTubeId } from '../../services/youtubeApi';
 import { YouTubePlayerModal } from './YouTubePlayerModal';
@@ -11,7 +11,110 @@ import {
   Youtube,
   User,
   ChevronRight,
+  Loader2,
+  Sparkles,
 } from 'lucide-react';
+
+// ---------------- Personalization (Trang chủ "Dành Cho Bạn") ----------------
+
+// Từ phổ biến/quảng cáo không mang tín hiệu sở thích
+const KEYWORD_STOPWORDS = new Set([
+  'official', 'music', 'video', 'videos', 'mv', 'lyrics', 'lyric', 'audio',
+  'visualizer', 'teaser', 'trailer', 'full', 'hd', '4k', 'live', 'shorts',
+  'short', 'tiktok', 'remix', 'cover', 'beat', 'karaoke', 'version', 'part',
+  'episode', 'season', 'new', 'update', 'the', 'and', 'and', 'with', 'for',
+  'và', 'của', 'có', 'không', 'những', 'cho', 'với', 'tôi', 'bạn', 'anh',
+  'em', 'là', 'một', 'các', 'này', 'đó', 'đã', 'sẽ', 'mới', 'nhất', 'hay',
+  'hot', 'trend', 'viral', 'hôm', 'nay', 'tuần', 'xem', 'khi', 'về', 'từ',
+  'nào', 'gì', 'siêu', 'cực',
+]);
+
+interface HomeSource {
+  kind: 'channel' | 'search';
+  channelId?: string;
+  name?: string;
+  query?: string;
+}
+
+// Chấm điểm kênh theo lịch sử xem / đã lưu / đăng ký và trích từ khóa từ tiêu đề
+export function extractHomeSources(
+  history: YouTubeVideo[],
+  favorites: YouTubeVideo[],
+  subscribedChannelIds: string[]
+): HomeSource[] {
+  const channelScores = new Map<string, { id: string; name: string; score: number }>();
+  const bump = (rawId: string | undefined, name: string, score: number) => {
+    const trimmedName = (name || '').trim();
+    const key = rawId || (trimmedName ? `name:${trimmedName.toLowerCase()}` : '');
+    if (!key || key === 'channel_custom') return;
+    const cur = channelScores.get(key);
+    if (cur) cur.score += score;
+    else channelScores.set(key, { id: rawId || '', name: trimmedName, score });
+  };
+
+  history.forEach((v, i) => bump(v.channelId, v.channelTitle, i < 10 ? 1 : 0.5));
+  favorites.forEach((v) => bump(v.channelId, v.channelTitle, 1.5));
+  subscribedChannelIds.forEach((id) => bump(id, '', 0.75));
+
+  const wordCounts = new Map<string, number>();
+  [...history, ...favorites].forEach((v) => {
+    (v.title || '')
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((w) => w.length >= 3 && !KEYWORD_STOPWORDS.has(w) && !/^\d+$/.test(w))
+      .forEach((w) => wordCounts.set(w, (wordCounts.get(w) || 0) + 1));
+  });
+
+  const topKeywords = [...wordCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([w]) => w);
+
+  const sources: HomeSource[] = [...channelScores.values()]
+    .filter((c) => c.score >= 0.7)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 4)
+    .map((c) => ({
+      kind: 'channel' as const,
+      ...(c.id ? { channelId: c.id } : { name: c.name }),
+    }));
+
+  if (topKeywords.length >= 2) {
+    sources.push({ kind: 'search', query: topKeywords.slice(0, 5).join(' ') });
+  }
+
+  return sources;
+}
+
+async function fetchHomeSource(source: HomeSource): Promise<YouTubeVideo[]> {
+  try {
+    if (source.kind === 'channel') {
+      const res = await youtubeApi.getChannelDetails(source.channelId, source.name);
+      return res.items;
+    }
+    const res = await youtubeApi.searchFull(source.query || '');
+    return res.items;
+  } catch {
+    return [];
+  }
+}
+
+// Trộn đều các nhóm nguồn theo kiểu round-robin, loại trùng nhau giữa các nguồn
+function interleaveVideos(groups: YouTubeVideo[][]): YouTubeVideo[] {
+  const out: YouTubeVideo[] = [];
+  const seen = new Set<string>();
+  const maxLen = groups.reduce((m, g) => Math.max(m, g.length), 0);
+  for (let i = 0; i < maxLen; i++) {
+    for (const g of groups) {
+      const v = g[i];
+      if (v && !seen.has(v.id)) {
+        seen.add(v.id);
+        out.push(v);
+      }
+    }
+  }
+  return out;
+}
 
 interface YouTubeViewProps {
   currentAccount?: Account | null;
@@ -31,6 +134,9 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
   const [videos, setVideos] = useState<YouTubeVideo[]>([]);
   const [channels, setChannels] = useState<YouTubeChannel[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+  const [nextToken, setNextToken] = useState<string | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<YouTubeVideo | null>(null);
 
   const [selectedChannelView, setSelectedChannelView] = useState<YouTubeChannel | null>(null);
@@ -71,6 +177,18 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
       // Ignore
     }
   }, [activeProfile]);
+
+  // Keep refs so infinite-scroll fetches don't depend on favorite/history state
+  const favoritesRef = useRef<YouTubeVideo[]>(favorites);
+  const historyRef = useRef<YouTubeVideo[]>(history);
+  useEffect(() => {
+    favoritesRef.current = favorites;
+    historyRef.current = history;
+  }, [favorites, history]);
+
+  // Home feed personalization queue
+  const homeSourcesRef = useRef<HomeSource[]>([]);
+  const homeCursorRef = useRef(0);
 
   // Persist favorites
   const toggleFavorite = (v: YouTubeVideo) => {
@@ -117,20 +235,67 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
   // Fetch videos based on searchQuery or activeCategory
   const fetchVideos = useCallback(async () => {
     setIsLoading(true);
+    setNextToken(null);
     try {
       if (searchQuery) {
         const res = await youtubeApi.searchFull(searchQuery);
         setVideos(res.items);
         setChannels(res.channels);
+        setNextToken(res.nextToken || null);
       } else {
         setChannels([]);
         if (activeCategory === 'saved') {
-          setVideos(favorites);
+          setVideos(favoritesRef.current);
         } else if (activeCategory === 'history') {
-          setVideos(history);
+          setVideos(historyRef.current);
+        } else if (activeCategory === 'home') {
+          let subs: string[] = [];
+          try {
+            const parsed = JSON.parse(localStorage.getItem('gau_yt_subscriptions') || '[]');
+            if (Array.isArray(parsed)) subs = parsed.filter((s: unknown): s is string => typeof s === 'string');
+          } catch {
+            // Ignore
+          }
+
+          const sources = extractHomeSources(historyRef.current, favoritesRef.current, subs);
+          homeSourcesRef.current = sources;
+          homeCursorRef.current = 0;
+
+          if (sources.length === 0) {
+            // Chưa có dữ liệu người dùng -> dùng thịnh hành làm mặc định
+            const page = await youtubeApi.getTrendingPage('all');
+            if (page.items.length > 0) {
+              setVideos(page.items);
+              setNextToken(page.nextToken);
+            } else {
+              setVideos(await youtubeApi.getTrending('all'));
+            }
+          } else {
+            // Trang đầu: lấy song song 3 nguồn mạnh nhất (kênh hay xem + từ khóa sở thích)
+            const first = sources.slice(0, 3);
+            homeCursorRef.current = first.length;
+            const groups = await Promise.all(first.map((s) => fetchHomeSource(s)));
+            const merged = interleaveVideos(groups);
+            if (merged.length > 0) {
+              setVideos(merged);
+            } else {
+              // Mọi nguồn cá nhân hóa đều lỗi -> rơi về thịnh hành
+              homeSourcesRef.current = [];
+              const page = await youtubeApi.getTrendingPage('all');
+              setVideos(page.items);
+              setNextToken(page.nextToken);
+            }
+          }
         } else {
-          const res = await youtubeApi.getTrending(activeCategory);
-          setVideos(res);
+          const page = await youtubeApi.getTrendingPage(activeCategory);
+          if (page.items.length > 0) {
+            setVideos(page.items);
+            setNextToken(page.nextToken);
+          } else {
+            // Legacy keyword-search endpoint as last resort
+            const legacy = await youtubeApi.getTrending(activeCategory);
+            setVideos(legacy);
+          }
         }
       }
     } catch (e) {
@@ -138,7 +303,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
     } finally {
       setIsLoading(false);
     }
-  }, [searchQuery, activeCategory, favorites, history]);
+  }, [searchQuery, activeCategory]);
 
   useEffect(() => {
     if (searchQuery) {
@@ -146,6 +311,78 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
     }
     fetchVideos();
   }, [fetchVideos, searchQuery]);
+
+  // Load the next page and append (dedupe by id)
+  const loadMoreVideos = useCallback(async () => {
+    if (isLoadingMore) return;
+
+    const appendById = (prev: YouTubeVideo[], incoming: YouTubeVideo[]): YouTubeVideo[] => {
+      const seen = new Set(prev.map((item) => item.id));
+      return [...prev, ...incoming.filter((item) => !seen.has(item.id))];
+    };
+
+    setIsLoadingMore(true);
+    try {
+      // Trang chủ: lần lượt từng nguồn cá nhân hóa, hết nguồn thì trộn thêm thịnh hành
+      if (activeCategory === 'home' && !searchQuery && !nextToken) {
+        const sources = homeSourcesRef.current;
+        if (homeCursorRef.current < sources.length) {
+          const src = sources[homeCursorRef.current++];
+          const items = await fetchHomeSource(src);
+          setVideos((prev) => appendById(prev, items));
+          return;
+        }
+        const page = await youtubeApi.getTrendingPage('all');
+        setNextToken(page.nextToken);
+        setVideos((prev) => appendById(prev, page.items));
+        return;
+      }
+
+      if (!nextToken) return;
+
+      if (searchQuery) {
+        const res = await youtubeApi.searchFull(searchQuery, nextToken);
+        setVideos((prev) => appendById(prev, res.items));
+        setChannels((prev) => {
+          const seen = new Set(prev.map((c) => c.id));
+          return [...prev, ...res.channels.filter((c) => !seen.has(c.id))];
+        });
+        setNextToken(res.nextToken || null);
+      } else {
+        const res = await youtubeApi.getTrendingPage(
+          activeCategory === 'home' ? 'all' : activeCategory,
+          nextToken
+        );
+        setVideos((prev) => appendById(prev, res.items));
+        setNextToken(res.nextToken);
+      }
+    } catch (e) {
+      console.error('Failed to load more YouTube videos:', e);
+      setNextToken(null);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [nextToken, isLoadingMore, searchQuery, activeCategory]);
+
+  // Infinite scroll: observe the sentinel at the bottom of the grid
+  useEffect(() => {
+    if (isLoading) return;
+    if (activeCategory === 'saved' || activeCategory === 'history') return;
+    // Trang chủ cần quan sát cả khi chưa có token (đang ở pha nguồn cá nhân hóa)
+    if (!nextToken && !(activeCategory === 'home' && !searchQuery)) return;
+
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) loadMoreVideos();
+      },
+      { rootMargin: '600px 0px' }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loadMoreVideos, nextToken, isLoading, activeCategory, searchQuery]);
 
   useEffect(() => {
     setSelectedChannelView(null);
@@ -254,7 +491,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
         )}
 
         {/* Hero Featured Video (if available and not searching) */}
-        {heroVideo && !searchQuery && activeCategory === 'all' && (
+        {heroVideo && !searchQuery && (activeCategory === 'home' || activeCategory === 'all') && (
           <div className="group relative rounded-3xl overflow-hidden border border-red-900/60 bg-[#140c0f] shadow-2xl transition-all">
             <div className="relative aspect-video md:aspect-[21/9] w-full bg-black overflow-hidden">
               <img
@@ -277,7 +514,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
               {/* Video Title info on bottom */}
               <div className="absolute bottom-4 left-4 right-4 sm:bottom-6 sm:left-6 sm:right-6 space-y-2 pointer-events-none">
                 <span className="bg-red-600 text-white text-[10px] sm:text-xs font-black uppercase px-3 py-1 rounded-full tracking-wider shadow-lg">
-                  NỔI BẬT HÔM NAY
+                  {activeCategory === 'home' ? 'GỢI Ý DÀNH CHO BẠN' : 'NỔI BẬT HÔM NAY'}
                 </span>
                 <h2 className="text-lg sm:text-2xl font-black text-white line-clamp-2 drop-shadow-md">
                   {heroVideo.title}
@@ -319,6 +556,8 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
                   <img
                     src={s.thumbnailUrl}
                     alt={s.title}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
@@ -341,13 +580,19 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
         {!searchQuery && (
           <div className="flex items-center justify-between border-b border-white/10 pb-3">
             <div className="flex items-center gap-2">
-              <Flame className="w-5 h-5 text-red-500" />
+              {activeCategory === 'home' ? (
+                <Sparkles className="w-5 h-5 text-red-500" />
+              ) : (
+                <Flame className="w-5 h-5 text-red-500" />
+              )}
               <h3 className="text-lg font-bold text-white">
                 {activeCategory === 'saved'
                   ? `Video Đã Lưu (${favorites.length})`
                   : activeCategory === 'history'
                   ? `Lịch Sử Xem (${history.length})`
-                  : `Video Xu Hướng`}
+                  : activeCategory === 'home'
+                  ? 'Dành Cho Bạn'
+                  : 'Video Xu Hướng'}
               </h3>
             </div>
             <span className="text-xs text-slate-400">
@@ -389,6 +634,8 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
                   <img
                     src={v.thumbnailUrl}
                     alt={v.title}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                   />
                   <div className="absolute inset-0 bg-black/20 group-hover:bg-black/0 transition-colors" />
@@ -452,6 +699,20 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Infinite scroll sentinel */}
+        {!isLoading && videos.length > 0 && activeCategory !== 'saved' && activeCategory !== 'history' && (
+          <div ref={sentinelRef} className="flex items-center justify-center min-h-[3.5rem] py-4">
+            {isLoadingMore ? (
+              <div className="flex items-center gap-2 text-xs text-slate-400 font-medium">
+                <Loader2 className="w-4 h-4 text-red-500 animate-spin" />
+                <span>Đang tải thêm video...</span>
+              </div>
+            ) : !nextToken && activeCategory !== 'home' ? (
+              <span className="text-[11px] text-slate-600">Bạn đã xem hết video rồi</span>
+            ) : null}
           </div>
         )}
       </div>

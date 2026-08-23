@@ -1335,9 +1335,23 @@ async function startServer() {
   let cachedInnertubeKey: string | undefined;
   let cachedInnertubeVer: string | undefined;
 
+  // YouTube no longer exposes native continuation tokens on feed pages (the
+  // trending feed is an empty shell for anonymous requests), so we synthesize
+  // extra "trending" pages by rotating through search queries.
+  // Token format: trendsearch:<pageIndex>:<category>
+  const TRENDING_FALLBACK_QUERIES = [
+    "video hot trend việt nam hôm nay",
+    "nhạc thịnh hành việt nam mới nhất",
+    "tin nóng việt nam hôm nay",
+    "video hài hước việt nam mới nhất",
+    "trailer phim mới nhất hôm nay",
+  ];
+
+  const buildTrendingFallbackToken = (pageIndex: number, category: string): string =>
+    `trendsearch:${pageIndex}:${encodeURIComponent(category || "all")}`;
+
   // Scrape YouTube's REAL Trending feed (https://www.youtube.com/feed/trending?gl=VN)
-  async function scrapeYouTubeTrending(region = "VN"): Promise<{ items: any[]; nextToken: string | null }> {
-    const { data, apiKey, clientVersion } = await fetchYouTubePageDataFull(
+  async function scrapeYouTubeTrending(region = "VN"): Promise<{ items: any[]; nextToken: string | null }> {    const { data, apiKey, clientVersion } = await fetchYouTubePageDataFull(
       `https://www.youtube.com/feed/trending?gl=${encodeURIComponent(region)}&hl=vi`
     );
     if (!data) return { items: [], nextToken: null };
@@ -1660,6 +1674,31 @@ async function startServer() {
   app.get("/api/youtube/trending", async (req, res) => {
     // Continuation page request (infinite scroll)
     const token = String(req.query.token || "").trim();
+    const category = String(req.query.category || "all").trim();
+
+    // Synthesized search-rotation page for feeds without native continuations
+    if (token.startsWith("trendsearch:")) {
+      const [, pageRaw, catRaw] = token.split(":");
+      const pageIndex = parseInt(pageRaw, 10) || 0;
+      const cat = decodeURIComponent(catRaw || "all") || "all";
+      const queries = cat !== "all"
+        ? [`${cat} thịnh hành việt nam hôm nay`, ...TRENDING_FALLBACK_QUERIES]
+        : TRENDING_FALLBACK_QUERIES;
+
+      if (pageIndex >= queries.length) {
+        return res.json({ items: [], nextToken: null });
+      }
+      try {
+        const data = await scrapeYouTubeSearch(queries[pageIndex]);
+        return res.json({
+          items: data.items,
+          nextToken: pageIndex + 1 < queries.length ? buildTrendingFallbackToken(pageIndex + 1, cat) : null,
+        });
+      } catch {
+        return res.json({ items: [], nextToken: null });
+      }
+    }
+
     if (token) {
       const data = await fetchInnertubeContinuation(token, cachedInnertubeKey, cachedInnertubeVer, "browse");
       const items = data ? extractAllVideos(data) : [];
@@ -1670,7 +1709,7 @@ async function startServer() {
     try {
       const { items, nextToken } = await scrapeYouTubeTrending("VN");
       if (items.length > 0) {
-        return res.json({ items, nextToken });
+        return res.json({ items, nextToken: nextToken || buildTrendingFallbackToken(0, category) });
       }
     } catch (e) {
       console.warn("Trending feed scrape failed:", e);
@@ -1683,7 +1722,7 @@ async function startServer() {
         if (Array.isArray(data) && data.length > 0) {
           const items = data.map((s: any) => mapPipedStreamItem(s, "Thịnh hành")).filter(Boolean);
           if (items.length > 0) {
-            return res.json({ items });
+            return res.json({ items, nextToken: buildTrendingFallbackToken(0, category) });
           }
         }
       } catch {
@@ -1693,7 +1732,10 @@ async function startServer() {
 
     // 3. Legacy keyword-search fallback
     const liveData = await scrapeYouTubeSearch("video hot trend việt nam hôm nay");
-    return res.json({ items: liveData.items });
+    return res.json({
+      items: liveData.items,
+      nextToken: liveData.items.length > 0 ? buildTrendingFallbackToken(0, category) : null,
+    });
   });
 
   // Vite middleware for development or fallback to production static files
