@@ -37,6 +37,7 @@ import { systemApiService } from '../services/systemApiService';
 import { presenceService } from '../services/presenceService';
 import { DEFAULT_CHANNELS } from '../data/defaultChannels';
 import { parseClearkeyToHexMap, parseM3uWithDrmAndUA, isLicenseServerUrl } from '../utils/drmParser';
+import { playInNativeExoPlayer } from '../utils/nativeVideoPlayer';
 import { CloudflareWorkerModal } from './livetv/CloudflareWorkerModal';
 import { DrmChannelTesterModal } from './livetv/DrmChannelTesterModal';
 
@@ -428,7 +429,18 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       streamUrl.includes('/live.php?');
 
     if (isMpd) {
-      // ===== 1. SHAKA PLAYER FOR MPD & CLEARKEY DRM =====
+      // ===== 1. NATIVE EXOPLAYER FOR ANDROID APK OR SHAKA PLAYER FOR WEB =====
+      if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+        console.log('[LiveTvView] Auto-launching Native ExoPlayer for MPD/DRM channel...');
+        setIsLoadingStream(false);
+        playInNativeExoPlayer({
+          url: activeChannel.url,
+          drmKey: activeChannel.drmKey,
+          title: `${activeChannel.name} (${activeChannel.group})`,
+          userAgent: activeChannel.userAgent || 'Dalvik/2.1.0'
+        });
+      }
+
       try {
         if (!shaka.Player.isBrowserSupported()) {
           setStreamError('Trình duyệt hiện tại không hỗ trợ Shaka Player / EME DRM.');
@@ -994,6 +1006,24 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                     <p className="text-sm font-bold text-white">Kênh đang không thể kết nối</p>
                     <p className="text-xs text-slate-400 max-w-md">{streamError}</p>
                     <div className="flex items-center gap-2 mt-2 flex-wrap justify-center">
+                      {Capacitor.isNativePlatform() && (
+                        <button
+                          onClick={() => {
+                            if (activeChannel) {
+                              playInNativeExoPlayer({
+                                url: activeChannel.url,
+                                drmKey: activeChannel.drmKey,
+                                title: `${activeChannel.name} (${activeChannel.group})`,
+                                userAgent: activeChannel.userAgent || 'Dalvik/2.1.0'
+                              });
+                            }
+                          }}
+                          className="bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400/40 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-lg flex items-center gap-1.5"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-white" />
+                          <span>Mở ExoPlayer Native (Khuyên dùng)</span>
+                        </button>
+                      )}
                       <button
                         onClick={() => {
                           const ch = activeChannel;
@@ -1128,6 +1158,26 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                   </div>
 
                   <div className="flex items-center gap-2">
+                    {Capacitor.isNativePlatform() && (
+                      <button
+                        onClick={() => {
+                          if (activeChannel) {
+                            playInNativeExoPlayer({
+                              url: activeChannel.url,
+                              drmKey: activeChannel.drmKey,
+                              title: `${activeChannel.name} (${activeChannel.group})`,
+                              userAgent: activeChannel.userAgent || 'Dalvik/2.1.0'
+                            });
+                          }
+                        }}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1.5 rounded-xl transition-all cursor-pointer shadow-lg flex items-center gap-1.5 text-xs font-bold border border-emerald-400/30 shrink-0"
+                        title="Mở ExoPlayer Native"
+                      >
+                        <Play className="w-3.5 h-3.5 fill-white" />
+                        <span className="hidden sm:inline">ExoPlayer Native</span>
+                      </button>
+                    )}
+
                     <span className="bg-red-600 text-white text-[10px] font-black uppercase px-2 py-0.5 rounded shadow flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
                       LIVE
