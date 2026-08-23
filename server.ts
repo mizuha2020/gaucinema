@@ -983,9 +983,17 @@ async function startServer() {
   });
 
   // Helper function to scrape real-time live search results directly from YouTube
-  async function scrapeYouTubeSearch(query: string): Promise<{ channels: any[]; items: any[]; nextToken: string | null }> {
+  async function scrapeYouTubeSearch(
+    query: string,
+    opts?: { liveOnly?: boolean }
+  ): Promise<{ channels: any[]; items: any[]; nextToken: string | null }> {
     try {
-      const url = "https://www.youtube.com/results?search_query=" + encodeURIComponent(query) + "&persist_gl=1&gl=VN&hl=vi";
+      // sp=EgJAAQ%3D%3D là filter "Trực tiếp" của YouTube Search
+      const url =
+        "https://www.youtube.com/results?search_query=" +
+        encodeURIComponent(query) +
+        (opts?.liveOnly ? "&sp=EgJAAQ%3D%3D" : "") +
+        "&persist_gl=1&gl=VN&hl=vi";
       const { data, apiKey, clientVersion } = await fetchYouTubePageDataFull(url);
       cachedInnertubeKey = apiKey || cachedInnertubeKey;
       cachedInnertubeVer = clientVersion || cachedInnertubeVer;
@@ -1592,9 +1600,13 @@ async function startServer() {
       return res.json({ channels: [], items: [], nextToken: null });
     }
 
-    // Direct YouTube Search Scraper
-    let liveData = await scrapeYouTubeSearch(query);
-    
+    // Direct YouTube Search Scraper (+ song song một pass riêng cho các luồng LIVE)
+    const [baseResult, livePass] = await Promise.all([
+      scrapeYouTubeSearch(query),
+      scrapeYouTubeSearch(query, { liveOnly: true }).catch(() => ({ channels: [], items: [], nextToken: null })),
+    ]);
+    let liveData = baseResult;
+
     // If exact query yields no results and query contains pipes or special tokens, try fallback with core keywords
     if (liveData.items.length === 0 && (query.includes('|') || query.includes('-') || query.split(' ').length > 4)) {
       const coreKeywords = query.split(/\||\-/)[0].trim().split(' ').slice(0, 4).join(' ');
@@ -1606,8 +1618,22 @@ async function startServer() {
       }
     }
 
-    if (liveData.items.length > 0 || liveData.channels.length > 0) {
-      return res.json(liveData);
+    // Đưa các luồng đang phát trực tiếp lên đầu kết quả (mặc định YouTube hay chôn chúng dưới video thường)
+    const mergedItems = [...liveData.items];
+    if (livePass.items.length > 0) {
+      const seenIds = new Set(mergedItems.map((i: any) => i.id));
+      const freshLives = livePass.items
+        .filter((i: any) => i?.id && !seenIds.has(i.id))
+        .slice(0, 8);
+      mergedItems.unshift(...freshLives);
+    }
+
+    if (mergedItems.length > 0 || liveData.channels.length > 0) {
+      return res.json({
+        channels: liveData.channels,
+        items: mergedItems,
+        nextToken: liveData.nextToken,
+      });
     }
 
     // Piped API fallback
