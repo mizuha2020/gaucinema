@@ -17,19 +17,17 @@ jobs:
       - name: Set up Java JDK
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
+          distribution: 'temurin'
           java-version: '21'
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
+          cache: 'npm'
 
       - name: Install Dependencies
-        run: npm ci || npm install
+        run: npm ci || npm install --legacy-peer-deps
 
       - name: Build Web App (Vite)
         env:
@@ -38,9 +36,8 @@ jobs:
           echo "Building with API URL: $VITE_API_URL"
           npm run build
 
-      - name: Fresh Android Platform & Asset Injection
+      - name: Prepare Clean Android Platform & Assets
         run: |
-          echo "Rebuilding clean native Android platform..."
           rm -rf android
           npx cap add android
           npx cap sync android
@@ -48,8 +45,8 @@ jobs:
 
       - name: Build Android APK with Gradle
         run: |
-          chmod +x android/gradlew
           cd android
+          chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK Artifact
@@ -58,3 +55,4 @@ jobs:
           name: QTB-Cinema-Android-App
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
+
