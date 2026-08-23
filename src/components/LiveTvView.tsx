@@ -101,10 +101,28 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       name: 'Default',
       shortName: 'Default',
       count: '440+ Kênh',
-      badge: 'ASEAN Cup & Thể Thao',
-      desc: 'Nguồn mặc định: VTV6 HD, ASEAN Cup 2026, Sky Sport, Canal+ Live 1-7',
+      badge: 'ASEAN Cup & Ngoại Hạng Anh',
+      desc: 'Nguồn mặc định: VTV1-6 HD, K+ Sport, ASEAN Cup 2026, Sky Sport, Canal+ Live',
       url: 'https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/main/vmttv',
     },
+    {
+      id: 'sports_epl',
+      name: 'Ngoại Hạng Anh & Thể Thao VIP',
+      shortName: 'Ngoại Hạng Anh',
+      count: '50+ Kênh',
+      badge: 'Bóng Đá Trực Tiếp',
+      desc: 'K+ Sport 1-2, K+ Action, TNT Sports 1-4, Sky Sports Premier League, beIN Sports',
+      url: 'https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/main/vmttv',
+    },
+    {
+      id: 'phaohoa_tv',
+      name: 'Pháo Hoa TV (Thể Thao & Sự Kiện)',
+      shortName: 'Pháo Hoa TV',
+      count: '200+ Kênh',
+      badge: 'Full HD',
+      desc: 'Tổng hợp bóng đá Ngoại Hạng Anh, C1, VTV, HTV, Thể Thao TV',
+      url: 'https://raw.githubusercontent.com/phut90/tv/main/iptv.m3u',
+    }
   ];
   const [selectedSource, setSelectedSource] = useState<string>('default');
 
@@ -404,6 +422,11 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       !!activeChannel.drmKey ||
       activeChannel.licenseType === 'org.w3.clearkey';
 
+    const isTsStream =
+      streamUrl.includes('extension=ts') ||
+      streamUrl.endsWith('.ts') ||
+      streamUrl.includes('/live.php?');
+
     if (isMpd) {
       // ===== 1. SHAKA PLAYER FOR MPD & CLEARKEY DRM =====
       try {
@@ -461,7 +484,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         });
 
         // Register Shaka RequestFilter & ResponseFilter for custom User-Agent (Dalvik/2.1.0) & CORS Proxy
-        const targetUA = activeChannel.userAgent || 'Dalvik/2.1.0';
+        const targetUA = activeChannel.userAgent || 'Dalvik/2.1.0 (Linux; U; Android 10; Build/QP1A.190711.020)';
         const networkingEngine = player.getNetworkingEngine();
         if (networkingEngine) {
           networkingEngine.clearAllRequestFilters();
@@ -477,8 +500,9 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
               return;
             }
 
-            // On Native Android APK, requests originate from user's local network (Vietnam IP), bypassing proxy
+            // In native mode, try direct first, but ensure User-Agent header is set
             if (isNative) {
+              request.headers['User-Agent'] = targetUA;
               return;
             }
 
@@ -527,7 +551,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
           let errText = 'Lỗi phát luồng MPD.';
           if (err?.code === 1001) {
             const httpStatus = err.data && err.data[1] ? ` (Mã HTTP ${err.data[1]})` : '';
-            errText = `Lỗi kết nối${httpStatus}: Kênh trực tiếp không phản hồi, luồng đã kết thúc hoặc link bị chặn/hết hạn.`;
+            errText = `Lỗi kết nối${httpStatus}: Kênh trực tiếp không phản hồi hoặc link bị chặn/hết hạn.`;
           } else if (err?.code === 1002) {
             errText = 'Phản hồi từ máy chủ phát không đúng định dạng.';
           } else if (err?.code === 1003) {
@@ -569,8 +593,50 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         setStreamError('Lỗi khởi tạo Shaka Player: ' + err.message);
         setIsLoadingStream(false);
       }
+    } else if (isTsStream) {
+      // ===== 2. TS STREAM / XTREAM CODES (Ngoại Hạng Anh & Sports) =====
+      // If Xtream codes stream has extension=ts, also test extension=m3u8 with Hls.js, or fallback to HTML5 video
+      const m3u8Candidate = streamUrl.includes('extension=ts')
+        ? streamUrl.replace('extension=ts', 'extension=m3u8')
+        : streamUrl;
+
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+        });
+        hlsRef.current = hls;
+
+        hls.loadSource(m3u8Candidate);
+        hls.attachMedia(video);
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          setIsLoadingStream(false);
+          safePlay(video);
+        });
+
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) {
+            console.warn('HLS TS error, falling back to direct video element:', data);
+            try {
+              hls.destroy();
+            } catch (e) {}
+            hlsRef.current = null;
+
+            // Direct HTML5 video tag fallback for TS streaming (supported on Android WebView)
+            video.src = streamUrl;
+            video.load();
+            safePlay(video);
+            setIsLoadingStream(false);
+          }
+        });
+      } else {
+        video.src = streamUrl;
+        setIsLoadingStream(false);
+        safePlay(video);
+      }
     } else if (streamUrl.includes('.m3u8') || Hls.isSupported()) {
-      // ===== 2. HLS.JS FOR M3U8 STREAMS =====
+      // ===== 3. HLS.JS FOR M3U8 STREAMS =====
       if (Hls.isSupported()) {
         let isProxyAttempt = false;
         const initialPlayUrl = streamUrl;
@@ -603,11 +669,10 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
               hls.loadSource(proxyUrl);
               hls.attachMedia(video);
             } else {
-              setStreamError(
-                'Không thể kết nối luồng phát HLS (Kênh ngoại tuyến hoặc cần đổi nguồn).'
-              );
+              // Final fallback to native video tag
+              video.src = streamUrl;
+              safePlay(video);
               setIsLoadingStream(false);
-              setIsPlaying(false);
             }
           }
         });

@@ -285,13 +285,13 @@ public class MainActivity extends BridgeActivity {
             settings.setDatabaseEnabled(true);
             settings.setAllowFileAccess(true);
             settings.setAllowContentAccess(true);
-            settings.setUserAgentString("Dalvik/2.1.0 (Linux; U; Android 10; Build/QP1A.190711.020)");
+            settings.setJavaScriptCanOpenWindowsAutomatically(true);
         }
     }
 }
 `;
       fs.writeFileSync(mainActivityPath, mainActivityContent);
-      console.log('✓ MainActivity.java verified & updated with Dalvik User-Agent');
+      console.log('✓ MainActivity.java verified & updated with optimal webview media settings');
     }
   }
 

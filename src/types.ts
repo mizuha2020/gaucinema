@@ -5,6 +5,7 @@ export interface Category {
 }
 
 export interface Channel {
+  id?: string;
   name: string;
   logo: string;
   group: string;
@@ -184,7 +185,7 @@ export interface YouTubeVideo {
   durationSeconds?: number;
   viewCount?: string | number;
   likeCount?: number;
-  category?: 'trending' | 'music' | 'gaming' | 'shorts' | 'tech' | 'entertainment' | 'news' | 'kids';
+  category?: string;
   isShort?: boolean;
 }
 
