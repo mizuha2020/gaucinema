@@ -1041,6 +1041,14 @@ async function startServer() {
           const parsed = JSON.parse(responseText);
           // Standard W3C JWK ClearKey payload: {"keys": [...]}
           if (parsed && Array.isArray(parsed.keys) && parsed.keys.length > 0) {
+            for (const keyItem of parsed.keys) {
+              if (keyItem.kid) {
+                keyItem.kid = keyItem.kid.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+              }
+              if (keyItem.k) {
+                keyItem.k = keyItem.k.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+              }
+            }
             return res.json(parsed);
           }
         } catch (e) {

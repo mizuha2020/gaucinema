@@ -527,9 +527,30 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
             request.uris = [proxyUri];
           });
 
-          // Reset response.uri to original target URL so DASH manifests resolve relative segments correctly
+          // Reset response.uri to original target URL so DASH manifests resolve relative segments correctly,
+          // and sanitize ClearKey JWK responses to valid Base64URL
           networkingEngine.registerResponseFilter((type, response) => {
             if (type === shaka.net.NetworkingEngine.RequestType.LICENSE) {
+              try {
+                const text = shaka.util.StringUtils.fromUTF8(response.data);
+                if (text && text.includes('"keys"')) {
+                  const json = JSON.parse(text);
+                  if (json && Array.isArray(json.keys)) {
+                    for (const item of json.keys) {
+                      if (item.kid) {
+                        item.kid = item.kid.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+                      }
+                      if (item.k) {
+                        item.k = item.k.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+                      }
+                    }
+                    const sanitized = JSON.stringify(json);
+                    response.data = shaka.util.StringUtils.toUTF8(sanitized);
+                  }
+                }
+              } catch (e) {
+                console.warn('[Shaka] ClearKey JWK sanitization error:', e);
+              }
               return;
             }
             if (response.uri && response.uri.includes('/api/tv/stream-proxy')) {
