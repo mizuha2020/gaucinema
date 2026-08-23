@@ -47,7 +47,19 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
   const [channels, setChannels] = useState<Channel[]>(DEFAULT_CHANNELS);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedGroup, setSelectedGroup] = useState<string>('Tất cả');
+  const [selectedGroup, setSelectedGroup] = useState<string>(() => {
+    try {
+      return localStorage.getItem('gau_tv_selected_group') || 'Tất cả';
+    } catch {
+      return 'Tất cả';
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('gau_tv_selected_group', selectedGroup);
+    } catch {}
+  }, [selectedGroup]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
   const [showControls, setShowControls] = useState(true);

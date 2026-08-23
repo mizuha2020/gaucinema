@@ -41,7 +41,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onBackToCinema,
   onShowToast,
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'apis' | 'accounts' | 'avatars'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'apis' | 'accounts' | 'avatars'>(() => {
+    try {
+      const saved = localStorage.getItem('gau_admin_active_tab');
+      if (saved && ['overview', 'apis', 'accounts', 'avatars'].includes(saved)) {
+        return saved as 'overview' | 'apis' | 'accounts' | 'avatars';
+      }
+    } catch (e) {
+      console.error('Failed to read admin active tab from localStorage:', e);
+    }
+    return 'overview';
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('gau_admin_active_tab', activeTab);
+    } catch (e) {
+      console.error('Failed to save admin active tab to localStorage:', e);
+    }
+  }, [activeTab]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [customAvatars, setCustomAvatars] = useState<CustomAvatar[]>([]);
   const [isLoading, setIsLoading] = useState(true);

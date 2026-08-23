@@ -9,7 +9,7 @@ interface LiveTvNavbarProps {
   activeProfile: UserProfile | null;
   profiles: UserProfile[];
   onSelectProfile: (profile: UserProfile) => void;
-  onSwitchApp: (app: 'cinema' | 'manga' | 'livetv') => void;
+  onSwitchApp: (app: 'cinema' | 'manga' | 'livetv' | 'youtube') => void;
   onSwitchProfileScreen?: () => void;
   onOpenAdminDashboard?: () => void;
   onLogout?: () => void;
@@ -113,6 +113,10 @@ export const LiveTvNavbar: React.FC<LiveTvNavbarProps> = ({
                     <button onClick={() => { onSwitchApp('manga'); setIsAppMenuOpen(false); }} className="w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium text-slate-200 hover:bg-purple-900/30 hover:text-purple-300 transition-colors">
                       <div className="w-8 h-8 rounded-lg bg-purple-900/40 flex items-center justify-center"><BookOpen className="w-4 h-4 text-purple-400"/></div>
                       <div className="flex flex-col items-start"><span>Gấu Manga</span><span className="text-[10px] text-slate-400">Thế giới truyện tranh</span></div>
+                    </button>
+                    <button onClick={() => { onSwitchApp('youtube'); setIsAppMenuOpen(false); }} className="w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium text-slate-200 hover:bg-red-900/30 hover:text-red-300 transition-colors">
+                      <div className="w-8 h-8 rounded-lg bg-red-900/40 flex items-center justify-center"><Tv className="w-4 h-4 text-red-500"/></div>
+                      <div className="flex flex-col items-start"><span>Gấu YouTube</span><span className="text-[10px] text-red-400 font-normal">Theme Đỏ - 0 Quảng cáo</span></div>
                     </button>
                   </div>
                 </div>

@@ -157,11 +157,47 @@ export interface MyListItem {
   addedAt: number;
 }
 
-export type ActiveApp = 'cinema' | 'manga' | 'livetv';
+export type ActiveApp = 'cinema' | 'manga' | 'livetv' | 'youtube';
 
-export type NavTab = 'home' | 'series' | 'single' | 'cinema' | 'anime' | 'tv-shows' | 'manga' | 'filter' | 'my-list' | 'history' | 'tv-live';
+export interface YouTubeChannel {
+  id: string;
+  title: string;
+  handle?: string;
+  subscribers?: string;
+  videoCount?: string;
+  description?: string;
+  avatarUrl?: string;
+  bannerUrl?: string;
+  isSubscribed?: boolean;
+}
 
-export type ApiCategory = 'movie' | 'manga' | 'livetv' | 'utility';
+export interface YouTubeVideo {
+  id: string;
+  title: string;
+  channelTitle: string;
+  channelId?: string;
+  channelAvatar?: string;
+  publishedAt?: string;
+  description?: string;
+  thumbnailUrl: string;
+  duration?: string;
+  durationSeconds?: number;
+  viewCount?: string | number;
+  likeCount?: number;
+  category?: 'trending' | 'music' | 'gaming' | 'shorts' | 'tech' | 'entertainment' | 'news' | 'kids';
+  isShort?: boolean;
+}
+
+export interface YouTubePlaylist {
+  id: string;
+  title: string;
+  thumbnailUrl: string;
+  videoCount: number;
+}
+
+export type NavTab = 'home' | 'series' | 'single' | 'cinema' | 'anime' | 'tv-shows' | 'manga' | 'filter' | 'my-list' | 'history' | 'tv-live' | 'youtube';
+
+export type ApiCategory = 'movie' | 'manga' | 'livetv' | 'youtube' | 'utility';
 export type ApiHealthStatus = 'live' | 'slow' | 'down';
 
 export interface SystemApiEndpoint {

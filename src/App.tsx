@@ -29,6 +29,7 @@ import { MyListView } from './components/MyListView';
 import { HistoryView } from './components/HistoryView';
 import { MangaAppWrapper } from './apps/MangaAppWrapper';
 import { LiveTvAppWrapper } from './apps/LiveTvAppWrapper';
+import { YouTubeAppWrapper } from './apps/YouTubeAppWrapper';
 import { AppSwitcherLoading } from './components/AppSwitcherLoading';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { App as CapApp } from '@capacitor/app';
@@ -53,9 +54,27 @@ export default function App() {
   const [showAdminDashboard, setShowAdminDashboard] = useState<boolean>(false);
 
   // App Switcher State
-  const [activeApp, setActiveApp] = useState<ActiveApp>('cinema');
+  const [activeApp, setActiveApp] = useState<ActiveApp>(() => {
+    try {
+      const savedApp = localStorage.getItem('gau_active_app');
+      if (savedApp === 'cinema' || savedApp === 'manga' || savedApp === 'livetv' || savedApp === 'youtube') {
+        return savedApp as ActiveApp;
+      }
+    } catch (e) {
+      console.error('Failed to read activeApp from localStorage:', e);
+    }
+    return 'cinema';
+  });
   const [isSwitchingApp, setIsSwitchingApp] = useState<boolean>(false);
   const [targetApp, setTargetApp] = useState<ActiveApp | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('gau_active_app', activeApp);
+    } catch (e) {
+      console.error('Failed to save activeApp to localStorage:', e);
+    }
+  }, [activeApp]);
 
   const handleSwitchApp = (app: ActiveApp) => {
     if (app === activeApp) return;
@@ -83,7 +102,30 @@ export default function App() {
   const [isLoadingProfiles, setIsLoadingProfiles] = useState<boolean>(false);
 
   // App Navigation Tab
-  const [activeTab, setActiveTab] = useState<NavTab>('home');
+  const [activeTab, setActiveTab] = useState<NavTab>(() => {
+    try {
+      const savedTab = localStorage.getItem('gau_active_tab');
+      const validTabs: NavTab[] = [
+        'home', 'series', 'single', 'cinema', 'anime',
+        'tv-shows', 'manga', 'filter', 'my-list', 'history', 'tv-live'
+      ];
+      if (savedTab && validTabs.includes(savedTab as NavTab)) {
+        return savedTab as NavTab;
+      }
+    } catch (e) {
+      console.error('Failed to read activeTab from localStorage:', e);
+    }
+    return 'home';
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('gau_active_tab', activeTab);
+    } catch (e) {
+      console.error('Failed to save activeTab to localStorage:', e);
+    }
+  }, [activeTab]);
+
   const [searchKeyword, setSearchKeyword] = useState<string>('');
 
   // Movie collections for Home
@@ -663,6 +705,21 @@ export default function App() {
         onSelectProfile={handleSelectProfile}
         onSwitchApp={handleSwitchApp}
         onSwitchProfileScreen={() => setShowProfileSelector(true)}
+      />
+    );
+  } else if (activeApp === 'youtube') {
+    appContent = (
+      <YouTubeAppWrapper
+        currentAccount={currentAccount}
+        activeProfile={activeProfile}
+        profiles={profiles}
+        onSelectProfile={handleSelectProfile}
+        onSwitchApp={handleSwitchApp}
+        onSwitchProfileScreen={() => setShowProfileSelector(true)}
+        onOpenAdminDashboard={
+          currentAccount?.role === 'admin' ? openAdminDashboard : undefined
+        }
+        onLogout={handleLogout}
       />
     );
   } else {

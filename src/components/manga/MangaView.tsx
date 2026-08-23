@@ -31,7 +31,27 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
   const [totalPages, setTotalPages] = useState<number>(1);
 
   // Sub-navigation view: 'list' | 'detail' | 'saved' | 'history'
-  const [currentView, setCurrentView] = useState<'list' | 'detail' | 'saved' | 'history'>('list');
+  const [currentView, setCurrentView] = useState<'list' | 'detail' | 'saved' | 'history'>(() => {
+    try {
+      const saved = localStorage.getItem('gau_manga_active_view');
+      if (saved && ['list', 'saved', 'history'].includes(saved)) {
+        return saved as 'list' | 'saved' | 'history';
+      }
+    } catch (e) {
+      console.error('Failed to read manga active view from localStorage:', e);
+    }
+    return 'list';
+  });
+
+  useEffect(() => {
+    if (currentView === 'list' || currentView === 'saved' || currentView === 'history') {
+      try {
+        localStorage.setItem('gau_manga_active_view', currentView);
+      } catch (e) {
+        console.error('Failed to save manga active view to localStorage:', e);
+      }
+    }
+  }, [currentView]);
   const [selectedManga, setSelectedManga] = useState<MangaItem | null>(null);
   const [activeReadingSession, setActiveReadingSession] = useState<{ manga: MangaItem; chapter: MangaChapter; pageIndex?: number } | null>(null);
 
