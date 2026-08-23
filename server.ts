@@ -602,11 +602,7 @@ async function startServer() {
         }
       } else {
         candidateUrls.push(
-          "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/main/vmttv",
-          "https://tinyurl.com/HQClick",
-          "https://tinyurl.com/kenhtv5",
-          "https://quidniptv.blogspot.com/p/iptv.html",
-          "https://iptv-org.github.io/iptv/countries/vn.m3u"
+          "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/main/vmttv"
         );
       }
 
@@ -906,6 +902,12 @@ async function startServer() {
         forwardHeaders["Range"] = req.headers.range;
       }
 
+      if (targetUrl.includes("fptplay") || targetUrl.includes("vips-livecdn") || targetUrl.includes("seenow.vn")) {
+        forwardHeaders["Origin"] = "https://fptplay.vn";
+        forwardHeaders["Referer"] = "https://fptplay.vn/";
+        forwardHeaders["X_ID"] = "Dalvik";
+      }
+
       const upstreamRes = await fetch(targetUrl, {
         method: req.method === "HEAD" ? "HEAD" : "GET",
         headers: forwardHeaders,
@@ -979,6 +981,122 @@ async function startServer() {
       return res.send(Buffer.from(arrayBuffer));
     } catch (err: any) {
       return res.status(500).send(`Stream Proxy Error: ${err.message}`);
+    }
+  });
+
+  // 4. ClearKey DRM Dynamic License Proxy & Key Resolver
+  app.all("/api/tv/clearkey-license", async (req, res) => {
+    // CORS headers for Web EME / Shaka Player
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Range, Accept, X-License-Url");
+    res.setHeader("Access-Control-Expose-Headers", "Content-Type");
+
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(204);
+    }
+
+    try {
+      const targetUrl =
+        (req.query.url as string) ||
+        (req.headers["x-license-url"] as string) ||
+        "https://vmttv.dpdns.org/AutoKey/";
+
+      let rawBody = req.body;
+      let bodyText = "";
+      if (Buffer.isBuffer(rawBody)) {
+        bodyText = rawBody.toString("utf-8");
+      } else if (typeof rawBody === "object") {
+        bodyText = JSON.stringify(rawBody);
+      } else if (typeof rawBody === "string") {
+        bodyText = rawBody;
+      }
+
+      // If requested via GET with ?kid=... or query params
+      if (!bodyText && req.query.kid) {
+        bodyText = JSON.stringify({
+          kids: [req.query.kid],
+          type: "temporary",
+        });
+      }
+
+      // 1. Forward request to target license server with Dalvik UA
+      const upstreamRes = await fetch(targetUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 10; Build/QP1A.190711.020)",
+          Accept: "application/json, text/plain, */*",
+          Origin: "https://fptplay.vn",
+          Referer: "https://fptplay.vn/",
+        },
+        body: bodyText || undefined,
+      });
+
+      const responseText = await upstreamRes.text();
+      res.setHeader("Content-Type", "application/json");
+
+      if (upstreamRes.ok) {
+        try {
+          const parsed = JSON.parse(responseText);
+          // Standard W3C JWK ClearKey payload: {"keys": [...]}
+          if (parsed && Array.isArray(parsed.keys) && parsed.keys.length > 0) {
+            return res.json(parsed);
+          }
+        } catch (e) {
+          // not valid json
+        }
+      }
+
+      // Fallback: If target server returned empty keys or failed, try alternative formats
+      try {
+        if (bodyText) {
+          const reqObj = JSON.parse(bodyText);
+          if (reqObj && Array.isArray(reqObj.kids) && reqObj.kids.length > 0) {
+            const originalKid = reqObj.kids[0];
+            let altKid = "";
+            if (originalKid.length < 32) {
+              // base64url to hex
+              const clean = originalKid.replace(/-/g, "+").replace(/_/g, "/");
+              const buf = Buffer.from(clean, "base64");
+              altKid = buf.toString("hex");
+            } else if (originalKid.length === 32) {
+              // hex to base64url
+              const buf = Buffer.from(originalKid, "hex");
+              altKid = buf.toString("base64url");
+            }
+
+            if (altKid) {
+              const altBody = JSON.stringify({ kids: [altKid], type: "temporary" });
+              const retryRes = await fetch(targetUrl, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "User-Agent": "Dalvik/2.1.0",
+                  Origin: "https://fptplay.vn",
+                  Referer: "https://fptplay.vn/",
+                },
+                body: altBody,
+              });
+              if (retryRes.ok) {
+                const retryText = await retryRes.text();
+                const retryParsed = JSON.parse(retryText);
+                if (retryParsed && Array.isArray(retryParsed.keys) && retryParsed.keys.length > 0) {
+                  return res.json(retryParsed);
+                }
+              }
+            }
+          }
+        }
+      } catch (err2) {
+        // Continue
+      }
+
+      return res
+        .status(upstreamRes.status || 200)
+        .send(responseText || JSON.stringify({ keys: [] }));
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message, keys: [] });
     }
   });
 
@@ -1343,17 +1461,115 @@ async function startServer() {
   let cachedInnertubeKey: string | undefined;
   let cachedInnertubeVer: string | undefined;
 
-  // YouTube no longer exposes native continuation tokens on feed pages (the
-  // trending feed is an empty shell for anonymous requests), so we synthesize
-  // extra "trending" pages by rotating through search queries.
-  // Token format: trendsearch:<pageIndex>:<category>
-  const TRENDING_FALLBACK_QUERIES = [
-    "video hot trend việt nam hôm nay",
-    "nhạc thịnh hành việt nam mới nhất",
-    "tin nóng việt nam hôm nay",
-    "video hài hước việt nam mới nhất",
-    "trailer phim mới nhất hôm nay",
-  ];
+  // Vietnam-specific prioritized queries per category
+  const VIETNAM_CATEGORY_QUERIES: Record<string, string[]> = {
+    all: [
+      "video hot trend việt nam hôm nay",
+      "thịnh hành việt nam mới nhất",
+      "tin tức giải trí việt nam hot nhất",
+      "top trending youtube vietnam",
+    ],
+    trending: [
+      "thịnh hành youtube việt nam hôm nay",
+      "video triệu view việt nam mới nhất",
+      "những video hot nhất việt nam tuần này",
+      "xu hướng việt nam hôm nay",
+    ],
+    music_vn: [
+      "nhạc việt nam mới nhất thịnh hành vpop",
+      "top bxh nhạc việt hay nhất hôm nay",
+      "mv ca nhạc việt nam triệu view mới",
+      "nhạc trẻ acoustic chill việt nam hay nhất",
+      "nhạc remix tiktok việt nam hot trend",
+    ],
+    music: [
+      "nhạc việt nam mới nhất thịnh hành vpop",
+      "top bài hát việt nam hay nhất",
+      "ca khúc việt nam triệu view mới ra mắt",
+      "nhạc lofi việt nam chill thư giãn",
+    ],
+    news_vn: [
+      "tin tức thời sự việt nam 24h mới nhất hôm nay",
+      "tin nóng việt nam vtv chuyển động 24h",
+      "tin tức việt nam trong ngày hôm nay",
+      "bản tin thời sự việt nam trực tiếp",
+    ],
+    news: [
+      "tin tức thời sự việt nam mới nhất",
+      "tin nóng 24h việt nam hôm nay",
+      "thời sự vtv24 tin tức việt nam",
+    ],
+    comedy_vn: [
+      "hài hước giải trí việt nam triệu view",
+      "tiểu phẩm hài việt nam cười bể bụng",
+      "táo quân hài kịch việt nam chọn lọc",
+      "sitcom hài việt nam vui nhộn",
+    ],
+    entertainment: [
+      "gameshow việt nam triệu view hot nhất",
+      "chương trình giải trí việt nam hay nhất",
+      "talkshow hài hước việt nam",
+      "show truyền hình thực tế việt nam",
+    ],
+    gaming_vn: [
+      "streamer việt nam highlights vui nhộn",
+      "gaming việt nam liên quân tốc chiến free fire pubg",
+      "highlight liên minh huyền thoại việt nam",
+      "top game thủ việt nam stream hay",
+    ],
+    gaming: [
+      "streamer việt nam gaming highlight",
+      "liên minh huyền thoại lmht việt nam",
+      "game mobile việt nam hot nhất",
+    ],
+    review_phim: [
+      "review phim hay việt nam tóm tắt phim chiếu rạp",
+      "tóm tắt phim bom tấn việt nam thuyết minh",
+      "review phim điện ảnh việt nam mới",
+      "phim ngắn việt nam cảm động hay nhất",
+    ],
+    podcast_vn: [
+      "podcast việt nam chữa lành tâm sự talkshow",
+      "vietcetera have a sip podcast việt nam",
+      "trò chuyện podcast việt nam ý nghĩa cuộc sống",
+      "radio tâm sự đêm khuya việt nam",
+    ],
+    food_vn: [
+      "ẩm thực đường phố việt nam street food món ngon",
+      "khám phá du lịch ẩm thực việt nam",
+      "review ẩm thực việt nam ăn sập hà nội sài gòn",
+      "nấu ăn món ngon việt nam chuẩn vị",
+    ],
+    tech_vn: [
+      "đánh giá công nghệ điện thoại việt nam review",
+      "vật vờ studio schannel công nghệ việt nam",
+      "mở hộp trên tay điện thoại máy tính mới nhất việt nam",
+    ],
+    tech: [
+      "công nghệ việt nam review đánh giá mới",
+      "smartphone laptop công nghệ việt nam",
+    ],
+    kids_vn: [
+      "hoạt hình thiếu nhi thuyết minh tiếng việt",
+      "nhạc thiếu nhi việt nam vui nhộn bé xem",
+      "mèo ú doraemon tiếng việt tập mới",
+      "cổ tích việt nam hoạt hình giáo dục bé",
+    ],
+    kids: [
+      "hoạt hình tiếng việt cho bé thiếu nhi",
+      "nhạc thiếu nhi việt nam vui nhộn",
+    ],
+    live_vn: [
+      "trực tiếp việt nam livestream hot hôm nay",
+      "live stream việt nam phát sóng trực tiếp",
+    ],
+    shorts: [
+      "shorts việt nam hài hước triệu view",
+      "tiktok shorts việt nam hot trend",
+    ],
+  };
+
+  const TRENDING_FALLBACK_QUERIES = VIETNAM_CATEGORY_QUERIES.all;
 
   const buildTrendingFallbackToken = (pageIndex: number, category: string): string =>
     `trendsearch:${pageIndex}:${encodeURIComponent(category || "all")}`;
@@ -1702,23 +1918,29 @@ async function startServer() {
     const token = String(req.query.token || "").trim();
     const category = String(req.query.category || "all").trim();
 
+    const categoryQueries = VIETNAM_CATEGORY_QUERIES[category] || [
+      `${category} thịnh hành việt nam hôm nay`,
+      ...TRENDING_FALLBACK_QUERIES,
+    ];
+
     // Synthesized search-rotation page for feeds without native continuations
     if (token.startsWith("trendsearch:")) {
       const [, pageRaw, catRaw] = token.split(":");
       const pageIndex = parseInt(pageRaw, 10) || 0;
       const cat = decodeURIComponent(catRaw || "all") || "all";
-      const queries = cat !== "all"
-        ? [`${cat} thịnh hành việt nam hôm nay`, ...TRENDING_FALLBACK_QUERIES]
-        : TRENDING_FALLBACK_QUERIES;
+      const activeQueries = VIETNAM_CATEGORY_QUERIES[cat] || [
+        `${cat} thịnh hành việt nam hôm nay`,
+        ...TRENDING_FALLBACK_QUERIES,
+      ];
 
-      if (pageIndex >= queries.length) {
+      if (pageIndex >= activeQueries.length) {
         return res.json({ items: [], nextToken: null });
       }
       try {
-        const data = await scrapeYouTubeSearch(queries[pageIndex]);
+        const data = await scrapeYouTubeSearch(activeQueries[pageIndex]);
         return res.json({
           items: data.items,
-          nextToken: pageIndex + 1 < queries.length ? buildTrendingFallbackToken(pageIndex + 1, cat) : null,
+          nextToken: pageIndex + 1 < activeQueries.length ? buildTrendingFallbackToken(pageIndex + 1, cat) : null,
         });
       } catch {
         return res.json({ items: [], nextToken: null });
@@ -1729,6 +1951,18 @@ async function startServer() {
       const data = await fetchInnertubeContinuation(token, cachedInnertubeKey, cachedInnertubeVer, "browse");
       const items = data ? extractAllVideos(data) : [];
       return res.json({ items, nextToken: data ? findNextContinuationToken(data) : null });
+    }
+
+    // If specific Vietnam category requested (not 'all'), scrape tailored category query directly
+    if (category !== "all" && category !== "trending") {
+      const firstCatQuery = categoryQueries[0] || `${category} việt nam`;
+      const catData = await scrapeYouTubeSearch(firstCatQuery);
+      if (catData.items.length > 0) {
+        return res.json({
+          items: catData.items,
+          nextToken: categoryQueries.length > 1 ? buildTrendingFallbackToken(1, category) : null,
+        });
+      }
     }
 
     // 1. Real YouTube Trending feed for Vietnam
@@ -1756,11 +1990,11 @@ async function startServer() {
       }
     }
 
-    // 3. Legacy keyword-search fallback
-    const liveData = await scrapeYouTubeSearch("video hot trend việt nam hôm nay");
+    // 3. Legacy keyword-search fallback for Vietnam
+    const liveData = await scrapeYouTubeSearch(categoryQueries[0] || "video hot trend việt nam hôm nay");
     return res.json({
       items: liveData.items,
-      nextToken: liveData.items.length > 0 ? buildTrendingFallbackToken(0, category) : null,
+      nextToken: liveData.items.length > 0 ? buildTrendingFallbackToken(1, category) : null,
     });
   });
 

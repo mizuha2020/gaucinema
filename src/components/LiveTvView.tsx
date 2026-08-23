@@ -29,13 +29,14 @@ import {
 } from 'lucide-react';
 import Hls from 'hls.js';
 import shaka from 'shaka-player';
+import { Capacitor } from '@capacitor/core';
 import { Account, Channel } from '../types';
 import { firestoreStorage } from '../services/firestoreStorage';
 import { getFullApiUrl } from '../services/apiConfig';
 import { systemApiService } from '../services/systemApiService';
 import { presenceService } from '../services/presenceService';
 import { DEFAULT_CHANNELS } from '../data/defaultChannels';
-import { parseClearkeyToHexMap, parseM3uWithDrmAndUA } from '../utils/drmParser';
+import { parseClearkeyToHexMap, parseM3uWithDrmAndUA, isLicenseServerUrl } from '../utils/drmParser';
 import { CloudflareWorkerModal } from './livetv/CloudflareWorkerModal';
 import { DrmChannelTesterModal } from './livetv/DrmChannelTesterModal';
 
@@ -97,57 +98,12 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
   const LIVE_SOURCES = [
     {
       id: 'default',
-      name: 'Nguồn Tổng Hợp Premium (Hỗ trợ DRM ClearKey)',
-      shortName: 'Nguồn Tổng Hợp',
-      count: '400+ Kênh',
-      badge: 'Ổn định nhất',
-      desc: 'Kho kênh chất lượng cao đầy đủ VTV, HTV, K+, HBO, Thể Thao & Quốc Tế DRM ClearKey',
-      url: '',
-    },
-    {
-      id: 'vmttv',
-      name: 'VMT TV (Vũ Minh Thanh)',
-      shortName: 'VMT TV',
+      name: 'Default',
+      shortName: 'Default',
       count: '440+ Kênh',
       badge: 'ASEAN Cup & Thể Thao',
-      desc: 'Nguồn VMT TV: VTV6 HD, ASEAN Cup 2026, Sky Sport, Canal+ Live 1-7',
+      desc: 'Nguồn mặc định: VTV6 HD, ASEAN Cup 2026, Sky Sport, Canal+ Live 1-7',
       url: 'https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/main/vmttv',
-    },
-    {
-      id: 'hqclick',
-      name: 'Hội Quán Click',
-      shortName: 'Hội Quán Click',
-      count: '45+ Kênh',
-      badge: 'Tốc độ cao',
-      desc: 'Nguồn kênh chuyên biệt tốc độ cao độ trễ thấp',
-      url: 'https://tinyurl.com/HQClick',
-    },
-    {
-      id: 'kenhtv5',
-      name: 'KenhTV5 Thể Thao',
-      shortName: 'KenhTV5',
-      count: '230+ Kênh',
-      badge: 'Thể thao HD',
-      desc: 'Truyền hình & Trực tiếp bóng đá, giải đấu thể thao',
-      url: 'https://tinyurl.com/kenhtv5',
-    },
-    {
-      id: 'quidni',
-      name: 'Quidni IPTV Quốc Tế',
-      shortName: 'Quidni IPTV',
-      count: '99+ Kênh',
-      badge: 'Đa dạng',
-      desc: 'Tổng hợp kênh Việt Nam & các đài truyền hình thế giới',
-      url: 'https://quidniptv.blogspot.com/p/iptv.html',
-    },
-    {
-      id: 'iptvorg',
-      name: 'IPTV Org Mở',
-      shortName: 'IPTV Org',
-      count: '40+ Kênh',
-      badge: 'Chính thống',
-      desc: 'Danh sách các đài truyền hình mở phát sóng trực tiếp',
-      url: 'https://iptv-org.github.io/iptv/countries/vn.m3u',
     },
   ];
   const [selectedSource, setSelectedSource] = useState<string>('default');
@@ -281,29 +237,51 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       const sourceObj = LIVE_SOURCES.find((s) => s.id === selectedSource);
       const targetUrl = sourceObj?.url;
       let loadedChannels: Channel[] = [];
+      const isNative = Capacitor.isNativePlatform();
 
-      // 1. Try Backend Proxy first (Handles multi-source aggregation & HTML/JSON/M3U parsing)
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 6000);
-        let fetchUrl = getFullApiUrl('/api/tv/channels');
-        if (targetUrl) {
-          fetchUrl += `?url=${encodeURIComponent(targetUrl)}`;
-        }
-
-        const res = await fetch(fetchUrl, { signal: controller.signal });
-        clearTimeout(timer);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && Array.isArray(data.channels) && data.channels.length > 0) {
-            loadedChannels = data.channels;
+      // 1. On Native APK, try direct fetch first for maximum speed and zero server dependency
+      if (isNative && targetUrl && (targetUrl.startsWith('http://') || targetUrl.startsWith('https://'))) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 6000);
+          const res = await fetch(targetUrl, { signal: controller.signal });
+          clearTimeout(timer);
+          if (res.ok) {
+            const text = await res.text();
+            const parsed = parseM3uContent(text);
+            if (parsed.length > 0) {
+              loadedChannels = parsed;
+            }
           }
+        } catch (e) {
+          console.warn('Native direct fetch failed, trying backend proxy...', e);
         }
-      } catch (e) {
-        console.warn('Backend /api/tv/channels fetch failed, attempting client-side fallback...', e);
       }
 
-      // 2. Direct client-side fetch fallback (useful for mobile/direct m3u)
+      // 2. Try Backend Proxy (Handles multi-source aggregation & remote M3U parsing)
+      if (loadedChannels.length === 0) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 8000);
+          let fetchUrl = getFullApiUrl('/api/tv/channels');
+          if (targetUrl) {
+            fetchUrl += `?url=${encodeURIComponent(targetUrl)}`;
+          }
+
+          const res = await fetch(fetchUrl, { signal: controller.signal });
+          clearTimeout(timer);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && Array.isArray(data.channels) && data.channels.length > 0) {
+              loadedChannels = data.channels;
+            }
+          }
+        } catch (e) {
+          console.warn('Backend /api/tv/channels fetch failed, attempting client-side fallback...', e);
+        }
+      }
+
+      // 3. Direct client-side fetch fallback (for Web browsers if proxy failed)
       if (loadedChannels.length === 0 && targetUrl) {
         try {
           const controller = new AbortController();
@@ -318,7 +296,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
             }
           }
         } catch (e) {
-          console.warn('Direct client-side fetch failed:', e);
+          console.warn('Direct client-side fetch fallback failed:', e);
         }
       }
 
@@ -439,14 +417,25 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         player.attach(video);
         shakaPlayerRef.current = player;
 
-        // Parse ClearKey hex map (KID -> KEY)
-        const clearKeysHexMap = activeChannel.drmKey
-          ? parseClearkeyToHexMap(activeChannel.drmKey)
-          : {};
-
+        // DRM ClearKey configuration (Static KID:KEY map or Dynamic AutoKey license server)
+        const isNative = Capacitor.isNativePlatform();
         const drmConfig: any = {};
-        if (Object.keys(clearKeysHexMap).length > 0) {
-          drmConfig.clearKeys = clearKeysHexMap;
+        const isServerUrl = isLicenseServerUrl(activeChannel.drmKey);
+
+        if (isServerUrl) {
+          const licenseEndpoint = isNative
+            ? activeChannel.drmKey!
+            : getFullApiUrl(
+                `/api/tv/clearkey-license?url=${encodeURIComponent(activeChannel.drmKey!)}`
+              );
+          drmConfig.servers = {
+            'org.w3.clearkey': licenseEndpoint,
+          };
+        } else if (activeChannel.drmKey) {
+          const clearKeysHexMap = parseClearkeyToHexMap(activeChannel.drmKey);
+          if (Object.keys(clearKeysHexMap).length > 0) {
+            drmConfig.clearKeys = clearKeysHexMap;
+          }
         }
 
         player.configure({
@@ -482,8 +471,19 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
             const originalUri = request.uris[0];
             if (!originalUri) return;
 
+            // Handle DRM license requests directly
+            if (type === shaka.net.NetworkingEngine.RequestType.LICENSE) {
+              request.headers['Content-Type'] = 'application/json';
+              return;
+            }
+
+            // On Native Android APK, requests originate from user's local network (Vietnam IP), bypassing proxy
+            if (isNative) {
+              return;
+            }
+
             // Prevent double proxying
-            if (originalUri.includes('/api/tv/stream-proxy')) return;
+            if (originalUri.includes('/api/tv/stream-proxy') || originalUri.includes('/api/tv/clearkey-license')) return;
 
             // Resolve relative URLs against the stream's original base URL
             let absoluteUrl = originalUri;
@@ -505,6 +505,9 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
 
           // Reset response.uri to original target URL so DASH manifests resolve relative segments correctly
           networkingEngine.registerResponseFilter((type, response) => {
+            if (type === shaka.net.NetworkingEngine.RequestType.LICENSE) {
+              return;
+            }
             if (response.uri && response.uri.includes('/api/tv/stream-proxy')) {
               try {
                 const u = new URL(response.uri, window.location.href);
@@ -1123,7 +1126,9 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                 {activeChannel.drmKey ? (
                   <span className="bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-md font-mono font-medium flex items-center gap-1">
                     <Key className="w-3 h-3 text-amber-400" />
-                    DRM ClearKey: {activeChannel.drmKey.substring(0, 16)}...
+                    {isLicenseServerUrl(activeChannel.drmKey)
+                      ? 'ClearKey AutoKey Server'
+                      : `DRM ClearKey: ${activeChannel.drmKey.substring(0, 16)}...`}
                   </span>
                 ) : (
                   <span className="bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-md font-medium flex items-center gap-1">

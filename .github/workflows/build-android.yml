@@ -35,11 +35,11 @@ jobs:
           echo "Building with API URL: $VITE_API_URL"
           npm run build
 
-      - name: Initialize Android Project (Capacitor)
+      - name: Sync Android Project (Capacitor)
         run: |
-          rm -rf android
-          npx cap add android
-          npx cap copy android
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
           npx cap sync android
 
       - name: Generate and Inject Android Assets

@@ -19,13 +19,16 @@ import {
   Globe,
   MoreVertical,
 } from 'lucide-react';
-import { YouTubeChannel, YouTubeVideo } from '../../types';
+import { YouTubeChannel, YouTubeVideo, UserProfile, Account } from '../../types';
 import { youtubeApi } from '../../services/youtubeApi';
+import { firestoreStorage } from '../../services/firestoreStorage';
 
 interface YouTubeChannelPageViewProps {
   channel: YouTubeChannel | null;
   channelId?: string;
   channelName?: string;
+  currentAccount?: Account | null;
+  activeProfile?: UserProfile | null;
   onBack: () => void;
   onPlayVideo: (video: YouTubeVideo) => void;
 }
@@ -34,6 +37,8 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
   channel: initialChannel,
   channelId,
   channelName,
+  currentAccount,
+  activeProfile,
   onBack,
   onPlayVideo,
 }) => {
@@ -58,11 +63,31 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
       if (isMounted) {
         if (result.channel) {
           setChannelData(result.channel);
-          try {
-            const savedSubs = JSON.parse(localStorage.getItem('gau_yt_subscriptions') || '[]');
-            setIsSubscribed(savedSubs.includes(result.channel.id || result.channel.title));
-          } catch {
-            setIsSubscribed(false);
+          const channelKey = result.channel.id || result.channel.title;
+
+          // Check subscription status from Firestore per profile
+          if (currentAccount?.id && activeProfile?.id) {
+            try {
+              const subs = await firestoreStorage.getYoutubeSubscriptions(currentAccount.id, activeProfile.id);
+              if (isMounted) {
+                setIsSubscribed(subs.includes(channelKey) || (result.channel.id ? subs.includes(result.channel.id) : false));
+              }
+            } catch {
+              // Fallback to localStorage
+              try {
+                const savedSubs = JSON.parse(localStorage.getItem(`gau_yt_subs_${activeProfile.id}`) || localStorage.getItem('gau_yt_subscriptions') || '[]');
+                if (isMounted) setIsSubscribed(savedSubs.includes(channelKey));
+              } catch {
+                if (isMounted) setIsSubscribed(false);
+              }
+            }
+          } else {
+            try {
+              const savedSubs = JSON.parse(localStorage.getItem('gau_yt_subscriptions') || '[]');
+              setIsSubscribed(savedSubs.includes(channelKey));
+            } catch {
+              setIsSubscribed(false);
+            }
           }
         }
         setVideos(result.items);
@@ -75,24 +100,42 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [initialChannel, channelId, channelName]);
+  }, [initialChannel, channelId, channelName, currentAccount?.id, activeProfile?.id]);
 
-  const toggleSubscribe = () => {
+  const toggleSubscribe = async () => {
     if (!channelData) return;
     const cKey = channelData.id || channelData.title;
+    const newStatus = !isSubscribed;
+    setIsSubscribed(newStatus);
+
+    // Save to Firestore per profile
+    if (currentAccount?.id && activeProfile?.id) {
+      try {
+        await firestoreStorage.toggleYoutubeSubscription(
+          currentAccount.id,
+          activeProfile.id,
+          cKey,
+          channelData.title,
+          channelData.avatarUrl
+        );
+      } catch (e) {
+        console.warn('Failed to sync subscription to Firestore:', e);
+      }
+    }
+
+    // LocalStorage fallback cache
     try {
-      const savedSubs: string[] = JSON.parse(localStorage.getItem('gau_yt_subscriptions') || '[]');
+      const storageKey = activeProfile?.id ? `gau_yt_subs_${activeProfile.id}` : 'gau_yt_subscriptions';
+      const savedSubs: string[] = JSON.parse(localStorage.getItem(storageKey) || '[]');
       let updated: string[];
       if (savedSubs.includes(cKey)) {
         updated = savedSubs.filter((id) => id !== cKey);
-        setIsSubscribed(false);
       } else {
         updated = [...savedSubs, cKey];
-        setIsSubscribed(true);
       }
-      localStorage.setItem('gau_yt_subscriptions', JSON.stringify(updated));
+      localStorage.setItem(storageKey, JSON.stringify(updated));
     } catch {
-      setIsSubscribed(!isSubscribed);
+      // Ignore
     }
   };
 

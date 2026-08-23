@@ -1,12 +1,20 @@
+import { Capacitor } from '@capacitor/core';
+
+export const isNativeApp = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  if (Capacitor.isNativePlatform()) return true;
+  if ((window as any).Capacitor?.isNative) return true;
+  const origin = window.location.origin || '';
+  return origin.includes('localhost') || 
+         origin.includes('capacitor://') || 
+         window.location.protocol === 'file:';
+};
+
 export const getApiBaseUrl = (): string => {
   if (typeof window !== 'undefined') {
-    const isCapacitorNative = !!(window as any).Capacitor?.isNative;
-    const isLocalhostOrigin = window.location.origin.includes('localhost') || 
-                              window.location.origin.includes('capacitor://') || 
-                              window.location.protocol === 'file:';
-    
-    // Use relative path only when running on a real web domain (not Capacitor / localhost app)
-    if (!isCapacitorNative && !isLocalhostOrigin) {
+    const isNative = isNativeApp();
+    // Use relative path ONLY when running on a real remote web browser domain (not Capacitor / localhost app)
+    if (!isNative) {
       return '';
     }
   }

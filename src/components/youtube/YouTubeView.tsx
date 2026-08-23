@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { YouTubeVideo, YouTubeChannel, UserProfile, Account } from '../../types';
 import { youtubeApi, formatViews, extractYouTubeId } from '../../services/youtubeApi';
+import { firestoreStorage } from '../../services/firestoreStorage';
 import { YouTubePlayerModal } from './YouTubePlayerModal';
 import { YouTubeChannelPageView } from './YouTubeChannelPageView';
 import {
@@ -14,7 +15,24 @@ import {
   Loader2,
   Sparkles,
   RefreshCw,
+  Trash2,
+  Compass,
 } from 'lucide-react';
+
+// Vietnam category tabs / pills
+export const VIETNAM_TOPIC_PILLS = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'music_vn', label: 'Âm nhạc Việt' },
+  { id: 'news_vn', label: 'Tin tức 24h' },
+  { id: 'comedy_vn', label: 'Hài & Giải trí' },
+  { id: 'gaming_vn', label: 'Gaming VN' },
+  { id: 'review_phim', label: 'Review Phim' },
+  { id: 'podcast_vn', label: 'Podcast & Talk' },
+  { id: 'food_vn', label: 'Ẩm thực & Du lịch' },
+  { id: 'tech_vn', label: 'Công nghệ' },
+  { id: 'kids_vn', label: 'Thiếu nhi' },
+  { id: 'live_vn', label: 'Trực tiếp' },
+];
 
 // ---------------- Personalization (Trang chủ "Dành Cho Bạn") ----------------
 
@@ -117,9 +135,10 @@ function interleaveVideos(groups: YouTubeVideo[][]): YouTubeVideo[] {
   return out;
 }
 
-// Trả về key storage theo hồ sơ (một chỗ duy nhất để tránh lệch key khi ghi/đọc)
+// Trả về key storage theo hồ sơ
 const favsKey = (profileId?: string | null) => `gau_yt_favs_${profileId || 'default'}`;
 const histKey = (profileId?: string | null) => `gau_yt_hist_${profileId || 'default'}`;
+const subsKey = (profileId?: string | null) => `gau_yt_subs_${profileId || 'default'}`;
 
 interface YouTubeViewProps {
   currentAccount?: Account | null;
@@ -143,8 +162,10 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
   const [nextToken, setNextToken] = useState<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<YouTubeVideo | null>(null);
-
   const [selectedChannelView, setSelectedChannelView] = useState<YouTubeChannel | null>(null);
+
+  // Selected Vietnam subcategory pill
+  const [selectedVnTopic, setSelectedVnTopic] = useState<string>('all');
 
   const [favorites, setFavorites] = useState<YouTubeVideo[]>(() => {
     try {
@@ -164,53 +185,104 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
     }
   });
 
-  // Reload saved storage khi ĐỔI hồ sơ (so sánh id, tránh re-run do object mới)
+  const [subscriptions, setSubscriptions] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(subsKey(activeProfile?.id)) || localStorage.getItem('gau_yt_subscriptions');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const profileId = activeProfile?.id;
-  useEffect(() => {
-    try {
-      const favSaved = localStorage.getItem(favsKey(profileId));
-      const histSaved = localStorage.getItem(histKey(profileId));
-      setFavorites(favSaved ? JSON.parse(favSaved) : []);
-      setHistory(histSaved ? JSON.parse(histSaved) : []);
-    } catch {
-      // Ignore
-    }
-  }, [profileId]);
+  const accountId = currentAccount?.id;
 
-  // Persist tập trung: state là nguồn sự thật, ghi ra storage tại MỘT chỗ
+  // Load from Firestore per profile on mount / profile change + Auto migrate localStorage
   useEffect(() => {
-    try {
-      localStorage.setItem(favsKey(profileId), JSON.stringify(favorites));
-    } catch {
-      // Ignore
-    }
-  }, [favorites, profileId]);
+    let isMounted = true;
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(histKey(profileId), JSON.stringify(history));
-    } catch {
-      // Ignore
-    }
-  }, [history, profileId]);
+    const loadProfileData = async () => {
+      // 1. Initial local load
+      try {
+        const localFavs = JSON.parse(localStorage.getItem(favsKey(profileId)) || '[]');
+        const localHist = JSON.parse(localStorage.getItem(histKey(profileId)) || '[]');
+        const localSubs = JSON.parse(localStorage.getItem(subsKey(profileId)) || localStorage.getItem('gau_yt_subscriptions') || '[]');
+        if (isMounted) {
+          setFavorites(localFavs);
+          setHistory(localHist);
+          setSubscriptions(localSubs);
+        }
+      } catch {
+        // Ignore
+      }
 
-  // Keep refs so infinite-scroll fetches don't depend on favorite/history state
+      // 2. Fetch from Firestore if logged in
+      if (accountId && profileId) {
+        try {
+          const [cloudFavs, cloudHist, cloudSubs] = await Promise.all([
+            firestoreStorage.getYoutubeFavorites(accountId, profileId).catch(() => [] as YouTubeVideo[]),
+            firestoreStorage.getYoutubeHistory(accountId, profileId).catch(() => [] as YouTubeVideo[]),
+            firestoreStorage.getYoutubeSubscriptions(accountId, profileId).catch(() => [] as string[]),
+          ]);
+
+          if (isMounted) {
+            // If cloud has data, update state & cache
+            if (cloudFavs.length > 0) {
+              setFavorites(cloudFavs);
+              localStorage.setItem(favsKey(profileId), JSON.stringify(cloudFavs));
+            } else {
+              // Auto migrate from localStorage to Firestore if cloud is empty
+              const localFavs = JSON.parse(localStorage.getItem(favsKey(profileId)) || '[]');
+              for (const item of localFavs.slice(0, 20)) {
+                await firestoreStorage.toggleYoutubeFavorite(accountId, profileId, item).catch(() => {});
+              }
+            }
+
+            if (cloudHist.length > 0) {
+              setHistory(cloudHist);
+              localStorage.setItem(histKey(profileId), JSON.stringify(cloudHist));
+            } else {
+              // Auto migrate history
+              const localHist = JSON.parse(localStorage.getItem(histKey(profileId)) || '[]');
+              for (const item of localHist.slice(0, 20)) {
+                await firestoreStorage.saveYoutubeHistory(accountId, profileId, item).catch(() => {});
+              }
+            }
+
+            if (cloudSubs.length > 0) {
+              setSubscriptions(cloudSubs);
+              localStorage.setItem(subsKey(profileId), JSON.stringify(cloudSubs));
+            }
+          }
+        } catch (e) {
+          console.warn('Error syncing profile YouTube data from Firestore:', e);
+        }
+      }
+    };
+
+    loadProfileData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [accountId, profileId]);
+
+  // Keep refs for home source generator
   const favoritesRef = useRef<YouTubeVideo[]>(favorites);
   const historyRef = useRef<YouTubeVideo[]>(history);
+  const subscriptionsRef = useRef<string[]>(subscriptions);
   useEffect(() => {
     favoritesRef.current = favorites;
     historyRef.current = history;
-  }, [favorites, history]);
+    subscriptionsRef.current = subscriptions;
+  }, [favorites, history, subscriptions]);
 
   // Home feed personalization queue
   const homeSourcesRef = useRef<HomeSource[]>([]);
   const homeCursorRef = useRef(0);
-
-  // Bộ đếm thế hệ request: mọi kết quả async "lỗi thời" (user đã đổi tab/từ khoá)
-  // đều bị bỏ qua thay vì append nhầm vào danh sách đang hiển thị
   const opGenRef = useRef(0);
 
-  // Cache feed theo tab trong phiên: quay lại tab cũ hiển thị tức thì, không fetch lại
+  // Cache feed per tab / topic in session
   interface FeedCacheEntry {
     videos: YouTubeVideo[];
     channels: YouTubeChannel[];
@@ -218,16 +290,29 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
   }
   const feedCacheRef = useRef<Map<string, FeedCacheEntry>>(new Map());
 
-  // Persist favorites
-  const toggleFavorite = useCallback((v: YouTubeVideo) => {
-    setFavorites((prev) => {
-      const exists = prev.some((item) => item.id === v.id);
-      if (exists) {
-        return prev.filter((item) => item.id !== v.id);
+  // Toggle favorite with Firestore + localStorage
+  const toggleFavorite = useCallback(
+    async (v: YouTubeVideo) => {
+      const exists = favoritesRef.current.some((item) => item.id === v.id);
+      const updated = exists
+        ? favoritesRef.current.filter((item) => item.id !== v.id)
+        : [v, ...favoritesRef.current];
+
+      setFavorites(updated);
+      try {
+        localStorage.setItem(favsKey(profileId), JSON.stringify(updated));
+      } catch {}
+
+      if (accountId && profileId) {
+        try {
+          await firestoreStorage.toggleYoutubeFavorite(accountId, profileId, v);
+        } catch (e) {
+          console.warn('Failed to sync favorite to Firestore:', e);
+        }
       }
-      return [v, ...prev];
-    });
-  }, []);
+    },
+    [accountId, profileId]
+  );
 
   const isFavorite = useCallback(
     (videoId: string) => {
@@ -236,39 +321,80 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
     [favorites]
   );
 
-  // Add to watch history
-  const addToHistory = useCallback((v: YouTubeVideo) => {
-    setHistory((prev) => {
-      const filtered = prev.filter((item) => item.id !== v.id);
-      return [v, ...filtered].slice(0, 50);
-    });
-  }, []);
+  // Add to watch history with Firestore + localStorage
+  const addToHistory = useCallback(
+    async (v: YouTubeVideo) => {
+      const filtered = historyRef.current.filter((item) => item.id !== v.id);
+      const updated = [v, ...filtered].slice(0, 60);
 
-  // Tab Đã lưu / Lịch sử cập nhật ngay khi dữ liệu thay đổi (vd: vừa xem xong một video)
+      setHistory(updated);
+      try {
+        localStorage.setItem(histKey(profileId), JSON.stringify(updated));
+      } catch {}
+
+      if (accountId && profileId) {
+        try {
+          await firestoreStorage.saveYoutubeHistory(accountId, profileId, v);
+        } catch (e) {
+          console.warn('Failed to sync history to Firestore:', e);
+        }
+      }
+    },
+    [accountId, profileId]
+  );
+
+  // Remove single item from watch history
+  const removeFromHistory = useCallback(
+    async (videoId: string, e?: React.MouseEvent) => {
+      e?.stopPropagation();
+      const updated = historyRef.current.filter((item) => item.id !== videoId);
+      setHistory(updated);
+      try {
+        localStorage.setItem(histKey(profileId), JSON.stringify(updated));
+      } catch {}
+
+      if (accountId && profileId) {
+        try {
+          await firestoreStorage.removeYoutubeHistoryItem(accountId, profileId, videoId);
+        } catch (e) {
+          console.warn('Failed to remove history from Firestore:', e);
+        }
+      }
+    },
+    [accountId, profileId]
+  );
+
+  // Tab Đã lưu / Lịch sử cập nhật ngay khi dữ liệu thay đổi
   useEffect(() => {
     if (searchQuery || isLoading) return;
     if (activeCategory === 'saved') setVideos(favoritesRef.current);
     else if (activeCategory === 'history') setVideos(historyRef.current);
   }, [favorites, history, activeCategory, searchQuery, isLoading]);
 
-  // Fetch videos based on searchQuery or activeCategory
+  // Compute category key considering selected Vietnam topic
+  const effectiveCategory = activeCategory === 'trending' && selectedVnTopic !== 'all' ? selectedVnTopic : activeCategory;
+
+  // Fetch videos based on searchQuery or effectiveCategory
   const fetchVideos = useCallback(
     async (opts?: { force?: boolean }) => {
-      // Tab dữ liệu local (Đã lưu / Lịch sử): hiển thị tức thì, không cần cache/mạng
+      // Tab dữ liệu local (Đã lưu / Lịch sử)
       if (!searchQuery && (activeCategory === 'saved' || activeCategory === 'history')) {
         setChannels([]);
         setNextToken(null);
         setVideos(activeCategory === 'saved' ? favoritesRef.current : historyRef.current);
+        setIsLoading(false);
         return;
       }
 
-      // Cache hit trong phiên -> khôi phục ngay lập tức, không hiện skeleton
-      if (!searchQuery && !opts?.force) {
-        const cached = feedCacheRef.current.get(activeCategory);
+      // Cache hit trong phiên
+      const cacheKey = searchQuery ? `q:${searchQuery}` : effectiveCategory;
+      if (!opts?.force) {
+        const cached = feedCacheRef.current.get(cacheKey);
         if (cached) {
           setChannels(cached.channels);
           setNextToken(cached.nextToken);
           setVideos(cached.videos);
+          setIsLoading(false);
           return;
         }
       }
@@ -285,24 +411,17 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
           return;
         }
 
-        if (opts?.force) feedCacheRef.current.delete(activeCategory);
+        if (opts?.force) feedCacheRef.current.delete(cacheKey);
 
         let result: FeedCacheEntry;
-        if (activeCategory === 'home') {
-          let subs: string[] = [];
-          try {
-            const parsed = JSON.parse(localStorage.getItem('gau_yt_subscriptions') || '[]');
-            if (Array.isArray(parsed)) subs = parsed.filter((s: unknown): s is string => typeof s === 'string');
-          } catch {
-            // Ignore
-          }
-
+        if (effectiveCategory === 'home') {
+          const subs = subscriptionsRef.current;
           const sources = extractHomeSources(historyRef.current, favoritesRef.current, subs);
           homeSourcesRef.current = sources;
           homeCursorRef.current = 0;
 
           if (sources.length === 0) {
-            // Chưa có dữ liệu người dùng -> dùng thịnh hành làm mặc định
+            // Chưa có dữ liệu người dùng -> dùng thịnh hành làm mặc định (ưu tiên Việt Nam)
             const page = await youtubeApi.getTrendingPage('all');
             if (gen !== opGenRef.current) return;
             result = { videos: page.items, channels: [], nextToken: page.nextToken };
@@ -312,7 +431,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
               result = { videos: legacy, channels: [], nextToken: null };
             }
           } else {
-            // Trang đầu: lấy song song 3 nguồn mạnh nhất (kênh hay xem + từ khóa sở thích)
+            // Trang đầu: lấy song song 3 nguồn mạnh nhất
             const first = sources.slice(0, 3);
             homeCursorRef.current = first.length;
             const groups = await Promise.all(first.map((s) => fetchHomeSource(s)));
@@ -321,7 +440,6 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
             if (merged.length > 0) {
               result = { videos: merged, channels: [], nextToken: null };
             } else {
-              // Mọi nguồn cá nhân hóa đều lỗi -> rơi về thịnh hành
               homeSourcesRef.current = [];
               const page = await youtubeApi.getTrendingPage('all');
               if (gen !== opGenRef.current) return;
@@ -329,20 +447,20 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
             }
           }
         } else {
-          const page = await youtubeApi.getTrendingPage(activeCategory);
+          // Categories: all, music_vn, news_vn, comedy_vn, gaming_vn, review_phim, podcast_vn, food_vn, tech_vn, kids_vn, live_vn, etc.
+          const page = await youtubeApi.getTrendingPage(effectiveCategory === 'trending' ? 'all' : effectiveCategory);
           if (gen !== opGenRef.current) return;
           if (page.items.length > 0) {
             result = { videos: page.items, channels: [], nextToken: page.nextToken };
           } else {
-            // Legacy keyword-search endpoint as last resort
-            const legacy = await youtubeApi.getTrending(activeCategory);
+            const legacy = await youtubeApi.getTrending(effectiveCategory === 'trending' ? 'all' : effectiveCategory);
             if (gen !== opGenRef.current) return;
             result = { videos: legacy, channels: [], nextToken: null };
           }
         }
 
         if (gen !== opGenRef.current) return;
-        feedCacheRef.current.set(activeCategory, result);
+        feedCacheRef.current.set(cacheKey, result);
         setVideos(result.videos);
         setChannels(result.channels);
         setNextToken(result.nextToken);
@@ -352,7 +470,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
         if (gen === opGenRef.current) setIsLoading(false);
       }
     },
-    [searchQuery, activeCategory]
+    [searchQuery, effectiveCategory, activeCategory]
   );
 
   useEffect(() => {
@@ -360,7 +478,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
       setSelectedChannelView(null);
     }
     fetchVideos();
-  }, [fetchVideos, searchQuery]);
+  }, [fetchVideos, searchQuery, effectiveCategory]);
 
   // Load the next page and append (dedupe by id)
   const loadMoreVideos = useCallback(async () => {
@@ -374,8 +492,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
 
     setIsLoadingMore(true);
     try {
-      // Trang chủ: lần lượt từng nguồn cá nhân hóa, hết nguồn thì trộn thêm thịnh hành
-      if (activeCategory === 'home' && !searchQuery && !nextToken) {
+      if (effectiveCategory === 'home' && !searchQuery && !nextToken) {
         const sources = homeSourcesRef.current;
         if (homeCursorRef.current < sources.length) {
           const src = sources[homeCursorRef.current++];
@@ -404,7 +521,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
         setNextToken(res.nextToken || null);
       } else {
         const res = await youtubeApi.getTrendingPage(
-          activeCategory === 'home' ? 'all' : activeCategory,
+          effectiveCategory === 'home' ? 'all' : effectiveCategory,
           nextToken
         );
         if (gen !== opGenRef.current) return;
@@ -417,23 +534,23 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
     } finally {
       setIsLoadingMore(false);
     }
-  }, [nextToken, isLoadingMore, searchQuery, activeCategory]);
+  }, [nextToken, isLoadingMore, searchQuery, effectiveCategory]);
 
-  // Cache luôn phản ánh đúng những gì đang hiển thị (gồm cả trang nạp thêm bằng cuộn)
+  // Update active cache
   useEffect(() => {
     if (searchQuery || isLoading) return;
     if (activeCategory === 'saved' || activeCategory === 'history') return;
     if (videos.length > 0) {
-      feedCacheRef.current.set(activeCategory, { videos, channels, nextToken });
+      const cacheKey = effectiveCategory;
+      feedCacheRef.current.set(cacheKey, { videos, channels, nextToken });
     }
-  }, [videos, channels, nextToken, isLoading, activeCategory, searchQuery]);
+  }, [videos, channels, nextToken, isLoading, effectiveCategory, activeCategory, searchQuery]);
 
-  // Infinite scroll: observe the sentinel at the bottom of the grid
+  // Infinite scroll
   useEffect(() => {
     if (isLoading) return;
     if (activeCategory === 'saved' || activeCategory === 'history') return;
-    // Trang chủ cần quan sát cả khi chưa có token (đang ở pha nguồn cá nhân hóa)
-    if (!nextToken && !(activeCategory === 'home' && !searchQuery)) return;
+    if (!nextToken && !(effectiveCategory === 'home' && !searchQuery)) return;
 
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
@@ -446,13 +563,12 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loadMoreVideos, nextToken, isLoading, activeCategory, searchQuery]);
+  }, [loadMoreVideos, nextToken, isLoading, effectiveCategory, activeCategory, searchQuery]);
 
   useEffect(() => {
     setSelectedChannelView(null);
-  }, [activeCategory]);
+  }, [activeCategory, selectedVnTopic]);
 
-  // Notify parent so the global navbar can hide while browsing a channel page
   useEffect(() => {
     onChannelViewChange?.(Boolean(selectedChannelView));
   }, [selectedChannelView, onChannelViewChange]);
@@ -472,16 +588,14 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
       title: channelName,
     });
     if (selectedVideo) {
-      setSelectedVideo(null); // close player modal when opening channel page
+      setSelectedVideo(null);
     }
   };
 
   const heroVideo = videos.length > 0 ? videos[0] : null;
   const mainGridVideos = videos.length > 1 ? videos.slice(1) : videos;
-
   const shortsVideos = videos.filter((v) => v.isShort || v.category === 'shorts');
 
-  // Player modal dùng chung: hiển thị được cả ở view chính lẫn khi đang mở trang kênh
   const playerModal = selectedVideo ? (
     <YouTubePlayerModal
       video={selectedVideo}
@@ -501,6 +615,8 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
       <>
         <YouTubeChannelPageView
           channel={selectedChannelView}
+          currentAccount={currentAccount}
+          activeProfile={activeProfile}
           onBack={() => setSelectedChannelView(null)}
           onPlayVideo={handleOpenVideo}
         />
@@ -511,7 +627,6 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
 
   return (
     <div className="min-h-screen bg-[#0a0608] text-white font-sans pb-24 pt-28">
-      {/* Container */}
       <div className="max-w-5xl mx-auto px-3 sm:px-6 lg:px-8 space-y-6">
         {/* Search Results Header */}
         {searchQuery && (
@@ -522,6 +637,28 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
             <span className="text-xs text-slate-400 shrink-0 font-medium">
               {isLoading ? 'Đang tải...' : `${videos.length} video`}
             </span>
+          </div>
+        )}
+
+        {/* Vietnam Category Pills Navigation (Visible when not in search, saved, or history) */}
+        {!searchQuery && (activeCategory === 'home' || activeCategory === 'trending' || activeCategory === 'all') && (
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none pt-1">
+            {VIETNAM_TOPIC_PILLS.map((pill) => {
+              const isSelected = selectedVnTopic === pill.id;
+              return (
+                <button
+                  key={pill.id}
+                  onClick={() => setSelectedVnTopic(pill.id)}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                    isSelected
+                      ? 'bg-red-600 text-white shadow-md shadow-red-600/30 font-bold scale-[1.02]'
+                      : 'bg-white/5 text-slate-300 hover:bg-white/10 hover:text-white border border-white/5'
+                  }`}
+                >
+                  {pill.label}
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -572,8 +709,8 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
           </div>
         )}
 
-        {/* Hero Featured Video (if available and not searching) */}
-        {heroVideo && !searchQuery && (activeCategory === 'home' || activeCategory === 'all') && (
+        {/* Hero Featured Video */}
+        {heroVideo && !searchQuery && (activeCategory === 'home' || activeCategory === 'trending' || activeCategory === 'all') && selectedVnTopic === 'all' && (
           <div className="group relative rounded-3xl overflow-hidden border border-red-900/60 bg-[#140c0f] shadow-2xl transition-all">
             <div className="relative aspect-video md:aspect-[21/9] w-full bg-black overflow-hidden">
               <img
@@ -618,7 +755,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
         )}
 
         {/* YouTube Shorts Vertical Carousel Section */}
-        {shortsVideos.length > 0 && activeCategory !== 'saved' && activeCategory !== 'history' && (
+        {shortsVideos.length > 0 && activeCategory !== 'saved' && activeCategory !== 'history' && selectedVnTopic === 'all' && (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-black text-white flex items-center gap-2">
@@ -664,6 +801,8 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
             <div className="flex items-center gap-2">
               {activeCategory === 'home' ? (
                 <Sparkles className="w-5 h-5 text-red-500" />
+              ) : activeCategory === 'saved' ? (
+                <Heart className="w-5 h-5 text-red-500 fill-current" />
               ) : (
                 <Flame className="w-5 h-5 text-red-500" />
               )}
@@ -674,7 +813,9 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
                   ? `Lịch Sử Xem (${history.length})`
                   : activeCategory === 'home'
                   ? 'Dành Cho Bạn'
-                  : 'Video Xu Hướng'}
+                  : selectedVnTopic !== 'all'
+                  ? VIETNAM_TOPIC_PILLS.find((p) => p.id === selectedVnTopic)?.label || 'Xu hướng Việt Nam'
+                  : 'Video Xu Hướng Việt Nam'}
               </h3>
             </div>
             <div className="flex items-center gap-2">
@@ -707,14 +848,27 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
         ) : videos.length === 0 ? (
           <div className="text-center py-16 bg-[#140c0f] rounded-3xl border border-red-900/30 p-8">
             <Youtube className="w-12 h-12 text-red-600 mx-auto mb-3 opacity-60" />
-            <h4 className="text-base font-bold text-white mb-1">Chưa có video nào</h4>
+            <h4 className="text-base font-bold text-white mb-1">
+              {activeCategory === 'saved'
+                ? 'Bạn chưa lưu video nào'
+                : activeCategory === 'history'
+                ? 'Lịch sử xem đang trống'
+                : 'Chưa có video nào'}
+            </h4>
             <p className="text-xs text-slate-400">
-              Hãy thử tìm kiếm bằng từ khóa hoặc dán link YouTube bất kỳ ở phía trên!
+              {activeCategory === 'saved'
+                ? 'Nhấn vào biểu tượng trái tim trên bất kỳ video nào để lưu vào hồ sơ cá nhân của bạn!'
+                : activeCategory === 'history'
+                ? 'Các video bạn xem sẽ được lưu lại tự động theo từng hồ sơ tại đây.'
+                : 'Hãy thử tìm kiếm bằng từ khóa hoặc dán link YouTube bất kỳ ở phía trên!'}
             </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
-            {mainGridVideos.map((v) => (
+            {((!searchQuery && (activeCategory === 'home' || activeCategory === 'trending' || activeCategory === 'all') && selectedVnTopic === 'all')
+              ? mainGridVideos
+              : videos
+            ).map((v) => (
               <div
                 key={v.id}
                 className="group relative bg-[#120d0f] hover:bg-[#1a1113] border border-white/5 hover:border-red-600/60 rounded-2xl overflow-hidden transition-all duration-300 shadow-lg flex flex-col justify-between"
@@ -775,25 +929,36 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
                     </p>
                   </div>
 
-                  {/* Footer Stats & Favorite Button */}
+                  {/* Footer Stats & Actions */}
                   <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[11px] text-slate-400">
                     <span>{formatViews(v.viewCount)}</span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleFavorite(v);
-                      }}
-                      className={`p-1.5 rounded-full transition-all cursor-pointer ${
-                        isFavorite(v.id)
-                          ? 'text-red-500 bg-red-600/20'
-                          : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                      }`}
-                      title={isFavorite(v.id) ? 'Bỏ lưu' : 'Lưu video'}
-                    >
-                      <Heart
-                        className={`w-4 h-4 ${isFavorite(v.id) ? 'fill-current' : ''}`}
-                      />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      {activeCategory === 'history' && (
+                        <button
+                          onClick={(e) => removeFromHistory(v.id, e)}
+                          className="p-1.5 rounded-full text-slate-500 hover:text-red-400 hover:bg-white/5 transition-all cursor-pointer"
+                          title="Xóa khỏi lịch sử xem"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFavorite(v);
+                        }}
+                        className={`p-1.5 rounded-full transition-all cursor-pointer ${
+                          isFavorite(v.id)
+                            ? 'text-red-500 bg-red-600/20'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                        }`}
+                        title={isFavorite(v.id) ? 'Bỏ lưu' : 'Lưu video'}
+                      >
+                        <Heart
+                          className={`w-4 h-4 ${isFavorite(v.id) ? 'fill-current' : ''}`}
+                        />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -809,7 +974,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
                 <Loader2 className="w-4 h-4 text-red-500 animate-spin" />
                 <span>Đang tải thêm video...</span>
               </div>
-            ) : !nextToken && activeCategory !== 'home' ? (
+            ) : !nextToken && effectiveCategory !== 'home' ? (
               <span className="text-[11px] text-slate-600">Bạn đã xem hết video rồi</span>
             ) : null}
           </div>

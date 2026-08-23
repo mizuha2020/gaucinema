@@ -131,6 +131,58 @@
         "deviceInfo": { "type": "string", "maxLength": 128 }
       },
       "required": ["sessionId", "accountId", "profileId", "type", "itemTitle", "lastHeartbeat"]
+    },
+    "YouTubeFavoriteItem": {
+      "title": "YouTubeFavoriteItem",
+      "description": "Saved favorite YouTube video per profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "title": { "type": "string", "maxLength": 256 },
+        "channelTitle": { "type": "string", "maxLength": 256 },
+        "channelId": { "type": "string", "maxLength": 128 },
+        "channelAvatar": { "type": "string", "maxLength": 2048 },
+        "thumbnailUrl": { "type": "string", "maxLength": 2048 },
+        "publishedAt": { "type": "string", "maxLength": 128 },
+        "duration": { "type": "string", "maxLength": 64 },
+        "viewCount": { "type": "string", "maxLength": 64 },
+        "category": { "type": "string", "maxLength": 64 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "addedAt": { "type": "number" }
+      },
+      "required": ["id", "title", "channelTitle", "thumbnailUrl", "addedAt"]
+    },
+    "YouTubeHistoryItem": {
+      "title": "YouTubeHistoryItem",
+      "description": "YouTube watch history record per profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "title": { "type": "string", "maxLength": 256 },
+        "channelTitle": { "type": "string", "maxLength": 256 },
+        "channelId": { "type": "string", "maxLength": 128 },
+        "channelAvatar": { "type": "string", "maxLength": 2048 },
+        "thumbnailUrl": { "type": "string", "maxLength": 2048 },
+        "publishedAt": { "type": "string", "maxLength": 128 },
+        "duration": { "type": "string", "maxLength": 64 },
+        "viewCount": { "type": "string", "maxLength": 64 },
+        "category": { "type": "string", "maxLength": 64 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "title", "channelTitle", "thumbnailUrl", "updatedAt"]
+    },
+    "YouTubeSubscriptionItem": {
+      "title": "YouTubeSubscriptionItem",
+      "description": "Subscribed YouTube channel per profile",
+      "type": "object",
+      "properties": {
+        "channelId": { "type": "string", "maxLength": 128 },
+        "channelTitle": { "type": "string", "maxLength": 256 },
+        "channelAvatar": { "type": "string", "maxLength": 2048 },
+        "subscribedAt": { "type": "number" }
+      },
+      "required": ["channelId", "subscribedAt"]
     }
   },
   "firestore": {
@@ -149,6 +201,18 @@
     "/accounts/{accountId}/profiles/{profileId}/history/{historyId}": {
       "schema": "WatchHistoryItem",
       "description": "Watch history specific to a single profile"
+    },
+    "/accounts/{accountId}/profiles/{profileId}/youtubeFavorites/{videoId}": {
+      "schema": "YouTubeFavoriteItem",
+      "description": "YouTube saved favorite videos specific to a single profile"
+    },
+    "/accounts/{accountId}/profiles/{profileId}/youtubeHistory/{videoId}": {
+      "schema": "YouTubeHistoryItem",
+      "description": "YouTube watch history specific to a single profile"
+    },
+    "/accounts/{accountId}/profiles/{profileId}/youtubeSubscriptions/{channelId}": {
+      "schema": "YouTubeSubscriptionItem",
+      "description": "YouTube channel subscriptions specific to a single profile"
     },
     "/customAvatars/{avatarId}": {
       "schema": "CustomAvatar",

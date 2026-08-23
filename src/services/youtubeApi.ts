@@ -1,4 +1,5 @@
 import { YouTubeVideo, YouTubeChannel } from '../types';
+import { getFullApiUrl } from './apiConfig';
 
 // Curated high quality default YouTube videos for instant loading across categories
 const CURATED_YOUTUBE_VIDEOS: YouTubeVideo[] = [
@@ -315,7 +316,7 @@ export const youtubeApi = {
     if (token) qs.set('token', token);
 
     try {
-      const res = await fetch(`/api/youtube/trending?${qs.toString()}`);
+      const res = await fetch(getFullApiUrl(`/api/youtube/trending?${qs.toString()}`));
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data?.items)) {
@@ -342,7 +343,7 @@ export const youtubeApi = {
 
     // Legacy keyword-search endpoint as last resort
     try {
-      const res = await fetch(`/api/youtube/trending-legacy?category=${encodeURIComponent(category)}`);
+      const res = await fetch(getFullApiUrl(`/api/youtube/trending-legacy?category=${encodeURIComponent(category)}`));
       if (res.ok) {
         const data = await res.json();
         if (data?.items && Array.isArray(data.items) && data.items.length > 0) {
@@ -363,7 +364,7 @@ export const youtubeApi = {
     if (token) {
       try {
         const res = await fetch(
-          `/api/youtube/search?q=${encodeURIComponent(trimmed)}&token=${encodeURIComponent(token)}`
+          getFullApiUrl(`/api/youtube/search?q=${encodeURIComponent(trimmed)}&token=${encodeURIComponent(token)}`)
         );
         if (res.ok) {
           const data = await res.json();
@@ -403,7 +404,7 @@ export const youtubeApi = {
     }
 
     try {
-      const res = await fetch(`/api/youtube/search?q=${encodeURIComponent(trimmed)}`);
+      const res = await fetch(getFullApiUrl(`/api/youtube/search?q=${encodeURIComponent(trimmed)}`));
       if (res.ok) {
         const data = await res.json();
         if (data?.items || data?.channels) {
@@ -442,7 +443,7 @@ export const youtubeApi = {
       if (channelId) queryParams.set('id', channelId);
       if (channelName) queryParams.set('name', channelName);
 
-      const res = await fetch(`/api/youtube/channel?${queryParams.toString()}`);
+      const res = await fetch(getFullApiUrl(`/api/youtube/channel?${queryParams.toString()}`));
       if (res.ok) {
         const data = await res.json();
         return {
@@ -465,7 +466,7 @@ export const youtubeApi = {
     if (found) return found;
 
     try {
-      const res = await fetch(`/api/youtube/video/${extracted}`);
+      const res = await fetch(getFullApiUrl(`/api/youtube/video/${extracted}`));
       if (res.ok) {
         const data = await res.json();
         if (data?.video) return data.video;

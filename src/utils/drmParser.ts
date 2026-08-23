@@ -74,6 +74,15 @@ export function normalizeToHex(input: string): string {
 }
 
 /**
+ * Checks if a string is a license server URL (e.g. https://vmttv.dpdns.org/AutoKey/)
+ */
+export function isLicenseServerUrl(keyStr?: string): boolean {
+  if (!keyStr || typeof keyStr !== 'string') return false;
+  const trimmed = keyStr.trim().toLowerCase();
+  return trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('/');
+}
+
+/**
  * Parses any Clearkey license key format into a clean Shaka Player compatible
  * ClearKey map: { [kid_hex_32]: key_hex_32 }
  *
@@ -88,7 +97,12 @@ export function parseClearkeyToHexMap(licenseKeyStr: string): Record<string, str
   const result: Record<string, string> = {};
   if (!licenseKeyStr || typeof licenseKeyStr !== 'string') return result;
 
-  let raw = licenseKeyStr.trim();
+  const rawTrimmed = licenseKeyStr.trim();
+  if (isLicenseServerUrl(rawTrimmed)) {
+    return result;
+  }
+
+  let raw = rawTrimmed;
 
   // If raw string starts with base64 encoded JSON (e.g. eyJ...)
   if (raw.startsWith('eyJ') || (!raw.startsWith('{') && !raw.includes(':') && raw.length > 30)) {

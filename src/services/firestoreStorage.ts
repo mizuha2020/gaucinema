@@ -11,7 +11,7 @@ import {
   limit,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType, sanitizeData } from './firebase';
-import { CustomAvatar, MyListItem, UserProfile, WatchHistoryItem } from '../types';
+import { CustomAvatar, MyListItem, UserProfile, WatchHistoryItem, YouTubeVideo } from '../types';
 import { MangaItem, MangaHistoryItem } from './mangaApi';
 import { DEFAULT_AVATARS } from './authService';
 
@@ -396,6 +396,126 @@ export const firestoreStorage = {
       await deleteDoc(docRef);
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, `accounts/${accountId}/profiles/${profileId}/mangaHistory/${mangaId}`);
+    }
+  },
+
+  // --- YOUTUBE FAVORITES & HISTORY & SUBSCRIPTIONS (Per Profile) ---
+
+  async getYoutubeFavorites(accountId: string, profileId: string): Promise<YouTubeVideo[]> {
+    if (!accountId || !profileId) return [];
+    const colRef = collection(db, 'accounts', accountId, 'profiles', profileId, 'youtubeFavorites');
+    try {
+      const snap = await getDocs(colRef);
+      const items = snap.docs.map((d) => d.data() as YouTubeVideo & { addedAt?: number });
+      return items.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, `accounts/${accountId}/profiles/${profileId}/youtubeFavorites`);
+      return [];
+    }
+  },
+
+  async toggleYoutubeFavorite(accountId: string, profileId: string, video: YouTubeVideo): Promise<boolean> {
+    if (!accountId || !profileId || !video.id) return false;
+    const docRef = doc(db, 'accounts', accountId, 'profiles', profileId, 'youtubeFavorites', video.id);
+    try {
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        await deleteDoc(docRef);
+        return false; // Removed
+      } else {
+        const itemToSave = {
+          ...video,
+          addedAt: Date.now(),
+        };
+        await setDoc(docRef, sanitizeData(itemToSave));
+        return true; // Added
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `accounts/${accountId}/profiles/${profileId}/youtubeFavorites/${video.id}`);
+      return false;
+    }
+  },
+
+  async getYoutubeHistory(accountId: string, profileId: string): Promise<YouTubeVideo[]> {
+    if (!accountId || !profileId) return [];
+    const colRef = collection(db, 'accounts', accountId, 'profiles', profileId, 'youtubeHistory');
+    try {
+      const snap = await getDocs(colRef);
+      const items = snap.docs.map((d) => d.data() as YouTubeVideo & { updatedAt?: number });
+      return items.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 50);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, `accounts/${accountId}/profiles/${profileId}/youtubeHistory`);
+      return [];
+    }
+  },
+
+  async saveYoutubeHistory(accountId: string, profileId: string, video: YouTubeVideo): Promise<void> {
+    if (!accountId || !profileId || !video.id) return;
+    const docRef = doc(db, 'accounts', accountId, 'profiles', profileId, 'youtubeHistory', video.id);
+    try {
+      const itemToSave = {
+        ...video,
+        updatedAt: Date.now(),
+      };
+      await setDoc(docRef, sanitizeData(itemToSave), { merge: true });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `accounts/${accountId}/profiles/${profileId}/youtubeHistory/${video.id}`);
+    }
+  },
+
+  async removeYoutubeHistoryItem(accountId: string, profileId: string, videoId: string): Promise<void> {
+    if (!accountId || !profileId || !videoId) return;
+    const docRef = doc(db, 'accounts', accountId, 'profiles', profileId, 'youtubeHistory', videoId);
+    try {
+      await deleteDoc(docRef);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.DELETE, `accounts/${accountId}/profiles/${profileId}/youtubeHistory/${videoId}`);
+    }
+  },
+
+  async getYoutubeSubscriptions(accountId: string, profileId: string): Promise<string[]> {
+    if (!accountId || !profileId) return [];
+    const colRef = collection(db, 'accounts', accountId, 'profiles', profileId, 'youtubeSubscriptions');
+    try {
+      const snap = await getDocs(colRef);
+      return snap.docs.map((d) => (d.data().channelId as string) || d.id);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.LIST, `accounts/${accountId}/profiles/${profileId}/youtubeSubscriptions`);
+      return [];
+    }
+  },
+
+  async toggleYoutubeSubscription(
+    accountId: string,
+    profileId: string,
+    channelId: string,
+    channelTitle?: string,
+    avatarUrl?: string
+  ): Promise<boolean> {
+    if (!accountId || !profileId || !channelId) return false;
+    // Clean key for doc ID (alphanumeric/safe)
+    const docId = channelId.replace(/[\/\.#$\[\]]/g, '_');
+    const docRef = doc(db, 'accounts', accountId, 'profiles', profileId, 'youtubeSubscriptions', docId);
+    try {
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        await deleteDoc(docRef);
+        return false;
+      } else {
+        await setDoc(
+          docRef,
+          sanitizeData({
+            channelId,
+            channelTitle: channelTitle || '',
+            channelAvatar: avatarUrl || '',
+            subscribedAt: Date.now(),
+          })
+        );
+        return true;
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `accounts/${accountId}/profiles/${profileId}/youtubeSubscriptions/${docId}`);
+      return false;
     }
   },
 };

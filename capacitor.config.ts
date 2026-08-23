@@ -5,7 +5,9 @@ const config: CapacitorConfig = {
   appName: 'Gấu Cinema HD',
   webDir: 'dist',
   server: {
-    androidScheme: 'https'
+    androidScheme: 'https',
+    cleartext: true,
+    allowNavigation: ['*']
   }
 };
 

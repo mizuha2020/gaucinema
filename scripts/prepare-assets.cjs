@@ -239,6 +239,60 @@ async function run() {
     }
 
     console.log('✓ Successfully wrote all Android mipmap icons and splash drawables directly into android/res!');
+
+    // 4. Ensure AndroidManifest.xml and MainActivity.java have optimal streaming settings
+    const manifestPath = path.join(rootDir, 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
+    if (fs.existsSync(manifestPath)) {
+      let manifest = fs.readFileSync(manifestPath, 'utf8');
+      if (!manifest.includes('android:usesCleartextTraffic="true"')) {
+        manifest = manifest.replace('<application', '<application\n        android:usesCleartextTraffic="true"');
+      }
+      if (!manifest.includes('android:hardwareAccelerated="true"')) {
+        manifest = manifest.replace('<application', '<application\n        android:hardwareAccelerated="true"');
+      }
+      const permissionsToAdd = [
+        '<uses-permission android:name="android.permission.INTERNET" />',
+        '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
+        '<uses-permission android:name="android.permission.WAKE_LOCK" />',
+        '<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />'
+      ];
+      for (const perm of permissionsToAdd) {
+        if (!manifest.includes(perm)) {
+          manifest = manifest.replace('</manifest>', `    ${perm}\n</manifest>`);
+        }
+      }
+      fs.writeFileSync(manifestPath, manifest);
+      console.log('✓ AndroidManifest.xml verified & updated with stream permissions');
+    }
+
+    const mainActivityPath = path.join(rootDir, 'android', 'app', 'src', 'main', 'java', 'com', 'qtbcinema', 'app', 'MainActivity.java');
+    if (fs.existsSync(mainActivityPath)) {
+      const mainActivityContent = `package com.qtbcinema.app;
+
+import android.os.Bundle;
+import android.webkit.WebSettings;
+import com.getcapacitor.BridgeActivity;
+
+public class MainActivity extends BridgeActivity {
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        if (this.bridge != null && this.bridge.getWebView() != null) {
+            WebSettings settings = this.bridge.getWebView().getSettings();
+            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+            settings.setMediaPlaybackRequiresUserGesture(false);
+            settings.setDomStorageEnabled(true);
+            settings.setDatabaseEnabled(true);
+            settings.setAllowFileAccess(true);
+            settings.setAllowContentAccess(true);
+            settings.setUserAgentString("Dalvik/2.1.0 (Linux; U; Android 10; Build/QP1A.190711.020)");
+        }
+    }
+}
+`;
+      fs.writeFileSync(mainActivityPath, mainActivityContent);
+      console.log('✓ MainActivity.java verified & updated with Dalvik User-Agent');
+    }
   }
 
   console.log('=== ASSET GENERATION FINISHED ===');

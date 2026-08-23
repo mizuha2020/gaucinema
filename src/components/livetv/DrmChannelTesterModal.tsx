@@ -226,6 +226,18 @@ https://s2129134.cdn.mytvnet.vn/pkg20/live_dzones/hbo.smil/manifest.mpd`
                   >
                     Cinema World (JSON)
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStreamName('Sự Kiện FPT PLAY (AutoKey Server)');
+                      setStreamUrl('https://vips-livecdn.fptplay.net/live/media/EPL_HN_01_4K_H265/dash_h_drm/index.mpd');
+                      setDrmKey('https://vmttv.dpdns.org/AutoKey/');
+                      setUserAgent('Dalvik/2.1.0');
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-orange-950/60 hover:bg-orange-900/80 text-orange-300 hover:text-orange-200 border border-orange-700/60 text-[11px] transition-colors"
+                  >
+                    FPT Play (AutoKey)
+                  </button>
                 </div>
               </div>
 
