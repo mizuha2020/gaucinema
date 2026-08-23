@@ -13,12 +13,6 @@ import {
   Tv,
   BookOpen,
   Film,
-  Sparkles,
-  Flame,
-  Clock,
-  Bookmark,
-  Share2,
-  ExternalLink,
 } from 'lucide-react';
 import appLogo from '../../assets/images/app_logo.jpg';
 
@@ -33,21 +27,7 @@ interface YouTubeNavbarProps {
   onLogout?: () => void;
   onLogoClick?: () => void;
   onSearch: (query: string) => void;
-  activeCategory: string;
-  onCategoryChange: (cat: string) => void;
 }
-
-const CATEGORIES = [
-  { id: 'all', label: 'Tất cả' },
-  { id: 'music', label: 'Âm nhạc' },
-  { id: 'gaming', label: 'Gaming' },
-  { id: 'shorts', label: 'Shorts' },
-  { id: 'tech', label: 'Công nghệ' },
-  { id: 'entertainment', label: 'Giải trí' },
-  { id: 'kids', label: 'Thiếu nhi' },
-  { id: 'saved', label: 'Đã lưu' },
-  { id: 'history', label: 'Lịch sử' },
-];
 
 export const YouTubeNavbar: React.FC<YouTubeNavbarProps> = ({
   currentAccount,
@@ -60,8 +40,6 @@ export const YouTubeNavbar: React.FC<YouTubeNavbarProps> = ({
   onLogout,
   onLogoClick,
   onSearch,
-  activeCategory,
-  onCategoryChange,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
@@ -117,15 +95,14 @@ export const YouTubeNavbar: React.FC<YouTubeNavbarProps> = ({
 
   return (
     <>
-      <header className="fixed top-0 left-0 right-0 z-50 bg-[#0f0a0c]/95 backdrop-blur-md border-b border-red-900/40 pb-2.5 pt-[max(10px,env(safe-area-inset-top))] transition-all duration-300">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex flex-col gap-2.5">
+      <header className="fixed top-0 left-0 right-0 z-50 bg-[#0f0a0c]/95 backdrop-blur-md border-b border-red-900/40 pb-2 pt-[max(10px,env(safe-area-inset-top))] transition-all duration-300">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex flex-col gap-2">
           {/* Top Bar */}
           <div className="flex items-center justify-between gap-2 sm:gap-4">
             {/* Logo Brand */}
             <button
               onClick={() => {
                 onLogoClick?.();
-                onCategoryChange('all');
                 setSearchQuery('');
               }}
               className="flex items-center gap-2 cursor-pointer focus:outline-none group shrink-0"
@@ -406,23 +383,6 @@ export const YouTubeNavbar: React.FC<YouTubeNavbarProps> = ({
               )}
             </div>
           </form>
-
-          {/* Categories Horizontal Scroll Bar */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-            {CATEGORIES.map((cat) => (
-              <button
-                key={cat.id}
-                onClick={() => onCategoryChange(cat.id)}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 cursor-pointer whitespace-nowrap ${
-                  activeCategory === cat.id
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/40 border border-red-500'
-                    : 'bg-[#1a1013] text-slate-300 hover:bg-red-950/60 hover:text-white border border-red-900/30'
-                }`}
-              >
-                {cat.label}
-              </button>
-            ))}
-          </div>
         </div>
       </header>
 

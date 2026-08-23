@@ -26,12 +26,11 @@ export const YouTubeAppWrapper: React.FC<YouTubeAppWrapperProps> = ({
 }) => {
   const [resetKey, setResetKey] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeCategory, setActiveCategory] = useState('all');
+  const [isChannelViewOpen, setIsChannelViewOpen] = useState(false);
 
   const handleLogoClick = () => {
     setResetKey((prev) => prev + 1);
     setSearchQuery('');
-    setActiveCategory('all');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -40,28 +39,22 @@ export const YouTubeAppWrapper: React.FC<YouTubeAppWrapperProps> = ({
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleCategoryChange = (cat: string) => {
-    setActiveCategory(cat);
-    setSearchQuery('');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
   return (
     <div className="min-h-screen bg-[#0a0608] text-white font-sans selection:bg-red-600 selection:text-white">
-      <YouTubeNavbar
-        currentAccount={currentAccount}
-        activeProfile={activeProfile}
-        profiles={profiles}
-        onSelectProfile={onSelectProfile}
-        onSwitchApp={onSwitchApp}
-        onSwitchProfileScreen={onSwitchProfileScreen}
-        onOpenAdminDashboard={onOpenAdminDashboard}
-        onLogout={onLogout}
-        onLogoClick={handleLogoClick}
-        onSearch={handleSearch}
-        activeCategory={activeCategory}
-        onCategoryChange={handleCategoryChange}
-      />
+      {!isChannelViewOpen && (
+        <YouTubeNavbar
+          currentAccount={currentAccount}
+          activeProfile={activeProfile}
+          profiles={profiles}
+          onSelectProfile={onSelectProfile}
+          onSwitchApp={onSwitchApp}
+          onSwitchProfileScreen={onSwitchProfileScreen}
+          onOpenAdminDashboard={onOpenAdminDashboard}
+          onLogout={onLogout}
+          onLogoClick={handleLogoClick}
+          onSearch={handleSearch}
+        />
+      )}
 
       <main className="relative min-h-[calc(100vh-160px)]">
         <YouTubeView
@@ -69,7 +62,8 @@ export const YouTubeAppWrapper: React.FC<YouTubeAppWrapperProps> = ({
           currentAccount={currentAccount}
           activeProfile={activeProfile}
           searchQuery={searchQuery}
-          activeCategory={activeCategory}
+          activeCategory="all"
+          onChannelViewChange={setIsChannelViewOpen}
         />
       </main>
     </div>

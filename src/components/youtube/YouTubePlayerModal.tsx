@@ -143,24 +143,56 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
         // Fallback
       }
 
-      // 2. Fetch related videos
-      const cleanTitle = video.title.replace(/\[.*?\]|\(.*?\)/g, '').trim();
-      const keywords = cleanTitle.split(' ').slice(0, 4).join(' ');
-      const searchQuery = video.channelTitle ? `${video.channelTitle}` : keywords;
+      // 2. Fetch related videos: mix topic-based results (any channel) + same-channel uploads
+      const cleanTitle = video.title.replace(/\[.*?\]|\(.*?\)/g, '').replace(/\s+/g, ' ').trim();
+      const keywords = cleanTitle.split(' ').slice(0, 5).join(' ');
+      const topicQuery = keywords || video.channelTitle || '';
+      const channelQuery = video.channelTitle || '';
+
+      const safeSearch = async (q: string): Promise<YouTubeVideo[]> => {
+        try {
+          return await youtubeApi.search(q);
+        } catch {
+          return [];
+        }
+      };
 
       try {
-        const searchRes = await youtubeApi.searchFull(searchQuery);
-        if (isMounted) {
-          let items = searchRes.items.filter((item) => item.id !== video.id);
-          if (items.length < 5) {
-            const titleRes = await youtubeApi.search(keywords);
-            const additional = titleRes.filter(
-              (item) => item.id !== video.id && !items.some((i) => i.id === item.id)
-            );
-            items = [...items, ...additional];
+        const [topicItems, channelItems] = await Promise.all([
+          topicQuery ? safeSearch(topicQuery) : Promise.resolve([] as YouTubeVideo[]),
+          channelQuery && channelQuery !== topicQuery
+            ? safeSearch(channelQuery)
+            : Promise.resolve([] as YouTubeVideo[]),
+        ]);
+
+        // Interleave: topical hits first, then a capped batch from the same channel,
+        // then fill the rest with remaining topical results.
+        const seen = new Set<string>([video.id]);
+        const merged: YouTubeVideo[] = [];
+        const takeFrom = (list: YouTubeVideo[], limit: number) => {
+          let taken = 0;
+          for (const item of list) {
+            if (taken >= limit || merged.length >= 15) break;
+            if (!item?.id || seen.has(item.id)) continue;
+            seen.add(item.id);
+            merged.push(item);
+            taken++;
           }
-          setRelatedVideos(items.slice(0, 15));
-          setIsLoadingRelated(false);
+        };
+
+        takeFrom(topicItems, 9);
+        takeFrom(channelItems, 6);
+        takeFrom(topicItems, 99);
+
+        if (isMounted) {
+          if (merged.length > 0) {
+            setRelatedVideos(merged);
+            setIsLoadingRelated(false);
+          } else {
+            const fallback = await youtubeApi.getTrending('all');
+            setRelatedVideos(fallback.filter((f) => f.id !== video.id).slice(0, 10));
+            setIsLoadingRelated(false);
+          }
         }
       } catch {
         if (isMounted) {

@@ -300,30 +300,59 @@ export function formatViews(views?: number | string): string {
 export interface SearchResultsResponse {
   channels: YouTubeChannel[];
   items: YouTubeVideo[];
+  nextToken?: string | null;
+}
+
+export interface TrendingPageResponse {
+  items: YouTubeVideo[];
+  nextToken: string | null;
 }
 
 export const youtubeApi = {
-  // Get trending videos by category
-  getTrending: async (category: string = 'all'): Promise<YouTubeVideo[]> => {
+  // Get one trending page; pass token for the next page (infinite scroll)
+  getTrendingPage: async (category: string = 'all', token?: string | null): Promise<TrendingPageResponse> => {
+    const qs = new URLSearchParams({ category });
+    if (token) qs.set('token', token);
+
     try {
-      // Query backend proxy
-      const res = await fetch(`/api/youtube/trending?category=${encodeURIComponent(category)}`);
+      const res = await fetch(`/api/youtube/trending?${qs.toString()}`);
       if (res.ok) {
         const data = await res.json();
-        if (data?.items && Array.isArray(data.items) && data.items.length > 0) {
-          return data.items;
+        if (Array.isArray(data?.items)) {
+          return { items: data.items, nextToken: data.nextToken || null };
         }
       }
     } catch (e) {
       console.warn('Backend YouTube trending error, falling back to curated list:', e);
     }
 
-    // Fallback to curated list filtered by category
+    // Curated fallback only makes sense for the first page
+    if (token) return { items: [], nextToken: null };
     if (category === 'all' || !category) {
-      return CURATED_YOUTUBE_VIDEOS;
+      return { items: CURATED_YOUTUBE_VIDEOS, nextToken: null };
     }
     const filtered = CURATED_YOUTUBE_VIDEOS.filter((v) => v.category === category || (category === 'shorts' && v.isShort));
-    return filtered.length > 0 ? filtered : CURATED_YOUTUBE_VIDEOS;
+    return { items: filtered.length > 0 ? filtered : CURATED_YOUTUBE_VIDEOS, nextToken: null };
+  },
+
+  // Get trending videos by category
+  getTrending: async (category: string = 'all'): Promise<YouTubeVideo[]> => {
+    const page = await youtubeApi.getTrendingPage(category);
+    if (page.items.length > 0) return page.items;
+
+    // Legacy keyword-search endpoint as last resort
+    try {
+      const res = await fetch(`/api/youtube/trending-legacy?category=${encodeURIComponent(category)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.items && Array.isArray(data.items) && data.items.length > 0) {
+          return data.items;
+        }
+      }
+    } catch {
+      // Ignore
+    }
+    return [];
   },
 
   // Full search returns both channels and videos
@@ -380,16 +409,12 @@ export const youtubeApi = {
     return res.items;
   },
 
-  // Get Channel details and channel videos
+  // Get Channel details and channel videos (server scrapes the channel's real VIDEOS tab)
   getChannelDetails: async (channelId: string, channelName?: string): Promise<{ channel: YouTubeChannel | null; items: YouTubeVideo[] }> => {
-    let channelResult: YouTubeChannel | null = {
+    const fallbackChannel: YouTubeChannel = {
       id: channelId || 'channel_default',
       title: channelName || 'Kênh YouTube',
-      subscribers: '1.75 Tr người đăng ký',
-      description: `Chào mừng bạn đến với kênh chính thức của ${channelName || 'YouTube'}. Cập nhật video, highlight và phát sóng trực tiếp mới nhất mỗi ngày.`,
     };
-
-    let items: YouTubeVideo[] = [];
 
     try {
       const queryParams = new URLSearchParams();
@@ -399,34 +424,17 @@ export const youtubeApi = {
       const res = await fetch(`/api/youtube/channel?${queryParams.toString()}`);
       if (res.ok) {
         const data = await res.json();
-        if (data?.channel) {
-          channelResult = { ...channelResult, ...data.channel };
-        }
-        if (data?.items && Array.isArray(data.items) && data.items.length > 0) {
-          items = data.items;
-        }
+        return {
+          channel: data?.channel ? { ...fallbackChannel, ...data.channel } : fallbackChannel,
+          // Only trust server-scraped videos of this exact channel; no keyword-search pollution
+          items: Array.isArray(data?.items) ? data.items : [],
+        };
       }
     } catch (e) {
       console.warn('Backend channel details error:', e);
     }
 
-    if (items.length === 0 && channelName) {
-      try {
-        const searchRes = await youtubeApi.searchFull(channelName);
-        items = searchRes.items;
-      } catch {
-        // ignore
-      }
-    }
-
-    if (items.length === 0) {
-      items = CURATED_YOUTUBE_VIDEOS.map(v => ({ ...v, channelTitle: channelName || v.channelTitle }));
-    }
-
-    return {
-      channel: channelResult,
-      items: items.map(v => ({ ...v, channelTitle: channelName || v.channelTitle || 'Kênh YouTube' }))
-    };
+    return { channel: fallbackChannel, items: [] };
   },
 
   // Get single video details

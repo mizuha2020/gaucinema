@@ -124,23 +124,30 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
   const featuredVideo = videos.length > 0 ? videos[0] : null;
 
   return (
-    <div className="min-h-screen bg-[#0f0f0f] text-white animate-fade-in pb-20 pt-16 sm:pt-20">
-      {/* Top Sticky Header with Back Button */}
-      <div className="fixed top-0 left-0 right-0 z-50 bg-[#0f0f0f]/95 backdrop-blur-md px-4 py-3 flex items-center justify-between border-b border-white/10 shadow-lg">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2 text-xs sm:text-sm font-bold text-white bg-red-600 hover:bg-red-700 px-4 py-2 rounded-full transition-all cursor-pointer shadow-md"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          <span>Trở về trang chủ</span>
-        </button>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-slate-300 font-semibold hidden sm:inline">{displayTitle}</span>
+    <div className="min-h-screen bg-[#0f0f0f] text-white animate-fade-in pb-20 pt-14">
+      {/* Channel Header Navigator */}
+      <div className="fixed top-0 left-0 right-0 z-50 bg-[#0f0f0f]/95 backdrop-blur-md border-b border-white/10">
+        <div className="max-w-7xl mx-auto pl-2 pr-3 sm:px-4 h-14 flex items-center gap-1.5 sm:gap-2.5">
+          <button
+            onClick={onBack}
+            title="Quay lại"
+            className="w-10 h-10 shrink-0 rounded-full hover:bg-white/10 active:bg-white/15 flex items-center justify-center transition-colors cursor-pointer"
+          >
+            <ArrowLeft className="w-5 h-5 text-white" />
+          </button>
           <img
             src={displayAvatar}
             alt={displayTitle}
-            className="w-8 h-8 rounded-full object-cover border border-white/20"
+            className="w-8 h-8 rounded-full object-cover border border-white/15 shrink-0"
           />
+          <div className="min-w-0 flex-1 leading-tight">
+            <p className="text-sm font-bold text-white truncate">{displayTitle}</p>
+            {channelData?.subscribers && (
+              <p className="text-[11px] text-slate-400 truncate">
+                {channelData.subscribers}
+              </p>
+            )}
+          </div>
         </div>
       </div>
 
@@ -186,7 +193,7 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
               {channelData?.subscribers && (
                 <>
                   <span>•</span>
-                  <span className="text-red-400 font-bold">{channelData.subscribers} người đăng ký</span>
+                  <span className="text-red-400 font-bold">{channelData.subscribers}</span>
                 </>
               )}
               {videos.length > 0 && (
@@ -238,7 +245,7 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
         </div>
 
         {/* Tab Navigation & YouTube-style Search Button */}
-        <div className="border-b border-white/10 flex items-center justify-between overflow-x-auto scrollbar-none">
+        <div className="sticky top-14 z-30 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 bg-[#0f0f0f]/95 backdrop-blur-md border-b border-white/10 flex items-center justify-between overflow-x-auto scrollbar-none">
           <div className="flex items-center gap-2 sm:gap-6">
             {[
               { id: 'home', label: 'Trang chủ', icon: Compass },
@@ -339,7 +346,7 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
                 </div>
                 <div className="flex items-center gap-3 text-xs text-slate-400">
                   <ThumbsUp className="w-4 h-4 text-red-500" />
-                  <span>{channelData?.subscribers || '1.75 Tr'} người theo dõi</span>
+                  <span>{channelData?.subscribers || 'Kênh YouTube xác minh'}</span>
                 </div>
                 <div className="flex items-center gap-3 text-xs text-slate-400">
                   <Film className="w-4 h-4 text-red-500" />

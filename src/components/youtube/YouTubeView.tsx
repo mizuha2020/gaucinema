@@ -6,24 +6,11 @@ import { YouTubeChannelPageView } from './YouTubeChannelPageView';
 import {
   Play,
   Flame,
-  Music,
-  Gamepad2,
   Smartphone,
-  Sparkles,
-  ShieldCheck,
-  Search,
-  Plus,
   Heart,
-  Clock,
-  Tv,
   Youtube,
-  Film,
-  Layers,
-  ArrowRight,
   User,
-  UserPlus,
-  UserCheck,
-  ExternalLink,
+  ChevronRight,
 } from 'lucide-react';
 
 interface YouTubeViewProps {
@@ -31,6 +18,7 @@ interface YouTubeViewProps {
   activeProfile: UserProfile | null;
   searchQuery?: string;
   activeCategory?: string;
+  onChannelViewChange?: (isOpen: boolean) => void;
 }
 
 export const YouTubeView: React.FC<YouTubeViewProps> = ({
@@ -38,6 +26,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
   activeProfile,
   searchQuery = '',
   activeCategory = 'all',
+  onChannelViewChange,
 }) => {
   const [videos, setVideos] = useState<YouTubeVideo[]>([]);
   const [channels, setChannels] = useState<YouTubeChannel[]>([]);
@@ -162,6 +151,11 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
     setSelectedChannelView(null);
   }, [activeCategory]);
 
+  // Notify parent so the global navbar can hide while browsing a channel page
+  useEffect(() => {
+    onChannelViewChange?.(Boolean(selectedChannelView));
+  }, [selectedChannelView, onChannelViewChange]);
+
   const handleOpenVideo = (v: YouTubeVideo) => {
     setSelectedVideo(v);
     addToHistory(v);
@@ -199,61 +193,60 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
   return (
     <div className="min-h-screen bg-[#0a0608] text-white font-sans pb-24 pt-28">
       {/* Container */}
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 space-y-8">
-        {/* Search Results - Channels Section */}
-        {searchQuery && channels.length > 0 && (
-          <div className="space-y-4 bg-gradient-to-r from-red-950/40 via-[#180f12] to-[#120a0d] border border-red-900/60 rounded-3xl p-4 sm:p-6 shadow-xl">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-                <User className="w-5 h-5 text-red-500" />
-                <span>Kênh YouTube Tìm Thấy</span>
-              </h3>
-              <span className="text-xs text-slate-400 font-medium">{channels.length} kênh</span>
-            </div>
+      <div className="max-w-5xl mx-auto px-3 sm:px-6 lg:px-8 space-y-6">
+        {/* Search Results Header */}
+        {searchQuery && (
+          <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-3">
+            <h2 className="text-base sm:text-lg font-bold text-white truncate">
+              Kết quả cho <span className="text-red-400">&quot;{searchQuery}&quot;</span>
+            </h2>
+            <span className="text-xs text-slate-400 shrink-0 font-medium">
+              {isLoading ? 'Đang tải...' : `${videos.length} video`}
+            </span>
+          </div>
+        )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Search Results - Channels Section */}
+        {!isLoading && searchQuery && channels.length > 0 && (
+          <div className="space-y-2">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <User className="w-4 h-4 text-red-500" />
+              <span>Kênh liên quan</span>
+            </h3>
+
+            <div className="divide-y divide-white/5 rounded-2xl border border-white/5 bg-[#100b0d] overflow-hidden">
               {channels.map((chan) => (
                 <div
                   key={chan.id || chan.title}
                   onClick={() => handleOpenChannel(chan)}
-                  className="group bg-[#140c0f] hover:bg-[#201015] border border-red-900/40 hover:border-red-500/80 rounded-2xl p-4 transition-all duration-300 cursor-pointer flex items-center gap-4 shadow-lg"
+                  className="group flex items-center gap-4 px-4 py-3.5 hover:bg-white/5 transition-colors cursor-pointer"
                 >
                   <img
                     src={chan.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(chan.title)}&background=dc2626&color=fff&bold=true`}
                     alt={chan.title}
-                    className="w-16 h-16 sm:w-20 sm:h-20 rounded-full object-cover border-2 border-red-600/50 group-hover:scale-105 transition-transform shrink-0"
+                    className="w-12 h-12 sm:w-14 sm:h-14 rounded-full object-cover border border-white/10 shrink-0"
                   />
 
-                  <div className="flex-1 min-w-0 space-y-1">
+                  <div className="flex-1 min-w-0 space-y-0.5">
                     <div className="flex items-center gap-1.5">
-                      <h4 className="text-sm sm:text-base font-bold text-white group-hover:text-red-400 truncate">
+                      <h4 className="text-sm font-bold text-white truncate">
                         {chan.title}
                       </h4>
-                      <span className="w-4 h-4 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">✓</span>
+                      <span className="w-3.5 h-3.5 rounded-full bg-neutral-600 text-white text-[9px] font-bold flex items-center justify-center shrink-0">✓</span>
                     </div>
 
-                    <div className="flex items-center gap-2 text-xs text-slate-400 font-medium">
-                      {chan.subscribers && <span className="text-red-400 font-semibold">{chan.subscribers}</span>}
-                      {chan.videoCount && <span>• {chan.videoCount}</span>}
-                    </div>
+                    <p className="text-[11px] text-slate-400 font-medium truncate">
+                      {[chan.subscribers, chan.videoCount].filter(Boolean).join(' • ') || 'Kênh YouTube'}
+                    </p>
 
                     {chan.description && (
-                      <p className="text-xs text-slate-300 line-clamp-1">
+                      <p className="text-[11px] text-slate-500 line-clamp-1 hidden sm:block">
                         {chan.description}
                       </p>
                     )}
                   </div>
 
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleOpenChannel(chan);
-                    }}
-                    className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-4 py-2 rounded-xl transition-all flex items-center gap-1.5 shrink-0 shadow-md shadow-red-600/30"
-                  >
-                    <span>Xem Kênh</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </button>
+                  <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-red-400 shrink-0 transition-colors" />
                 </div>
               ))}
             </div>
@@ -345,23 +338,23 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
         )}
 
         {/* Main Grid Header */}
-        <div className="flex items-center justify-between border-b border-red-900/30 pb-3">
-          <div className="flex items-center gap-2">
-            <Flame className="w-5 h-5 text-red-500" />
-            <h3 className="text-lg font-black text-white">
-              {searchQuery
-                ? `Kết quả tìm kiếm cho: "${searchQuery}"`
-                : activeCategory === 'saved'
-                ? `Video Đã Lưu (${favorites.length})`
-                : activeCategory === 'history'
-                ? `Lịch Sử Xem (${history.length})`
-                : `Video Xu Hướng - ${activeCategory.toUpperCase()}`}
-            </h3>
+        {!searchQuery && (
+          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+            <div className="flex items-center gap-2">
+              <Flame className="w-5 h-5 text-red-500" />
+              <h3 className="text-lg font-bold text-white">
+                {activeCategory === 'saved'
+                  ? `Video Đã Lưu (${favorites.length})`
+                  : activeCategory === 'history'
+                  ? `Lịch Sử Xem (${history.length})`
+                  : `Video Xu Hướng`}
+              </h3>
+            </div>
+            <span className="text-xs text-slate-400">
+              {isLoading ? 'Đang tải...' : `${videos.length} video`}
+            </span>
           </div>
-          <span className="text-xs text-slate-400">
-            {isLoading ? 'Đang tải...' : `${videos.length} video`}
-          </span>
-        </div>
+        )}
 
         {/* Videos Grid */}
         {isLoading ? (
@@ -382,11 +375,11 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-5">
             {mainGridVideos.map((v) => (
               <div
                 key={v.id}
-                className="group relative bg-[#140c0f] hover:bg-[#1f1015] border border-red-900/30 hover:border-red-600/70 rounded-2xl overflow-hidden transition-all duration-300 shadow-xl flex flex-col justify-between"
+                className="group relative bg-[#120d0f] hover:bg-[#1a1113] border border-white/5 hover:border-red-600/60 rounded-2xl overflow-hidden transition-all duration-300 shadow-lg flex flex-col justify-between"
               >
                 {/* Thumbnail */}
                 <div
@@ -437,7 +430,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
                   </div>
 
                   {/* Footer Stats & Favorite Button */}
-                  <div className="flex items-center justify-between pt-2 border-t border-red-900/30 text-[11px] text-slate-400">
+                  <div className="flex items-center justify-between pt-2 border-t border-white/5 text-[11px] text-slate-400">
                     <span>{formatViews(v.viewCount)}</span>
                     <button
                       onClick={(e) => {

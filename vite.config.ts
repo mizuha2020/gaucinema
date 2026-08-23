@@ -7,6 +7,10 @@ export default defineConfig(() => {
   return {
     base: './',
     plugins: [react(), tailwindcss()],
+    optimizeDeps: {
+      // Only scan the root index.html; ignore built assets under android/
+      entries: 'index.html',
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

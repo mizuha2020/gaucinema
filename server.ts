@@ -983,127 +983,599 @@ async function startServer() {
   });
 
   // Helper function to scrape real-time live search results directly from YouTube
-  async function scrapeYouTubeSearch(query: string) {
+  async function scrapeYouTubeSearch(query: string): Promise<{ channels: any[]; items: any[]; nextToken: string | null }> {
     try {
       const url = "https://www.youtube.com/results?search_query=" + encodeURIComponent(query) + "&persist_gl=1&gl=VN&hl=vi";
+      const { data, apiKey, clientVersion } = await fetchYouTubePageDataFull(url);
+      cachedInnertubeKey = apiKey || cachedInnertubeKey;
+      cachedInnertubeVer = clientVersion || cachedInnertubeVer;
+      if (!data) return { channels: [], items: [], nextToken: null };
+
+      // Walk the ENTIRE payload recursively. YouTube wraps search results in many
+      // different containers (itemSectionRenderer, shelves, featured racks...) so
+      // following one fixed path misses items like currently-live broadcasts.
+      const items: any[] = extractAllVideos(data);
+
+      const channels: any[] = [];
+      const walkChannels = (obj: any) => {
+        if (!obj || typeof obj !== 'object') return;
+        const c = (obj as any).channelRenderer;
+        if (c && c.channelId && !channels.some((x) => x.id === c.channelId)) {
+          const channelId = c.channelId;
+          const title = c.title?.simpleText || c.title?.runs?.[0]?.text || "Kênh YouTube";
+          const subscribers = c.subscriberCountText?.simpleText || c.subscriberCountText?.runs?.[0]?.text || "";
+          const videoCount = c.videoCountText?.simpleText || c.videoCountText?.runs?.[0]?.text || "";
+          const description = c.descriptionSnippet?.runs?.[0]?.text || "";
+          let avatarUrl = c.thumbnail?.thumbnails?.[c.thumbnail.thumbnails.length - 1]?.url || "";
+          if (avatarUrl && avatarUrl.startsWith("//")) avatarUrl = "https:" + avatarUrl;
+
+          channels.push({
+            id: channelId,
+            title,
+            handle: subscribers,
+            subscribers,
+            videoCount,
+            description,
+            avatarUrl
+          });
+        }
+        for (const key of Object.keys(obj)) {
+          const val = (obj as any)[key];
+          if (val && typeof val === 'object') walkChannels(val);
+        }
+      };
+      walkChannels(data);
+
+      // Keep YouTube's native relevance order (live streams already rank high
+      // for live topics and carry the LIVE badge in the UI)
+      return { channels, items, nextToken: findNextContinuationToken(data) };
+    } catch (err) {
+      console.error("Scrape YouTube Search error:", err);
+      return { channels: [], items: [], nextToken: null };
+    }
+  }
+
+  // Normalize channel names for strict identity matching
+  const normChannelKey = (s: string) =>
+    (s || "").toLowerCase().replace(/\s+/g, "");
+
+  // Fetch a YouTube page: ytInitialData JSON + innertube config for continuations
+  async function fetchYouTubePageDataFull(url: string): Promise<{ data: any | null; apiKey?: string; clientVersion?: string }> {
+    try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 6000);
+      const timer = setTimeout(() => controller.abort(), 8000);
       const res = await fetch(url, {
-        redirect: 'manual',
+        redirect: "follow",
         signal: controller.signal,
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
           "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8",
           "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Cookie": "CONSENT=YES+cb.20210328-04-p0.en+FX+900; SOCS=CAI"
-        }
-      }).finally(() => clearTimeout(timeout));
+          "Cookie": "CONSENT=YES+cb.20210328-04-p0.en+FX+900; SOCS=CAI",
+        },
+      }).finally(() => clearTimeout(timer));
 
-      if (res.status >= 300 && res.status < 400) {
-        return { channels: [], items: [] };
-      }
+      if (!res.ok) return { data: null };
       const html = await res.text();
       const match = html.match(/var ytInitialData = ({.*?});<\/script>/s) || html.match(/ytInitialData = ({.*?});/s);
-      if (!match) return { channels: [], items: [] };
-      
-      const data = JSON.parse(match[1]);
-      const contents = data.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents;
-      if (!contents) return { channels: [], items: [] };
-      
-      const channels: any[] = [];
-      const items: any[] = [];
+      if (!match) return { data: null };
+      return {
+        data: JSON.parse(match[1]),
+        apiKey: html.match(/"INNERTUBE_API_KEY":"([^"]+)"/)?.[1],
+        clientVersion: html.match(/"INNERTUBE_CONTEXT_CLIENT_VERSION":"([^"]+)"/)?.[1]
+          || html.match(/"INNERTUBE_CLIENT_VERSION":"([^"]+)"/)?.[1],
+      };
+    } catch {
+      return { data: null };
+    }
+  }
 
-      for (const section of contents) {
-        const itemSection = section.itemSectionRenderer?.contents;
-        if (!itemSection) continue;
-        for (const item of itemSection) {
-          // Channel Renderer
-          if (item.channelRenderer) {
-            const c = item.channelRenderer;
-            const channelId = c.channelId || c.navigationEndpoint?.browseEndpoint?.browseId || "";
-            const title = c.title?.simpleText || c.title?.runs?.[0]?.text || "Kênh YouTube";
-            const handle = c.subscriberCountText?.simpleText || "";
-            const subscribers = c.subscriberCountText?.simpleText || c.videoCountText?.simpleText || "";
-            const videoCount = c.videoCountText?.runs?.[0]?.text || "";
-            const description = c.descriptionSnippet?.runs?.[0]?.text || "";
-            let avatarUrl = c.thumbnail?.thumbnails?.[c.thumbnail.thumbnails.length - 1]?.url || "";
-            if (avatarUrl && avatarUrl.startsWith("//")) avatarUrl = "https:" + avatarUrl;
+  // Fetch a YouTube page and extract ytInitialData JSON
+  async function fetchYouTubePageData(url: string): Promise<any | null> {
+    const { data } = await fetchYouTubePageDataFull(url);
+    return data;
+  }
 
-            channels.push({
-              id: channelId,
-              title,
-              handle,
-              subscribers,
-              videoCount,
-              description,
-              avatarUrl
-            });
-          }
+  // Find the next-page continuation token inside any ytInitialData / innertube payload
+  function findNextContinuationToken(obj: any): string | null {
+    let token: string | null = null;
+    const walk = (node: any) => {
+      if (!node || typeof node !== "object" || token) return;
+      const cir = (node as any).continuationItemRenderer;
+      const t = cir?.continuationEndpoint?.continuationCommand?.token
+        || cir?.button?.buttonRenderer?.command?.continuationCommand?.token;
+      if (typeof t === "string" && t.length > 10) {
+        token = t;
+        return;
+      }
+      for (const key of Object.keys(node)) {
+        walk((node as any)[key]);
+      }
+    };
+    walk(obj);
+    return token;
+  }
 
-          // Video Renderer
-          if (item.videoRenderer) {
-            const video = item.videoRenderer;
-            const videoId = video.videoId;
-            if (!videoId) continue;
-            
-            const title = video.title?.runs?.[0]?.text || video.title?.simpleText || "Video YouTube";
-            const channelTitle = video.ownerText?.runs?.[0]?.text || "Kênh YouTube";
-            const channelId = video.ownerText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId || "";
-            let channelAvatar = video.channelThumbnailSupportedRenderers?.channelThumbnailWithRippleRenderer?.thumbnail?.thumbnails?.[0]?.url || "";
-            if (channelAvatar && channelAvatar.startsWith("//")) channelAvatar = "https:" + channelAvatar;
+  // Fetch the next page of results via the innertube browse/search endpoints
+  async function fetchInnertubeContinuation(
+    token: string,
+    apiKey: string | undefined,
+    clientVersion: string | undefined,
+    kind: "browse" | "search"
+  ): Promise<any | null> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const keyQuery = apiKey ? `?key=${encodeURIComponent(apiKey)}&prettyPrint=false` : "?prettyPrint=false";
+      const res = await fetch(`https://www.youtube.com/youtubei/v1/${kind}${keyQuery}`, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8",
+          "Origin": "https://www.youtube.com",
+          "Referer": "https://www.youtube.com/",
+          "X-YouTube-Client-Name": "1",
+          "X-YouTube-Client-Version": clientVersion || "2.20240801.00.00",
+        },
+        body: JSON.stringify({
+          context: {
+            client: {
+              clientName: "WEB",
+              clientVersion: clientVersion || "2.20240801.00.00",
+              hl: "vi",
+              gl: "VN",
+            },
+          },
+          continuation: token,
+        }),
+      }).finally(() => clearTimeout(timer));
 
-            const publishedAt = video.publishedTimeText?.simpleText || "Mới đây";
-            const viewCount = video.viewCountText?.simpleText || "";
-            let lengthText = video.lengthText?.simpleText || "";
-            
-            // Check if live stream
-            const badges = video.badges || [];
-            const isLive = badges.some((b: any) => {
-              const label = b.metadataBadgeRenderer?.label?.toLowerCase() || '';
-              return label.includes('live') || label.includes('trực tiếp');
-            }) || (lengthText === "" && (viewCount.includes('đang xem') || viewCount.includes('watching') || video.upcomingEventData));
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
 
-            if (isLive) {
-              lengthText = 'LIVE';
-            }
+  // Recursively collect videoRenderer / gridVideoRenderer nodes from ytInitialData
+  function extractVideoRenderers(obj: any, out: any[] = []): any[] {
+    if (!obj || typeof obj !== "object") return out;
+    const raw = (obj as any).videoRenderer || (obj as any).gridVideoRenderer;
+    if (raw && raw.videoId && !out.some((x) => x.videoId === raw.videoId)) {
+      out.push(raw);
+    }
+    for (const key of Object.keys(obj)) {
+      const val = (obj as any)[key];
+      if (val && typeof val === "object") extractVideoRenderers(val, out);
+    }
+    return out;
+  }
 
-            const thumbnail = video.thumbnail?.thumbnails?.[video.thumbnail.thumbnails.length - 1]?.url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-            
-            items.push({
-              id: videoId,
-              title,
-              channelTitle,
-              channelId,
-              channelAvatar,
-              publishedAt,
-              viewCount,
-              duration: lengthText,
-              thumbnailUrl: thumbnail,
-              category: isLive ? 'live' : 'trending'
-            });
-          }
+  // Recursively collect lockupViewModel nodes (YouTube's NEW layout for search & channel tabs)
+  function collectLockupViewModels(obj: any, out: any[] = []): any[] {
+    if (!obj || typeof obj !== "object") return out;
+    const lv = (obj as any).lockupViewModel;
+    if (lv && lv.contentId && !out.includes(lv)) out.push(lv);
+    for (const key of Object.keys(obj)) {
+      const val = (obj as any)[key];
+      if (val && typeof val === "object") collectLockupViewModels(val, out);
+    }
+    return out;
+  }
+
+  // Map a lockupViewModel node into our normalized YouTubeVideo shape
+  function mapLockupVideo(lockup: any) {
+    if (!lockup || typeof lockup !== "object") return null;
+
+    const contentType = String(lockup.contentType || "");
+    // Only accept video lockups (skip shorts/playlists/etc.)
+    if (contentType && !/VIDEO|LIVE/i.test(contentType)) return null;
+
+    const vid = lockup.contentId
+      || lockup.rendererContext?.commandContext?.onTap?.innertubeCommand?.watchEndpoint?.videoId;
+    if (!vid) return null;
+
+    const metaVm = lockup.metadata?.lockupMetadataViewModel;
+    const title = metaVm?.title?.content || "Video YouTube";
+
+    const sources = lockup.contentImage?.thumbnailViewModel?.image?.sources || [];
+    const thumbnailUrl = sources[sources.length - 1]?.url || `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
+
+    // Duration & LIVE badge live inside thumbnail overlays
+    let duration = "";
+    let isLive = false;
+    const overlays = lockup.contentImage?.thumbnailViewModel?.overlays || [];
+    for (const ov of overlays) {
+      const badges = ov?.thumbnailBottomOverlayViewModel?.badges || [];
+      for (const b of badges) {
+        const t = b?.thumbnailBadgeViewModel?.text || "";
+        if (!t) continue;
+        if (/live|trực tiếp/i.test(t)) {
+          isLive = true;
+          duration = "LIVE";
+        } else if (!duration && /\d/.test(t)) {
+          duration = t;
+        }
+      }
+    }
+
+    // Channel name / avatar / views / published date from metadata rows
+    let channelTitle = "";
+    let channelAvatar = "";
+    let viewCount = "";
+    let publishedAt = "";
+    const avSrcs = metaVm?.image?.avatarViewModel?.avatar?.image?.sources || [];
+    if (avSrcs.length > 0) channelAvatar = avSrcs[avSrcs.length - 1]?.url || "";
+
+    const rows = metaVm?.metadata?.contentMetadataViewModel?.metadataRows || [];
+    for (const row of rows) {
+      for (const part of row?.metadataParts || []) {
+        const t = part?.text?.content || "";
+        if (!t) continue;
+        if (/lượt xem|views|đang xem|watching/i.test(t)) {
+          if (!viewCount) viewCount = t;
+          if (/đang xem|watching/i.test(t)) isLive = true;
+        } else if (/(trước|ago|hôm nay|giờ trước|phút trước)/i.test(t)) {
+          if (!publishedAt) publishedAt = t;
+        } else if (!channelTitle) {
+          channelTitle = t;
+        }
+      }
+    }
+
+    return {
+      id: vid,
+      title,
+      channelTitle: channelTitle || "Kênh YouTube",
+      channelId: "",
+      channelAvatar,
+      publishedAt: publishedAt || "Mới đây",
+      viewCount,
+      duration: isLive ? "LIVE" : duration,
+      thumbnailUrl,
+      description: "",
+      category: isLive ? "live" : "trending",
+    };
+  }
+
+  // Unified extractor: handles BOTH the legacy renderers and the new lockup layout
+  function extractAllVideos(obj: any): any[] {
+    const items: any[] = extractVideoRenderers(obj)
+      .map((v) => mapChannelVideoRenderer(v, v.ownerText?.runs?.[0]?.text || "Kênh YouTube"))
+      .filter(Boolean);
+
+    const seen = new Set(items.map((i: any) => i.id));
+    const lockItems = collectLockupViewModels(obj)
+      .map(mapLockupVideo)
+      .filter(Boolean);
+    for (const li of lockItems) {
+      if (!seen.has(li.id)) {
+        seen.add(li.id);
+        items.push(li);
+      }
+    }
+
+    return items;
+  }
+
+  // Fallback via Piped public API when direct scraping fails (bot-gating / rate limits)
+  const PIPED_INSTANCES = [
+    "https://pipedapi.kavin.rocks",
+    "https://api.piped.privacydev.net",
+    "https://pipedapi.adminforge.de",
+  ];
+
+  async function fetchPipedChannel(ucId: string): Promise<{ channel: any; items: any[] } | null> {
+    for (const base of PIPED_INSTANCES) {
+      try {
+        const data = await fetchWithTimeout(`${base}/channels/${ucId}`, 6000);
+        if (!data?.relatedStreams) continue;
+
+        const items = data.relatedStreams
+          .map((s: any) => mapPipedStreamItem(s, data.name || "Kênh YouTube", ucId))
+          .filter(Boolean);
+
+        const subsText =
+          typeof data.subscriberCount === "number" && data.subscriberCount > 0
+            ? `${data.subscriberCount.toLocaleString("vi-VN")} người đăng ký`
+            : "";
+
+        return {
+          channel: {
+            id: ucId,
+            title: data.name || "Kênh YouTube",
+            subscribers: subsText,
+            description: data.description || "",
+            avatarUrl: data.avatarUrl || "",
+            bannerUrl: data.bannerUrl || "",
+          },
+          items,
+        };
+      } catch {
+        // try next instance
+      }
+    }
+    return null;
+  }
+
+  // Format seconds as h:mm:ss / m:ss
+  function formatPipedDuration(sec: number): string {
+    if (!sec || sec <= 0) return "";
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    return h > 0
+      ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+      : `${m}:${String(s).padStart(2, "0")}`;
+  }
+
+  // Map a Piped stream item into our normalized YouTubeVideo shape
+  function mapPipedStreamItem(s: any, fallbackChannelTitle: string, channelId?: string): any | null {
+    const vid = String(s?.url || "").replace("/watch?v=", "").replace("/shorts/", "");
+    if (!vid) return null;
+    const isLive = Boolean(s?.livestream) || s?.duration === -1;
+    return {
+      id: vid,
+      title: s.title || "Video YouTube",
+      channelTitle: s.uploaderName || fallbackChannelTitle,
+      channelId: s.uploaderUrl ? String(s.uploaderUrl).replace("/channel/", "") : channelId || "",
+      channelAvatar: s.uploaderAvatar || "",
+      publishedAt: s.uploadedDate || "Mới đây",
+      viewCount: typeof s.views === "number" && s.views > 0 ? `${s.views.toLocaleString("vi-VN")} lượt xem` : "",
+      duration: isLive ? "LIVE" : formatPipedDuration(s.duration),
+      thumbnailUrl: s.thumbnail || `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
+      description: s.shortDescription || "",
+      category: isLive ? "live" : "trending",
+    };
+  }
+
+  // Innertube config cache (captured from scraped pages, reused for continuations)
+  let cachedInnertubeKey: string | undefined;
+  let cachedInnertubeVer: string | undefined;
+
+  // Scrape YouTube's REAL Trending feed (https://www.youtube.com/feed/trending?gl=VN)
+  async function scrapeYouTubeTrending(region = "VN"): Promise<{ items: any[]; nextToken: string | null }> {
+    const { data, apiKey, clientVersion } = await fetchYouTubePageDataFull(
+      `https://www.youtube.com/feed/trending?gl=${encodeURIComponent(region)}&hl=vi`
+    );
+    if (!data) return { items: [], nextToken: null };
+
+    cachedInnertubeKey = apiKey || cachedInnertubeKey;
+    cachedInnertubeVer = clientVersion || cachedInnertubeVer;
+
+    const seen = new Set<string>();
+    const items = extractAllVideos(data).filter((v: any) => {
+      if (!v?.id || seen.has(v.id)) return false;
+      seen.add(v.id);
+      return true;
+    });
+
+    return { items, nextToken: findNextContinuationToken(data) };
+  }
+
+  function mapChannelVideoRenderer(video: any, fallbackChannelTitle: string) {
+    const videoId = video?.videoId;
+    if (!videoId) return null;
+
+    const title = video.title?.runs?.[0]?.text || video.title?.simpleText || "Video YouTube";
+    const channelTitle = video.ownerText?.runs?.[0]?.text || fallbackChannelTitle;
+    const channelId = video.ownerText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId || "";
+    let channelAvatar = video.channelThumbnailSupportedRenderers?.channelThumbnailWithRippleRenderer?.thumbnail?.thumbnails?.[0]?.url || "";
+    if (channelAvatar && channelAvatar.startsWith("//")) channelAvatar = "https:" + channelAvatar;
+
+    const publishedAt = video.publishedTimeText?.simpleText || video.publishedTimeText?.runs?.map((r: any) => r.text).join("") || "Mới đây";
+    const viewCount = video.viewCountText?.simpleText || video.viewCountText?.runs?.map((r: any) => r.text).join("") || "";
+    let lengthText = video.lengthText?.simpleText || video.lengthText?.runs?.map((r: any) => r.text).join("") || "";
+
+    const badges = video.badges || [];
+    const isLive = badges.some((b: any) => {
+      const label = b.metadataBadgeRenderer?.label?.toLowerCase() || '';
+      return label.includes('live') || label.includes('trực tiếp');
+    }) || (lengthText === "" && (viewCount.includes('đang xem') || viewCount.includes('watching') || video.upcomingEventData));
+    if (isLive) lengthText = 'LIVE';
+
+    const thumbnail = video.thumbnail?.thumbnails?.[video.thumbnail.thumbnails.length - 1]?.url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+    const description = video.descriptionSnippet?.runs?.map((r: any) => r.text).join("")
+      || video.detailedMetadataSnippets?.[0]?.snippetText?.runs?.map((r: any) => r.text).join("")
+      || "";
+
+    return {
+      id: videoId,
+      title,
+      channelTitle,
+      channelId,
+      channelAvatar,
+      publishedAt,
+      viewCount,
+      duration: lengthText,
+      thumbnailUrl: thumbnail,
+      description,
+      category: isLive ? 'live' : 'trending',
+    };
+  }
+
+  // Resolve a canonical UC channel id by searching YouTube with the Channel-type filter (sp=EgIQAg%3D%3D)
+  async function resolveChannelIdByTitle(title: string): Promise<string | null> {
+    if (!title) return null;
+    const searchData = await fetchYouTubePageData(
+      `https://www.youtube.com/results?search_query=${encodeURIComponent(title)}&sp=EgIQAg%3D%3D`
+    );
+    if (!searchData) return null;
+
+    const found: any[] = [];
+    const walk = (obj: any) => {
+      if (!obj || typeof obj !== "object") return;
+      const ch = (obj as any).channelRenderer;
+      if (ch && ch.channelId) found.push(ch);
+      for (const key of Object.keys(obj)) {
+        const val = (obj as any)[key];
+        if (val && typeof val === "object") walk(val);
+      }
+    };
+    walk(searchData);
+
+    if (found.length === 0) return null;
+
+    const targetKey = normChannelKey(title);
+    const exact = found.find((c) => normChannelKey(c.title?.simpleText) === targetKey);
+    const partial = found.find((c) => {
+      const k = normChannelKey(c.title?.simpleText);
+      return targetKey.length >= 3 && k && (k.includes(targetKey) || targetKey.includes(k));
+    });
+    return (exact || partial || found[0])?.channelId || null;
+  }
+
+  // Scrape the actual VIDEOS tab of a channel so results are 100% that channel's uploads
+  async function scrapeYouTubeChannelVideos(channelId: string, channelName: string) {
+    const idTrim = (channelId || "").trim();
+    const nameTrim = (channelName || "").trim();
+
+    const fallbackChannel: any = {
+      id: idTrim || "channel_custom",
+      title: nameTrim || "Kênh YouTube",
+      subscribers: "",
+      description: "",
+      avatarUrl: "",
+      bannerUrl: "",
+    };
+
+    const parseChannelPage = (data: any) => {
+      const meta = { ...fallbackChannel };
+      const metadata = data?.metadata?.channelMetadataRenderer;
+      if (metadata) {
+        meta.id = metadata.externalId || meta.id;
+        meta.title = metadata.title || meta.title;
+        meta.description = metadata.description || "";
+        meta.avatarUrl = metadata.avatar?.thumbnails?.[0]?.url || meta.avatarUrl;
+      }
+      const header = data?.header?.c4TabbedHeaderRenderer
+        || data?.header?.interactiveTabbedHeaderRenderer
+        || data?.header?.pageHeaderRenderer;
+      if (header) {
+        if (header.subscriberCountText) {
+          meta.subscribers = header.subscriberCountText.simpleText || header.subscriberCountText.runs?.[0]?.text || meta.subscribers;
+        }
+        const banner = header.banner?.thumbnails
+          || header.imageBannerViewModel?.image?.sources;
+        if (banner && banner.length > 0) {
+          meta.bannerUrl = banner[banner.length - 1].url;
+        }
+        if (!meta.avatarUrl && header.avatar?.thumbnails?.length > 0) {
+          meta.avatarUrl = header.avatar.thumbnails[header.avatar.thumbnails.length - 1].url;
         }
       }
 
-      // Sort items so live streams appear first
-      items.sort((a, b) => {
+      let videos = extractAllVideos(data);
+
+      // Sort so LIVE appears first
+      videos.sort((a: any, b: any) => {
         if (a.duration === 'LIVE' && b.duration !== 'LIVE') return -1;
         if (a.duration !== 'LIVE' && b.duration === 'LIVE') return 1;
         return 0;
       });
 
-      return { channels, items };
-    } catch (err) {
-      console.error("Scrape YouTube Search error:", err);
-      return { channels: [], items: [] };
+      return { channel: meta, items: videos };
+    };
+
+    // 1. Direct channel URL when we have a UC id or @handle
+    const candidates: string[] = [];
+    if (/^UC[\w-]{22}$/.test(idTrim)) {
+      candidates.push(`https://www.youtube.com/channel/${idTrim}`);
+    } else if (idTrim.startsWith("@")) {
+      candidates.push(`https://www.youtube.com/${encodeURIComponent(idTrim)}`);
     }
+
+    let usedBase = "";
+    let pageData: any = null;
+    for (const base of candidates) {
+      pageData = await fetchYouTubePageData(`${base}/videos`);
+      // Accept the page when it has videos OR valid channel metadata
+      if (pageData && (extractAllVideos(pageData).length > 0 || pageData.metadata?.channelMetadataRenderer)) {
+        usedBase = base;
+        break;
+      }
+      pageData = null;
+    }
+
+    // 2. Resolve canonical channel id via Channel-filtered search, then load its tabs
+    if (!pageData) {
+      const query = nameTrim || idTrim.replace(/^@/, "");
+      const resolvedId = await resolveChannelIdByTitle(query);
+      if (resolvedId) {
+        usedBase = `https://www.youtube.com/channel/${resolvedId}`;
+        pageData = await fetchYouTubePageData(`${usedBase}/videos`);
+      }
+    }
+
+    if (!pageData) {
+      return { channel: fallbackChannel, items: [] };
+    }
+
+    const parsed = parseChannelPage(pageData);
+
+    // 3. Merge the /streams tab so currently-live broadcasts appear on the channel page too
+    try {
+      const streamsData = await fetchYouTubePageData(`${usedBase}/streams`);
+      if (streamsData) {
+        const streamItems = extractAllVideos(streamsData);
+        const seen = new Set(parsed.items.map((i: any) => i.id));
+        for (const s of streamItems) {
+          if (!seen.has(s.id)) {
+            seen.add(s.id);
+            parsed.items.push(s);
+          }
+        }
+        // Sort so LIVE appears first
+        parsed.items.sort((a: any, b: any) => {
+          if (a.duration === 'LIVE' && b.duration !== 'LIVE') return -1;
+          if (a.duration !== 'LIVE' && b.duration === 'LIVE') return 1;
+          return 0;
+        });
+      }
+    } catch {
+      // streams tab is optional
+    }
+
+    // 4. Piped API fallback when direct scraping returned nothing (bot-gating / rate limits)
+    if (parsed.items.length === 0) {
+      const ucId = /^UC[\w-]{22}$/.test(parsed.channel.id || "") ? parsed.channel.id : "";
+      if (ucId) {
+        const piped = await fetchPipedChannel(ucId);
+        if (piped && piped.items.length > 0) {
+          parsed.channel = { ...parsed.channel, ...piped.channel };
+          parsed.items = piped.items;
+        }
+      }
+    }
+
+    // 5. Last-resort strict search fallback: only keep results authored by this exact channel
+    if (parsed.items.length === 0 && nameTrim) {
+      const s = await scrapeYouTubeSearch(nameTrim);
+      const tKey = normChannelKey(parsed.channel.title || nameTrim);
+      parsed.items = s.items.filter((it: any) => {
+        const iKey = normChannelKey(it.channelTitle || "");
+        return iKey && (iKey === tKey || iKey.includes(tKey) || tKey.includes(iKey));
+      });
+    }
+
+    return parsed;
   }
 
   // 7. YouTube Real Search API Endpoint (Direct YouTube Live Extraction)
   app.get("/api/youtube/search", async (req, res) => {
+    // Continuation page request (infinite scroll)
+    const contToken = String(req.query.token || "").trim();
+    if (contToken) {
+      const data = await fetchInnertubeContinuation(contToken, cachedInnertubeKey, cachedInnertubeVer, "search");
+      const items = data ? extractAllVideos(data) : [];
+      return res.json({ channels: [], items, nextToken: data ? findNextContinuationToken(data) : null });
+    }
+
     const query = String(req.query.q || "").trim();
     if (!query) {
-      return res.json({ channels: [], items: [] });
+      return res.json({ channels: [], items: [], nextToken: null });
     }
 
     // Direct YouTube Search Scraper
@@ -1164,7 +1636,7 @@ async function startServer() {
     return res.json({ channels: [], items: [] });
   });
 
-  // 8. YouTube Channel Details Endpoint
+  // 8. YouTube Channel Details Endpoint (scrapes the channel's real VIDEOS tab)
   app.get("/api/youtube/channel", async (req, res) => {
     const channelId = String(req.query.id || "").trim();
     const channelName = String(req.query.name || "").trim();
@@ -1174,167 +1646,54 @@ async function startServer() {
     }
 
     try {
-      let url = "";
-      if (channelId && channelId.startsWith("UC")) {
-        url = `https://www.youtube.com/channel/${channelId}/streams`;
-      } else if (channelId) {
-        url = `https://www.youtube.com/channel/${channelId}`;
-      } else {
-        url = `https://www.youtube.com/results?search_query=${encodeURIComponent(channelName + " live")}`;
-      }
-
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 6000);
-      const fetchRes = await fetch(url, {
-        redirect: 'manual',
-        signal: controller.signal,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-          "Accept-Language": "en-US,en;q=0.9",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Cookie": "CONSENT=YES+cb.20210328-04-p0.en+FX+900; SOCS=CAI"
-        }
-      }).finally(() => clearTimeout(timeout));
-
-      if (fetchRes.status >= 300 && fetchRes.status < 400) {
-        return res.json({ channel: { id: channelId, title: channelName }, items: [] });
-      }
-
-      const html = await fetchRes.text();
-      const match = html.match(/var ytInitialData = ({.*?});<\/script>/s) || html.match(/ytInitialData = ({.*?});/s);
-
-      let channelObj = {
-        id: channelId || "channel_custom",
-        title: channelName || "Kênh YouTube",
-        subscribers: "Người dùng đăng ký",
-        description: "",
-        avatarUrl: "",
-        bannerUrl: "",
-      };
-
-      let channelVideos: any[] = [];
-
-      if (match) {
-        try {
-          const data = JSON.parse(match[1]);
-          const metadata = data.metadata?.channelMetadataRenderer;
-          if (metadata) {
-            channelObj.title = metadata.title || channelObj.title;
-            channelObj.description = metadata.description || "";
-            channelObj.avatarUrl = metadata.avatar?.thumbnails?.[0]?.url || "";
-          }
-
-          const header = data.header?.c4TabbedHeaderRenderer || data.header?.pageHeaderRenderer;
-          if (header) {
-            if (header.subscriberCountText) {
-              channelObj.subscribers = header.subscriberCountText.simpleText || header.subscriberCountText.runs?.[0]?.text || "";
-            }
-            if (header.banner?.thumbnails?.[0]?.url) {
-              channelObj.bannerUrl = header.banner.thumbnails[0].url;
-            }
-          }
-
-          const extractVideosFromTabs = (obj: any) => {
-            if (!obj || typeof obj !== 'object') return;
-            if (obj.videoRenderer) {
-              const video = obj.videoRenderer;
-              const videoId = video.videoId;
-              if (videoId && !channelVideos.some(v => v.id === videoId)) {
-                const title = video.title?.runs?.[0]?.text || video.title?.simpleText || "Video YouTube";
-                const cTitle = video.ownerText?.runs?.[0]?.text || channelObj.title;
-                const cId = video.ownerText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId || channelObj.id;
-                let cAvatar = video.channelThumbnailSupportedRenderers?.channelThumbnailWithRippleRenderer?.thumbnail?.thumbnails?.[0]?.url || channelObj.avatarUrl;
-                if (cAvatar && cAvatar.startsWith("//")) cAvatar = "https:" + cAvatar;
-
-                const publishedAt = video.publishedTimeText?.simpleText || "Mới đây";
-                const viewCount = video.viewCountText?.simpleText || "";
-                let lengthText = video.lengthText?.simpleText || "";
-
-                const badges = video.badges || [];
-                const isLive = badges.some((b: any) => {
-                  const label = b.metadataBadgeRenderer?.label?.toLowerCase() || '';
-                  return label.includes('live') || label.includes('trực tiếp');
-                }) || (lengthText === "" && (viewCount.includes('đang xem') || viewCount.includes('watching') || video.upcomingEventData));
-
-                if (isLive) {
-                  lengthText = 'LIVE';
-                }
-
-                const thumbnail = video.thumbnail?.thumbnails?.[video.thumbnail.thumbnails.length - 1]?.url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-
-                channelVideos.push({
-                  id: videoId,
-                  title,
-                  channelTitle: cTitle,
-                  channelId: cId,
-                  channelAvatar: cAvatar,
-                  publishedAt,
-                  viewCount,
-                  duration: lengthText,
-                  thumbnailUrl: thumbnail,
-                  category: isLive ? 'live' : 'trending'
-                });
-              }
-            }
-            for (const key of Object.keys(obj)) {
-              if (typeof obj[key] === 'object' && obj[key] !== null) {
-                extractVideosFromTabs(obj[key]);
-              }
-            }
-          };
-
-          extractVideosFromTabs(data);
-        } catch (parseErr) {
-          console.error("Channel ytInitialData parse error:", parseErr);
-        }
-      }
-
-      // If no videos found from direct channel page, fallback to search with strict channel name filtering
-      if (channelVideos.length === 0) {
-        const searchQuery = `${channelObj.title} live`;
-        const searchData = await scrapeYouTubeSearch(searchQuery);
-        const targetTitleNorm = channelObj.title.toLowerCase().replace(/\s+/g, '');
-        const filtered = searchData.items.filter(item => {
-          const itemChanNorm = (item.channelTitle || '').toLowerCase().replace(/\s+/g, '');
-          return itemChanNorm.includes(targetTitleNorm) || targetTitleNorm.includes(itemChanNorm);
-        });
-
-        channelVideos = filtered.length > 0 ? filtered : searchData.items.slice(0, 10);
-      }
-
-      // Sort so LIVE appears first
-      channelVideos.sort((a, b) => {
-        if (a.duration === 'LIVE' && b.duration !== 'LIVE') return -1;
-        if (a.duration !== 'LIVE' && b.duration === 'LIVE') return 1;
-        return 0;
-      });
-
-      return res.json({
-        channel: channelObj,
-        items: channelVideos,
-      });
+      const result = await scrapeYouTubeChannelVideos(channelId, channelName);
+      return res.json(result);
     } catch (err: any) {
       console.error("Fetch channel error:", err);
-      return res.json({ channel: null, items: [] });
+      return res.json({
+        channel: { id: channelId || "channel_custom", title: channelName || "Kênh YouTube" },
+        items: [],
+      });
     }
   });
 
   app.get("/api/youtube/trending", async (req, res) => {
-    const category = String(req.query.category || "all").trim();
-    
-    // Map category to search query for live YouTube trending videos
-    let query = "trending music nhac tre viet nam hot";
-    if (category === "gaming") query = "trending gaming việt nam";
-    else if (category === "news") query = "tin tức thời sự hôm nay";
-    else if (category === "movies") query = "phim ngắn hài hước việt nam";
-    else if (category === "shorts") query = "shorts triệu view việt nam";
-
-    const liveData = await scrapeYouTubeSearch(query);
-    if (liveData.items.length > 0) {
-      return res.json({ items: liveData.items });
+    // Continuation page request (infinite scroll)
+    const token = String(req.query.token || "").trim();
+    if (token) {
+      const data = await fetchInnertubeContinuation(token, cachedInnertubeKey, cachedInnertubeVer, "browse");
+      const items = data ? extractAllVideos(data) : [];
+      return res.json({ items, nextToken: data ? findNextContinuationToken(data) : null });
     }
 
-    return res.json({ items: [] });
+    // 1. Real YouTube Trending feed for Vietnam
+    try {
+      const { items, nextToken } = await scrapeYouTubeTrending("VN");
+      if (items.length > 0) {
+        return res.json({ items, nextToken });
+      }
+    } catch (e) {
+      console.warn("Trending feed scrape failed:", e);
+    }
+
+    // 2. Piped trending fallback
+    for (const pipedBase of PIPED_INSTANCES) {
+      try {
+        const data = await fetchWithTimeout(`${pipedBase}/trending?region=VN`, 5000);
+        if (Array.isArray(data) && data.length > 0) {
+          const items = data.map((s: any) => mapPipedStreamItem(s, "Thịnh hành")).filter(Boolean);
+          if (items.length > 0) {
+            return res.json({ items });
+          }
+        }
+      } catch {
+        // try next instance
+      }
+    }
+
+    // 3. Legacy keyword-search fallback
+    const liveData = await scrapeYouTubeSearch("video hot trend việt nam hôm nay");
+    return res.json({ items: liveData.items });
   });
 
   // Vite middleware for development or fallback to production static files
