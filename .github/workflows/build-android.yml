@@ -15,10 +15,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -35,32 +38,19 @@ jobs:
           echo "Building with API URL: $VITE_API_URL"
           npm run build
 
-      - name: Sync Android Project (Capacitor)
+      - name: Fresh Android Platform & Asset Injection
         run: |
-          if [ ! -f "android/gradlew" ]; then
-            echo "android/gradlew missing, regenerating Capacitor Android platform..."
-            rm -rf android
-            npx cap add android
-          fi
+          echo "Rebuilding clean native Android platform..."
+          rm -rf android
+          npx cap add android
           npx cap sync android
-
-      - name: Generate and Inject Android Assets
-        run: |
-          # 1. Prepare master assets and inject all Android mipmap icons, adaptive icons and splash screens
           node scripts/prepare-assets.cjs
 
       - name: Build Android APK with Gradle
         run: |
-          if [ ! -f "android/gradlew" ]; then
-            echo "android/gradlew missing, ensuring platform..."
-            rm -rf android
-            npx cap add android
-            npx cap sync android
-            node scripts/prepare-assets.cjs
-          fi
           chmod +x android/gradlew
           cd android
-          ./gradlew clean assembleDebug --stacktrace
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
