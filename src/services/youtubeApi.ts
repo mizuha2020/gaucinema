@@ -66,7 +66,7 @@ export interface TrendingPageResponse {
 }
 
 // Client-side HTML / JSON extractor for YouTube ytInitialData
-export function parseYtInitialData(htmlOrData: any): { items: YouTubeVideo[]; channels: YouTubeChannel[] } {
+export function parseYtInitialData(htmlOrData: any): { items: YouTubeVideo[]; channels: YouTubeChannel[]; nextToken?: string | null } {
   let data: any = htmlOrData;
   if (typeof htmlOrData === 'string') {
     try {
@@ -76,23 +76,34 @@ export function parseYtInitialData(htmlOrData: any): { items: YouTubeVideo[]; ch
       if (match) {
         data = JSON.parse(match[1]);
       } else {
-        return { items: [], channels: [] };
+        return { items: [], channels: [], nextToken: null };
       }
     } catch {
-      return { items: [], channels: [] };
+      return { items: [], channels: [], nextToken: null };
     }
   }
 
   if (!data || typeof data !== 'object') {
-    return { items: [], channels: [] };
+    return { items: [], channels: [], nextToken: null };
   }
 
   const items: YouTubeVideo[] = [];
   const channels: YouTubeChannel[] = [];
   const seenIds = new Set<string>();
+  let nextToken: string | null = null;
 
   const walk = (node: any) => {
     if (!node || typeof node !== 'object') return;
+
+    // Continuation token
+    if (node.continuationItemRenderer && !nextToken) {
+      const tok =
+        node.continuationItemRenderer.continuationEndpoint?.continuationCommand?.token ||
+        node.continuationItemRenderer.continuationEndpoint?.nextContinuationData?.continuation;
+      if (tok && typeof tok === 'string') {
+        nextToken = tok;
+      }
+    }
 
     // 1. Video Renderer (Legacy & Search)
     const vr = node.videoRenderer || node.gridVideoRenderer || node.compactVideoRenderer;
@@ -229,7 +240,7 @@ export function parseYtInitialData(htmlOrData: any): { items: YouTubeVideo[]; ch
   };
 
   walk(data);
-  return { items, channels };
+  return { items, channels, nextToken };
 }
 
 // Category search queries for YouTube
@@ -264,41 +275,91 @@ const CORS_PROXIES = [
   (url: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
 ];
 
-// Direct Client-Side YouTube Scraper with CORS proxy fallback
-async function fetchDirectYouTubeSearch(query: string): Promise<SearchResultsResponse> {
-  const targetUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&gl=VN&hl=vi`;
+// Direct YouTube InnerTube API Client (Official YouTube Web Engine)
+async function fetchYouTubeInnerTube(query: string, continuationToken?: string | null): Promise<SearchResultsResponse> {
+  const targetUrl = 'https://www.youtube.com/youtubei/v1/search?prettyPrint=false';
+  const requestBody: any = {
+    context: {
+      client: {
+        clientName: 'WEB',
+        clientVersion: '2.20240101.00.00',
+        hl: 'vi',
+        gl: 'VN',
+      },
+    },
+  };
 
-  // 1. Direct fetch (works on some environments or with web extensions)
+  if (continuationToken) {
+    requestBody.continuation = continuationToken;
+  } else {
+    requestBody.query = query;
+  }
+
+  const jsonBody = JSON.stringify(requestBody);
+
+  // 1. Direct Fetch to YouTube InnerTube (Fastest & 100% Real Live Data on Android APK / Capacitor)
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
+    const timer = setTimeout(() => controller.abort(), 6000);
     const res = await fetch(targetUrl, {
-      signal: controller.signal,
+      method: 'POST',
       headers: {
-        'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Content-Type': 'application/json',
+        'Accept': '*/*',
+        'Accept-Language': 'vi-VN,vi;q=0.9,en;q=0.8',
       },
+      body: jsonBody,
+      signal: controller.signal,
     }).finally(() => clearTimeout(timer));
 
     if (res.ok) {
-      const html = await res.text();
-      const parsed = parseYtInitialData(html);
+      const data = await res.json();
+      const parsed = parseYtInitialData(data);
       if (parsed.items.length > 0 || parsed.channels.length > 0) {
         return {
           channels: parsed.channels,
           items: parsed.items,
-          nextToken: null,
+          nextToken: parsed.nextToken || null,
         };
       }
     }
-  } catch {}
+  } catch (e) {
+    // Direct fetch blocked by CORS or network, try next layers
+  }
 
-  // 2. Proxied fetch to bypass WebView CORS
+  // 2. Try Backend API (if running on Web with live Express server)
+  try {
+    const backendUrl = continuationToken
+      ? getFullApiUrl(`/api/youtube/search?q=${encodeURIComponent(query)}&token=${encodeURIComponent(continuationToken)}`)
+      : getFullApiUrl(`/api/youtube/search?q=${encodeURIComponent(query)}`);
+    
+    if (backendUrl && !backendUrl.startsWith('http://localhost') && !backendUrl.startsWith('https://localhost')) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(backendUrl, { signal: controller.signal }).finally(() => clearTimeout(timer));
+      if (res.ok) {
+        const text = await res.text();
+        if (text.startsWith('{') || text.startsWith('[')) {
+          const data = JSON.parse(text);
+          if ((data?.items && data.items.length > 0) || (data?.channels && data.channels.length > 0)) {
+            return {
+              channels: data.channels || [],
+              items: data.items || [],
+              nextToken: data.nextToken || null,
+            };
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+  // 3. Fallback via Public CORS Proxies with HTML Search Scraper
+  const directHtmlUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&gl=VN&hl=vi`;
   for (const buildProxyUrl of CORS_PROXIES) {
     try {
-      const proxyUrl = buildProxyUrl(targetUrl);
+      const proxyUrl = buildProxyUrl(directHtmlUrl);
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
+      const timer = setTimeout(() => controller.abort(), 6000);
       const res = await fetch(proxyUrl, { signal: controller.signal }).finally(() => clearTimeout(timer));
       if (res.ok) {
         const html = await res.text();
@@ -718,24 +779,37 @@ export const CURATED_CHANNELS: YouTubeChannel[] = [
 ];
 
 export const youtubeApi = {
-  // Get trending page with robust multi-tier fallback
+  // Get trending page with direct InnerTube API and multi-tier fallback
   getTrendingPage: async (category: string = 'all', token?: string | null): Promise<TrendingPageResponse> => {
     const cleanCat = category || 'all';
+    const searchKeyword = CATEGORY_SEARCH_QUERIES[cleanCat] || CATEGORY_SEARCH_QUERIES.all;
+
+    // Tier 1: Direct YouTube InnerTube Search (100% Real Live YouTube Data on APK and Web)
+    try {
+      const innerTubeRes = await fetchYouTubeInnerTube(searchKeyword, token);
+      if (innerTubeRes.items && innerTubeRes.items.length > 0) {
+        return { items: innerTubeRes.items, nextToken: innerTubeRes.nextToken || null };
+      }
+    } catch (e) {
+      console.warn('Direct InnerTube trending error:', e);
+    }
+
+    // Tier 2: Backend API (if running on Web)
     const qs = new URLSearchParams({ category: cleanCat });
     if (token) qs.set('token', token);
-
-    // Tier 1: Backend API
     try {
       const url = getFullApiUrl(`/api/youtube/trending?${qs.toString()}`);
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 6000);
-      const res = await fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
-      if (res.ok) {
-        const text = await res.text();
-        if (text.startsWith('{') || text.startsWith('[')) {
-          const data = JSON.parse(text);
-          if (Array.isArray(data?.items) && data.items.length > 0) {
-            return { items: data.items, nextToken: data.nextToken || null };
+      if (url && !url.startsWith('http://localhost') && !url.startsWith('https://localhost')) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 6000);
+        const res = await fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
+        if (res.ok) {
+          const text = await res.text();
+          if (text.startsWith('{') || text.startsWith('[')) {
+            const data = JSON.parse(text);
+            if (Array.isArray(data?.items) && data.items.length > 0) {
+              return { items: data.items, nextToken: data.nextToken || null };
+            }
           }
         }
       }
@@ -745,38 +819,7 @@ export const youtubeApi = {
 
     if (token) return { items: [], nextToken: null };
 
-    // Tier 2: Direct Scrape with Search Keywords for Category (bypasses CORS via proxy if needed)
-    const searchKeyword = CATEGORY_SEARCH_QUERIES[cleanCat] || CATEGORY_SEARCH_QUERIES.all;
-    try {
-      const directSearch = await fetchDirectYouTubeSearch(searchKeyword);
-      if (directSearch.items && directSearch.items.length > 0) {
-        return { items: directSearch.items, nextToken: null };
-      }
-    } catch (e) {
-      console.warn('Direct YouTube search error:', e);
-    }
-
-    // Tier 3: Public Piped API
-    try {
-      const pipedItems = await fetchPipedTrending();
-      if (pipedItems.length > 0) {
-        return { items: pipedItems, nextToken: null };
-      }
-    } catch (e) {
-      console.warn('Piped trending error:', e);
-    }
-
-    // Tier 4: Invidious API
-    try {
-      const invItems = await fetchInvidiousTrending(cleanCat);
-      if (invItems.length > 0) {
-        return { items: invItems, nextToken: null };
-      }
-    } catch (e) {
-      console.warn('Invidious trending error:', e);
-    }
-
-    // Tier 5: Curated high quality Vietnamese catalog
+    // Tier 3: Curated Vietnamese catalog
     const fallbackList = CURATED_VIETNAM_VIDEOS[cleanCat] || CURATED_VIETNAM_VIDEOS.all || [];
     return { items: fallbackList, nextToken: null };
   },
@@ -787,7 +830,7 @@ export const youtubeApi = {
     return page.items;
   },
 
-  // Full search returns both channels and videos with robust fallback
+  // Full search returns both channels and videos with real Live YouTube data
   searchFull: async (query: string, token?: string | null): Promise<SearchResultsResponse> => {
     const trimmed = (query || '').trim();
 
@@ -815,24 +858,36 @@ export const youtubeApi = {
       };
     }
 
-    // Tier 1: Backend API Search
+    // Tier 1: Direct YouTube InnerTube Search (Works directly on Android APK without localhost issues)
+    try {
+      const innerTubeRes = await fetchYouTubeInnerTube(trimmed, token);
+      if ((innerTubeRes.items && innerTubeRes.items.length > 0) || (innerTubeRes.channels && innerTubeRes.channels.length > 0)) {
+        return innerTubeRes;
+      }
+    } catch (e) {
+      console.warn('InnerTube search error:', e);
+    }
+
+    // Tier 2: Backend API Search (when available)
     try {
       const url = token
         ? getFullApiUrl(`/api/youtube/search?q=${encodeURIComponent(trimmed)}&token=${encodeURIComponent(token)}`)
         : getFullApiUrl(`/api/youtube/search?q=${encodeURIComponent(trimmed)}`);
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 7000);
-      const res = await fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
-      if (res.ok) {
-        const text = await res.text();
-        if (text.startsWith('{') || text.startsWith('[')) {
-          const data = JSON.parse(text);
-          if ((data?.items && data.items.length > 0) || (data?.channels && data.channels.length > 0)) {
-            return {
-              channels: data.channels || [],
-              items: data.items || [],
-              nextToken: data.nextToken || null,
-            };
+      if (url && !url.startsWith('http://localhost') && !url.startsWith('https://localhost')) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 6000);
+        const res = await fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timer));
+        if (res.ok) {
+          const text = await res.text();
+          if (text.startsWith('{') || text.startsWith('[')) {
+            const data = JSON.parse(text);
+            if ((data?.items && data.items.length > 0) || (data?.channels && data.channels.length > 0)) {
+              return {
+                channels: data.channels || [],
+                items: data.items || [],
+                nextToken: data.nextToken || null,
+              };
+            }
           }
         }
       }
@@ -840,73 +895,7 @@ export const youtubeApi = {
       console.warn('Backend YouTube search error:', e);
     }
 
-    // Tier 2: Direct Client-Side YouTube Scrape (with CORS proxy)
-    try {
-      const directResults = await fetchDirectYouTubeSearch(trimmed);
-      if (directResults.items.length > 0 || directResults.channels.length > 0) {
-        return directResults;
-      }
-    } catch (e) {
-      console.warn('Direct YouTube search fallback error:', e);
-    }
-
-    // Tier 3: Piped Search
-    try {
-      const pipedResults = await fetchPipedSearch(trimmed);
-      if (pipedResults.items.length > 0 || pipedResults.channels.length > 0) {
-        return pipedResults;
-      }
-    } catch (e) {
-      console.warn('Piped search fallback error:', e);
-    }
-
-    // Tier 4: Invidious Search
-    for (const base of INVIDIOUS_INSTANCES) {
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 4000);
-        const res = await fetch(`${base}/api/v1/search?q=${encodeURIComponent(trimmed)}`, {
-          signal: controller.signal,
-        }).finally(() => clearTimeout(timer));
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data) && data.length > 0) {
-            const items: YouTubeVideo[] = [];
-            const channels: YouTubeChannel[] = [];
-            for (const it of data) {
-              if (it.type === 'video') {
-                items.push({
-                  id: it.videoId,
-                  title: it.title,
-                  channelTitle: it.author,
-                  channelId: it.authorId,
-                  publishedAt: it.publishedText || 'Mới đây',
-                  viewCount: it.viewCountText || formatViews(it.viewCount),
-                  duration: it.lengthSeconds
-                    ? `${Math.floor(it.lengthSeconds / 60)}:${String(it.lengthSeconds % 60).padStart(2, '0')}`
-                    : 'LIVE',
-                  thumbnailUrl: it.videoThumbnails?.[0]?.url || `https://i.ytimg.com/vi/${it.videoId}/hqdefault.jpg`,
-                  category: 'trending',
-                });
-              } else if (it.type === 'channel') {
-                channels.push({
-                  id: it.authorId,
-                  title: it.author,
-                  subscribers: it.subCount ? `${it.subCount.toLocaleString('vi-VN')} người đăng ký` : '',
-                  avatarUrl: it.authorThumbnails?.[0]?.url || '',
-                  description: it.description || '',
-                });
-              }
-            }
-            if (items.length > 0 || channels.length > 0) {
-              return { channels, items, nextToken: null };
-            }
-          }
-        }
-      } catch {}
-    }
-
-    // Tier 5: Filter curated database by keyword
+    // Tier 3: Filter curated database by keyword
     const qLower = trimmed.toLowerCase();
     const matchedVideos = (CURATED_VIETNAM_VIDEOS.all || []).filter(
       (v) => v.title.toLowerCase().includes(qLower) || v.channelTitle.toLowerCase().includes(qLower)
@@ -938,7 +927,27 @@ export const youtubeApi = {
       avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(channelName || 'Kênh')}&background=ef4444&color=fff`,
     };
 
-    // Tier 1: Backend
+    // Tier 1: Search InnerTube directly with channel query
+    if (channelName || channelId) {
+      try {
+        const targetSearch = channelName || channelId;
+        const searchRes = await youtubeApi.searchFull(targetSearch);
+        if (searchRes.items.length > 0 || searchRes.channels.length > 0) {
+          const matchedChan = searchRes.channels.find(
+            (c) => c.id === channelId || (channelName && c.title.toLowerCase().includes(channelName.toLowerCase()))
+          ) || searchRes.channels[0] || fallbackChannel;
+
+          return {
+            channel: matchedChan,
+            items: searchRes.items,
+          };
+        }
+      } catch (e) {
+        console.warn('Channel details InnerTube error:', e);
+      }
+    }
+
+    // Tier 2: Backend
     try {
       const queryParams = new URLSearchParams();
       if (channelId) queryParams.set('id', channelId);
@@ -959,15 +968,6 @@ export const youtubeApi = {
       console.warn('Backend channel details error:', e);
     }
 
-    // Tier 2: Search channel query directly
-    if (channelName || channelId) {
-      const searchRes = await youtubeApi.searchFull(channelName || channelId);
-      return {
-        channel: searchRes.channels[0] || fallbackChannel,
-        items: searchRes.items.length > 0 ? searchRes.items : CURATED_VIETNAM_VIDEOS.all || [],
-      };
-    }
-
     return { channel: fallbackChannel, items: CURATED_VIETNAM_VIDEOS.all || [] };
   },
 
@@ -980,7 +980,22 @@ export const youtubeApi = {
     const qTrim = (query || '').trim();
     if (!qTrim) return [];
 
-    // Tier 1: Backend API
+    // Tier 1: Search InnerTube directly with channel context
+    try {
+      const searchQuery = channelName ? `"${channelName}" ${qTrim}` : `${channelId} ${qTrim}`;
+      const searchRes = await youtubeApi.searchFull(searchQuery);
+      if (searchRes.items.length > 0) {
+        const cLower = (channelName || '').toLowerCase().trim();
+        const prioritized = searchRes.items.filter((v) =>
+          cLower ? (v.channelTitle || '').toLowerCase().includes(cLower) || cLower.includes((v.channelTitle || '').toLowerCase()) : true
+        );
+        return prioritized.length > 0 ? prioritized : searchRes.items;
+      }
+    } catch (e) {
+      console.warn('InnerTube search channel error:', e);
+    }
+
+    // Tier 2: Backend API
     try {
       const queryParams = new URLSearchParams();
       if (channelId) queryParams.set('id', channelId);
@@ -999,21 +1014,6 @@ export const youtubeApi = {
       }
     } catch (e) {
       console.warn('Backend search channel videos error:', e);
-    }
-
-    // Tier 2: Search full YouTube with channel context & filter
-    try {
-      const searchQuery = channelName ? `${channelName} ${qTrim}` : `${channelId} ${qTrim}`;
-      const searchRes = await youtubeApi.searchFull(searchQuery);
-      if (searchRes.items.length > 0) {
-        const cLower = (channelName || '').toLowerCase().trim();
-        const prioritized = searchRes.items.filter((v) =>
-          cLower ? (v.channelTitle || '').toLowerCase().includes(cLower) || cLower.includes((v.channelTitle || '').toLowerCase()) : true
-        );
-        return prioritized.length > 0 ? prioritized : searchRes.items;
-      }
-    } catch (e) {
-      console.warn('Fallback search channel error:', e);
     }
 
     return [];

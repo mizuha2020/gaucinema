@@ -32,13 +32,8 @@ export const getApiBaseUrl = (): string => {
     return envUrl.trim().replace(/\/$/, '');
   }
 
-  // 3. In web browser preview (non-native), relative path uses current host
-  if (typeof window !== 'undefined' && !isNativeApp()) {
-    return '';
-  }
-
-  // 4. In native Android APK (Capacitor localhost), connect to the Cloud backend server
-  return CLOUD_BACKEND_URL;
+  // 3. In web browser or native app default, return empty base unless custom remote is set
+  return '';
 };
 
 export const API_BASE_URL = getApiBaseUrl();
