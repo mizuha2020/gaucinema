@@ -26,6 +26,7 @@ import {
   Globe,
   ShieldCheck,
   Zap,
+  ExternalLink,
 } from 'lucide-react';
 import Hls from 'hls.js';
 import shaka from 'shaka-player';
@@ -37,7 +38,7 @@ import { systemApiService } from '../services/systemApiService';
 import { presenceService } from '../services/presenceService';
 import { DEFAULT_CHANNELS } from '../data/defaultChannels';
 import { parseClearkeyToHexMap, parseM3uWithDrmAndUA, isLicenseServerUrl } from '../utils/drmParser';
-import { playInNativeExoPlayer } from '../utils/nativeVideoPlayer';
+import { playInNativeExoPlayer, playInExternalPlayer } from '../utils/nativeVideoPlayer';
 import { CloudflareWorkerModal } from './livetv/CloudflareWorkerModal';
 import { DrmChannelTesterModal } from './livetv/DrmChannelTesterModal';
 
@@ -1007,22 +1008,37 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                     <p className="text-xs text-slate-400 max-w-md">{streamError}</p>
                     <div className="flex items-center gap-2 mt-2 flex-wrap justify-center">
                       {Capacitor.isNativePlatform() && (
-                        <button
-                          onClick={() => {
-                            if (activeChannel) {
-                              playInNativeExoPlayer({
-                                url: activeChannel.url,
-                                drmKey: activeChannel.drmKey,
-                                title: `${activeChannel.name} (${activeChannel.group})`,
-                                userAgent: activeChannel.userAgent || 'Dalvik/2.1.0'
-                              });
-                            }
-                          }}
-                          className="bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400/40 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-lg flex items-center gap-1.5"
-                        >
-                          <Play className="w-3.5 h-3.5 fill-white" />
-                          <span>Mở ExoPlayer Native (Khuyên dùng)</span>
-                        </button>
+                        <>
+                          <button
+                            onClick={() => {
+                              if (activeChannel) {
+                                playInNativeExoPlayer({
+                                  url: activeChannel.url,
+                                  drmKey: activeChannel.drmKey,
+                                  title: `${activeChannel.name} (${activeChannel.group})`,
+                                  userAgent: activeChannel.userAgent || 'Dalvik/2.1.0'
+                                });
+                              }
+                            }}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400/40 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-lg flex items-center gap-1.5"
+                          >
+                            <Play className="w-3.5 h-3.5 fill-white" />
+                            <span>Mở ExoPlayer Native</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (activeChannel) {
+                                playInExternalPlayer({
+                                  url: activeChannel.url
+                                });
+                              }
+                            }}
+                            className="bg-purple-600 hover:bg-purple-500 text-white border border-purple-400/40 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-lg flex items-center gap-1.5"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span>Mở bằng VLC / MX Player</span>
+                          </button>
+                        </>
                       )}
                       <button
                         onClick={() => {

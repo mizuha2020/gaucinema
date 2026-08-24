@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Check, Bell, Play, UserCheck, UserPlus, Film, Loader2 } from 'lucide-react';
+import { X, Bell, Play, UserCheck, UserPlus, Film, Loader2, Search } from 'lucide-react';
 import { YouTubeChannel, YouTubeVideo } from '../../types';
 import { youtubeApi } from '../../services/youtubeApi';
 
@@ -24,12 +24,17 @@ export const YouTubeChannelModal: React.FC<YouTubeChannelModalProps> = ({
   const [videos, setVideos] = useState<YouTubeVideo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubscribed, setIsSubscribed] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<YouTubeVideo[] | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
 
     let isMounted = true;
     setIsLoading(true);
+    setSearchQuery('');
+    setSearchResults(null);
 
     const loadChannel = async () => {
       const cId = initialChannel?.id || channelId || '';
@@ -60,6 +65,62 @@ export const YouTubeChannelModal: React.FC<YouTubeChannelModalProps> = ({
     };
   }, [isOpen, initialChannel, channelId, channelName]);
 
+  const displayTitle = channelData?.title || channelName || 'Kênh YouTube';
+
+  // Live in-channel search
+  const executeSearch = async (queryText: string) => {
+    const qTrim = queryText.trim();
+    if (!qTrim) {
+      setSearchResults(null);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    const targetChannelId = channelData?.id || channelId || '';
+    const targetChannelName = displayTitle;
+
+    const localMatches = videos.filter((vid) =>
+      vid.title.toLowerCase().includes(qTrim.toLowerCase()) ||
+      (vid.description && vid.description.toLowerCase().includes(qTrim.toLowerCase()))
+    );
+
+    try {
+      const serverResults = await youtubeApi.searchChannelVideos(targetChannelId, targetChannelName, qTrim);
+      if (serverResults && serverResults.length > 0) {
+        const seen = new Set<string>();
+        const merged: YouTubeVideo[] = [];
+        for (const item of [...serverResults, ...localMatches]) {
+          if (!seen.has(item.id)) {
+            seen.add(item.id);
+            merged.push(item);
+          }
+        }
+        setSearchResults(merged);
+      } else {
+        setSearchResults(localMatches);
+      }
+    } catch {
+      setSearchResults(localMatches);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchResults(null);
+      setIsSearching(false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      executeSearch(searchQuery);
+    }, 450);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery, channelData?.id, channelId, displayTitle]);
+
   const toggleSubscribe = () => {
     if (!channelData) return;
     const cKey = channelData.id || channelData.title;
@@ -81,8 +142,16 @@ export const YouTubeChannelModal: React.FC<YouTubeChannelModalProps> = ({
 
   if (!isOpen) return null;
 
-  const displayTitle = channelData?.title || channelName || 'Kênh YouTube';
   const displayAvatar = channelData?.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayTitle)}&background=dc2626&color=fff&bold=true`;
+
+  const displayedVideos = searchQuery.trim()
+    ? (searchResults !== null
+        ? searchResults
+        : videos.filter((vid) =>
+            vid.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (vid.description && vid.description.toLowerCase().includes(searchQuery.toLowerCase()))
+          ))
+    : videos;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in overflow-y-auto">
@@ -168,13 +237,49 @@ export const YouTubeChannelModal: React.FC<YouTubeChannelModalProps> = ({
           </div>
         </div>
 
-        {/* Video List / Grid Content */}
+        {/* Video List / Grid Content & Search bar */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
             <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
               <Film className="w-4 h-4 text-red-500" />
-              <span>Video của kênh ({videos.length})</span>
+              <span>Video của kênh ({displayedVideos.length})</span>
             </h2>
+
+            {/* In-channel search bar */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                executeSearch(searchQuery);
+              }}
+              className="flex items-center bg-[#1a0f12] border border-red-950 focus-within:border-red-600 rounded-full px-3 py-1.5 transition-colors"
+            >
+              {isSearching ? (
+                <Loader2 className="w-4 h-4 text-red-500 animate-spin mr-2 shrink-0" />
+              ) : (
+                <button type="submit" className="text-slate-400 hover:text-white mr-2 shrink-0 cursor-pointer" title="Tìm kiếm">
+                  <Search className="w-4 h-4" />
+                </button>
+              )}
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Tìm video trong kênh..."
+                className="bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none w-full sm:w-48"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSearchResults(null);
+                  }}
+                  className="text-slate-400 hover:text-white ml-1.5 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </form>
           </div>
 
           {isLoading ? (
@@ -182,13 +287,15 @@ export const YouTubeChannelModal: React.FC<YouTubeChannelModalProps> = ({
               <Loader2 className="w-8 h-8 text-red-500 animate-spin" />
               <p className="text-xs text-slate-400">Đang tải danh sách video của kênh...</p>
             </div>
-          ) : videos.length === 0 ? (
+          ) : displayedVideos.length === 0 ? (
             <div className="text-center py-12 text-slate-400 text-xs">
-              Chưa tìm thấy video công khai của kênh này.
+              {searchQuery.trim()
+                ? `Không tìm thấy video nào phù hợp với từ khóa "${searchQuery}".`
+                : 'Chưa tìm thấy video công khai của kênh này.'}
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {videos.map((vid) => (
+              {displayedVideos.map((vid) => (
                 <div
                   key={vid.id}
                   onClick={() => {
@@ -232,3 +339,4 @@ export const YouTubeChannelModal: React.FC<YouTubeChannelModalProps> = ({
     </div>
   );
 };
+

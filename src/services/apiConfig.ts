@@ -13,19 +13,32 @@ export const isNativeApp = (): boolean => {
   );
 };
 
+export const CLOUD_BACKEND_URL = 'https://ais-dev-vnvd2uudmu6l2atxxr7h75-18391378124.asia-southeast1.run.app';
+
 export const getApiBaseUrl = (): string => {
+  // 1. Check custom user/admin saved backend URL in localStorage
+  if (typeof window !== 'undefined') {
+    try {
+      const customUrl = localStorage.getItem('qtb_custom_backend_url');
+      if (customUrl && customUrl.trim().startsWith('http')) {
+        return customUrl.trim().replace(/\/$/, '');
+      }
+    } catch {}
+  }
+
+  // 2. Check environment variable
   const envUrl = (import.meta as any).env?.VITE_API_URL || (import.meta as any).env?.VITE_APP_URL;
   if (envUrl && envUrl.trim() !== '') {
     return envUrl.trim().replace(/\/$/, '');
   }
 
-  // In browser, relative path uses the same host
+  // 3. In web browser preview (non-native), relative path uses current host
   if (typeof window !== 'undefined' && !isNativeApp()) {
     return '';
   }
 
-  // In native Android APK, use empty or custom remote API if provided
-  return '';
+  // 4. In native Android APK (Capacitor localhost), connect to the Cloud backend server
+  return CLOUD_BACKEND_URL;
 };
 
 export const API_BASE_URL = getApiBaseUrl();

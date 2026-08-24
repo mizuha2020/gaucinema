@@ -49,6 +49,8 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
   const [activeTab, setActiveTab] = useState<'home' | 'videos' | 'shorts' | 'live' | 'about'>('home');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [channelSearchQuery, setChannelSearchQuery] = useState('');
+  const [channelSearchResults, setChannelSearchResults] = useState<YouTubeVideo[] | null>(null);
+  const [isSearchingVideos, setIsSearchingVideos] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -102,6 +104,68 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
     };
   }, [initialChannel, channelId, channelName, currentAccount?.id, activeProfile?.id]);
 
+  const displayTitle = channelData?.title || channelName || 'Kênh YouTube';
+  const displayAvatar =
+    channelData?.avatarUrl ||
+    `https://ui-avatars.com/api/?name=${encodeURIComponent(displayTitle)}&background=dc2626&color=fff&bold=true`;
+
+  // Perform live server/network search inside the channel
+  const executeChannelSearch = async (queryText: string) => {
+    const qTrim = queryText.trim();
+    if (!qTrim) {
+      setChannelSearchResults(null);
+      setIsSearchingVideos(false);
+      return;
+    }
+
+    setIsSearchingVideos(true);
+    const targetChannelId = channelData?.id || channelId || '';
+    const targetChannelName = displayTitle;
+
+    // Instant local matches as initial baseline
+    const localFiltered = videos.filter((vid) =>
+      vid.title.toLowerCase().includes(qTrim.toLowerCase()) ||
+      (vid.description && vid.description.toLowerCase().includes(qTrim.toLowerCase()))
+    );
+
+    try {
+      const serverResults = await youtubeApi.searchChannelVideos(targetChannelId, targetChannelName, qTrim);
+      if (serverResults && serverResults.length > 0) {
+        // Merge without duplicates
+        const seen = new Set<string>();
+        const merged: YouTubeVideo[] = [];
+        for (const item of [...serverResults, ...localFiltered]) {
+          if (!seen.has(item.id)) {
+            seen.add(item.id);
+            merged.push(item);
+          }
+        }
+        setChannelSearchResults(merged);
+      } else {
+        setChannelSearchResults(localFiltered);
+      }
+    } catch {
+      setChannelSearchResults(localFiltered);
+    } finally {
+      setIsSearchingVideos(false);
+    }
+  };
+
+  // Debounced search trigger when typing
+  useEffect(() => {
+    if (!channelSearchQuery.trim()) {
+      setChannelSearchResults(null);
+      setIsSearchingVideos(false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      executeChannelSearch(channelSearchQuery);
+    }, 450);
+
+    return () => clearTimeout(timer);
+  }, [channelSearchQuery, channelData?.id, channelId, displayTitle]);
+
   const toggleSubscribe = async () => {
     if (!channelData) return;
     const cKey = channelData.id || channelData.title;
@@ -139,27 +203,23 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
     }
   };
 
-  const displayTitle = channelData?.title || channelName || 'Kênh YouTube';
-  const displayAvatar =
-    channelData?.avatarUrl ||
-    `https://ui-avatars.com/api/?name=${encodeURIComponent(displayTitle)}&background=dc2626&color=fff&bold=true`;
-
   // Filter videos based on active tab and search query
-  const filteredVideos = videos.filter((vid) => {
-    if (channelSearchQuery.trim()) {
-      const matches = vid.title.toLowerCase().includes(channelSearchQuery.toLowerCase()) ||
-                      (vid.description && vid.description.toLowerCase().includes(channelSearchQuery.toLowerCase()));
-      if (!matches) return false;
-    }
-
-    if (activeTab === 'live') {
-      return vid.duration === 'LIVE' || (vid.viewCount && String(vid.viewCount).includes('đang xem'));
-    }
-    if (activeTab === 'shorts') {
-      return vid.category === 'shorts' || (vid.durationSeconds && vid.durationSeconds <= 60);
-    }
-    return true;
-  });
+  const filteredVideos = channelSearchQuery.trim()
+    ? (channelSearchResults !== null
+        ? channelSearchResults
+        : videos.filter((vid) =>
+            vid.title.toLowerCase().includes(channelSearchQuery.toLowerCase()) ||
+            (vid.description && vid.description.toLowerCase().includes(channelSearchQuery.toLowerCase()))
+          ))
+    : videos.filter((vid) => {
+        if (activeTab === 'live') {
+          return vid.duration === 'LIVE' || (vid.viewCount && String(vid.viewCount).includes('đang xem'));
+        }
+        if (activeTab === 'shorts') {
+          return vid.category === 'shorts' || (vid.durationSeconds && vid.durationSeconds <= 60);
+        }
+        return true;
+      });
 
   const liveVideos = videos.filter(
     (v) => v.duration === 'LIVE' || (v.viewCount && String(v.viewCount).includes('đang xem'))
@@ -316,29 +376,44 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
             })}
           </div>
 
-          {/* YouTube Search icon toggle */}
+          {/* YouTube Search icon toggle & input form */}
           <div className="flex items-center pl-4 pr-2">
             {isSearchOpen ? (
-              <div className="flex items-center bg-neutral-900 border border-neutral-700 rounded-full pl-3 pr-2 py-1 max-w-xs animate-fade-in">
-                <Search className="w-4 h-4 text-slate-400 mr-2 shrink-0" />
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  executeChannelSearch(channelSearchQuery);
+                }}
+                className="flex items-center bg-neutral-900 border border-neutral-700 focus-within:border-red-500 rounded-full pl-3 pr-2 py-1 max-w-xs animate-fade-in transition-colors"
+              >
+                {isSearchingVideos ? (
+                  <Loader2 className="w-4 h-4 text-red-500 animate-spin mr-2 shrink-0" />
+                ) : (
+                  <button type="submit" className="text-slate-400 hover:text-white mr-2 shrink-0 cursor-pointer" title="Tìm kiếm">
+                    <Search className="w-4 h-4" />
+                  </button>
+                )}
                 <input
                   type="text"
                   autoFocus
                   value={channelSearchQuery}
                   onChange={(e) => setChannelSearchQuery(e.target.value)}
-                  placeholder={`Tìm kiếm...`}
-                  className="bg-transparent text-xs sm:text-sm text-white focus:outline-none w-32 sm:w-48"
+                  placeholder={`Tìm trong ${displayTitle}...`}
+                  className="bg-transparent text-xs sm:text-sm text-white focus:outline-none w-32 sm:w-48 placeholder-slate-500"
                 />
                 <button
+                  type="button"
                   onClick={() => {
                     setIsSearchOpen(false);
                     setChannelSearchQuery('');
+                    setChannelSearchResults(null);
                   }}
-                  className="p-1 hover:bg-white/10 rounded-full text-slate-400 hover:text-white"
+                  className="p-1 hover:bg-white/10 rounded-full text-slate-400 hover:text-white cursor-pointer"
+                  title="Đóng tìm kiếm"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
-              </div>
+              </form>
             ) : (
               <button
                 onClick={() => setIsSearchOpen(true)}
@@ -353,11 +428,25 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
 
         {/* Search status notification if searching */}
         {channelSearchQuery.trim() && (
-          <div className="py-3 flex items-center justify-between text-xs text-slate-400 border-b border-white/5">
-            <span>Kết quả tìm kiếm cho "{channelSearchQuery}" trong {displayTitle}</span>
+          <div className="py-3 flex items-center justify-between text-xs text-slate-400 border-b border-white/5 bg-neutral-900/30 px-3 rounded-xl mt-2">
+            <div className="flex items-center gap-2">
+              {isSearchingVideos ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 text-red-500 animate-spin" />
+                  <span className="text-slate-300">Đang truy vấn YouTube tìm video của kênh "{displayTitle}"...</span>
+                </>
+              ) : (
+                <span>
+                  Kết quả tìm kiếm cho <strong className="text-white">"{channelSearchQuery}"</strong> trong {displayTitle} ({filteredVideos.length} video)
+                </span>
+              )}
+            </div>
             <button
-              onClick={() => setChannelSearchQuery('')}
-              className="text-red-400 hover:text-red-300 underline font-semibold"
+              onClick={() => {
+                setChannelSearchQuery('');
+                setChannelSearchResults(null);
+              }}
+              className="text-red-400 hover:text-red-300 underline font-semibold cursor-pointer"
             >
               Xóa bộ lọc
             </button>

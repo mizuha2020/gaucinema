@@ -7,6 +7,9 @@ export interface NativeVideoPlayerPlugin {
     title?: string;
     userAgent?: string;
   }): Promise<void>;
+  playExternal(options: {
+    url: string;
+  }): Promise<void>;
   isNativeSupported(): Promise<{ supported: boolean }>;
 }
 
@@ -29,8 +32,31 @@ export async function playInNativeExoPlayer(options: {
       return true;
     } catch (err) {
       console.error('[NativeVideoPlayer] Failed to launch ExoPlayer:', err);
+      alert('Lỗi khởi chạy ExoPlayer Native: ' + (err as Error).message);
       return false;
     }
+  } else {
+    alert('ExoPlayer Native chỉ hoạt động trên ứng dụng Android (file APK).');
+  }
+  return false;
+}
+
+export async function playInExternalPlayer(options: {
+  url: string;
+}): Promise<boolean> {
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+    try {
+      await NativeVideoPlayer.playExternal({
+        url: options.url
+      });
+      return true;
+    } catch (err) {
+      console.error('[NativeVideoPlayer] Failed to launch External Player:', err);
+      alert('Lỗi mở ứng dụng ngoài: ' + (err as Error).message);
+      return false;
+    }
+  } else {
+    window.open(options.url, '_blank');
   }
   return false;
 }

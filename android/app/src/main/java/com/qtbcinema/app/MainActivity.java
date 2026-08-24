@@ -25,8 +25,8 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        registerPlugin(NativeVideoPlayerPlugin.class);
         super.onCreate(savedInstanceState);
+        registerPlugin(NativeVideoPlayerPlugin.class);
         if (this.bridge != null && this.bridge.getWebView() != null) {
             WebView webView = this.bridge.getWebView();
             WebSettings settings = webView.getSettings();

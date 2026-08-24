@@ -252,15 +252,12 @@ public class NativePlayerActivity extends AppCompatActivity {
                 return new byte[0];
             }
 
-            // 1. Static hex KID:KEY format
+            // 1. Static KID:KEY format (hex or base64)
             if (drmKey.contains(":")) {
                 String[] parts = drmKey.split(":");
                 if (parts.length >= 2) {
-                    String kidHex = parts[0].trim();
-                    String keyHex = parts[1].trim();
-
-                    String kidB64 = hexToBase64Url(kidHex);
-                    String keyB64 = hexToBase64Url(keyHex);
+                    String kidB64 = toBase64Url(parts[0]);
+                    String keyB64 = toBase64Url(parts[1]);
 
                     String jwk = "{\"keys\":[{\"kty\":\"oct\",\"kid\":\"" + kidB64 + "\",\"k\":\"" + keyB64 + "\"}],\"type\":\"temporary\"}";
                     return jwk.getBytes(StandardCharsets.UTF_8);
@@ -305,15 +302,18 @@ public class NativePlayerActivity extends AppCompatActivity {
             return new byte[0];
         }
 
-        private static String hexToBase64Url(String hex) {
-            hex = hex.trim().replace("-", "").replace(":", "");
-            int len = hex.length();
-            byte[] data = new byte[len / 2];
-            for (int i = 0; i < len; i += 2) {
-                data[i / 2] = (byte) ((Character.digit(hex.charAt(i), 16) << 4)
-                                     + Character.digit(hex.charAt(i+1), 16));
+        private static String toBase64Url(String input) {
+            if (input == null) return "";
+            String trimmed = input.trim();
+            if (trimmed.length() == 32 && trimmed.matches("^[0-9a-fA-F]{32}$")) {
+                byte[] data = new byte[16];
+                for (int i = 0; i < 32; i += 2) {
+                    data[i / 2] = (byte) ((Character.digit(trimmed.charAt(i), 16) << 4)
+                                         + Character.digit(trimmed.charAt(i+1), 16));
+                }
+                return Base64.encodeToString(data, Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP);
             }
-            return Base64.encodeToString(data, Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP);
+            return trimmed.replace("+", "-").replace("/", "_").replace("=", "");
         }
 
         private static String sanitizeJwk(String jsonStr) {

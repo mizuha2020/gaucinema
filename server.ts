@@ -1809,6 +1809,86 @@ async function startServer() {
     return parsed;
   }
 
+  // Search specifically within a YouTube channel (querying /search tab or channel-scoped search)
+  async function scrapeYouTubeChannelSearch(channelId: string, channelName: string, query: string) {
+    const idTrim = (channelId || "").trim();
+    const nameTrim = (channelName || "").trim();
+    const qTrim = (query || "").trim();
+
+    const fallbackChannel: any = {
+      id: idTrim || "channel_custom",
+      title: nameTrim || "Kênh YouTube",
+      subscribers: "",
+      description: "",
+      avatarUrl: "",
+      bannerUrl: "",
+    };
+
+    if (!qTrim) {
+      return scrapeYouTubeChannelVideos(channelId, channelName);
+    }
+
+    // 1. Direct channel search URL on YouTube
+    const candidates: string[] = [];
+    if (/^UC[\w-]{22}$/.test(idTrim)) {
+      candidates.push(`https://www.youtube.com/channel/${idTrim}`);
+    } else if (idTrim.startsWith("@")) {
+      candidates.push(`https://www.youtube.com/${encodeURIComponent(idTrim)}`);
+    }
+
+    let items: any[] = [];
+
+    for (const base of candidates) {
+      const searchPageData = await fetchYouTubePageData(`${base}/search?query=${encodeURIComponent(qTrim)}`);
+      if (searchPageData) {
+        const vids = extractAllVideos(searchPageData);
+        if (vids.length > 0) {
+          items = vids;
+          break;
+        }
+      }
+    }
+
+    // 2. Resolve canonical channel id and query /search tab
+    if (items.length === 0 && nameTrim) {
+      const resolvedId = await resolveChannelIdByTitle(nameTrim);
+      if (resolvedId) {
+        const searchPageData = await fetchYouTubePageData(`https://www.youtube.com/channel/${resolvedId}/search?query=${encodeURIComponent(qTrim)}`);
+        if (searchPageData) {
+          const vids = extractAllVideos(searchPageData);
+          if (vids.length > 0) {
+            items = vids;
+          }
+        }
+      }
+    }
+
+    // 3. Fallback: Search YouTube with channel name + query keywords
+    if (items.length === 0) {
+      const searchString = nameTrim ? `"${nameTrim}" ${qTrim}` : `${idTrim} ${qTrim}`;
+      const s1 = await scrapeYouTubeSearch(searchString);
+      const tKey = normChannelKey(nameTrim || idTrim);
+
+      // Filter and prioritize videos by channel
+      const channelMatches = s1.items.filter((it: any) => {
+        const iKey = normChannelKey(it.channelTitle || "");
+        return tKey.length >= 2 && iKey && (iKey === tKey || iKey.includes(tKey) || tKey.includes(iKey));
+      });
+
+      if (channelMatches.length > 0) {
+        items = channelMatches;
+      } else if (s1.items.length > 0) {
+        items = s1.items;
+      } else {
+        // Try relaxed search
+        const s2 = await scrapeYouTubeSearch(`${nameTrim} ${qTrim}`);
+        items = s2.items;
+      }
+    }
+
+    return { channel: fallbackChannel, items };
+  }
+
   // 7. YouTube Real Search API Endpoint (Direct YouTube Live Extraction)
   app.get("/api/youtube/search", async (req, res) => {
     // Continuation page request (infinite scroll)
@@ -1900,16 +1980,21 @@ async function startServer() {
     return res.json({ channels: [], items: [] });
   });
 
-  // 8. YouTube Channel Details Endpoint (scrapes the channel's real VIDEOS tab)
+  // 8. YouTube Channel Details & Channel Search Endpoint
   app.get("/api/youtube/channel", async (req, res) => {
     const channelId = String(req.query.id || "").trim();
     const channelName = String(req.query.name || "").trim();
+    const query = String(req.query.q || req.query.query || "").trim();
 
     if (!channelId && !channelName) {
       return res.json({ channel: null, items: [] });
     }
 
     try {
+      if (query) {
+        const searchResult = await scrapeYouTubeChannelSearch(channelId, channelName, query);
+        return res.json(searchResult);
+      }
       const result = await scrapeYouTubeChannelVideos(channelId, channelName);
       return res.json(result);
     } catch (err: any) {
