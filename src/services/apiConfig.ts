@@ -6,9 +6,7 @@ export const isNativeApp = (): boolean => {
   if ((window as any).Capacitor?.isNative) return true;
   const origin = window.location.origin || '';
   return (
-    origin.includes('localhost') ||
     origin.includes('capacitor://') ||
-    origin.includes('https://localhost') ||
     window.location.protocol === 'file:'
   );
 };
@@ -32,7 +30,12 @@ export const getApiBaseUrl = (): string => {
     return envUrl.trim().replace(/\/$/, '');
   }
 
-  // 3. In web browser or native app default, return empty base unless custom remote is set
+  // 3. In native Android APK (Capacitor), default to Cloud Backend URL
+  if (isNativeApp()) {
+    return CLOUD_BACKEND_URL;
+  }
+
+  // 4. In web browser preview (non-native), relative path uses current host
   return '';
 };
 

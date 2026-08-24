@@ -1,5 +1,6 @@
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { YouTubeVideo, YouTubeChannel } from '../types';
-import { getFullApiUrl } from './apiConfig';
+import { getFullApiUrl, isNativeApp } from './apiConfig';
 
 // Helper to extract YouTube Video ID from any input string or URL
 export function extractYouTubeId(input: string): string | null {
@@ -297,7 +298,38 @@ async function fetchYouTubeInnerTube(query: string, continuationToken?: string |
 
   const jsonBody = JSON.stringify(requestBody);
 
-  // 1. Direct Fetch to YouTube InnerTube (Fastest & 100% Real Live Data on Android APK / Capacitor)
+  // 0. Capacitor Native HTTP (100% bypasses CORS on Android APK / Capacitor)
+  if (typeof window !== 'undefined' && (Capacitor.isNativePlatform() || (window as any).Capacitor?.isNative || isNativeApp())) {
+    try {
+      const response = await CapacitorHttp.request({
+        method: 'POST',
+        url: targetUrl,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': '*/*',
+          'Accept-Language': 'vi-VN,vi;q=0.9,en;q=0.8',
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        },
+        data: requestBody,
+      });
+
+      if (response.status === 200 && response.data) {
+        const rawData = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
+        const parsed = parseYtInitialData(rawData);
+        if (parsed.items.length > 0 || parsed.channels.length > 0) {
+          return {
+            channels: parsed.channels,
+            items: parsed.items,
+            nextToken: parsed.nextToken || null,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('CapacitorHttp InnerTube error:', e);
+    }
+  }
+
+  // 1. Direct Fetch to YouTube InnerTube (Fastest & 100% Real Live Data in CORS-friendly browsers)
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6000);
