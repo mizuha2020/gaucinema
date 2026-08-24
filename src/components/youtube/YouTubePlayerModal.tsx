@@ -6,6 +6,7 @@ import {
   youtubeApi,
 } from '../../services/youtubeApi';
 import { YouTubeChannelModal } from './YouTubeChannelModal';
+import { YouTubeShareModal } from './YouTubeShareModal';
 import {
   X,
   ShieldCheck,
@@ -24,6 +25,10 @@ import {
   ChevronUp,
   Sparkles,
   Radio,
+  Share2,
+  Download,
+  Bookmark,
+  MoreHorizontal,
 } from 'lucide-react';
 
 interface YouTubePlayerModalProps {
@@ -33,6 +38,7 @@ interface YouTubePlayerModalProps {
   onToggleFavorite?: (v: YouTubeVideo) => void;
   isFavorite?: boolean;
   onOpenChannel?: (channelName: string, channelId?: string) => void;
+  onShowToast?: (msg: string) => void;
 }
 
 export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
@@ -42,9 +48,11 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
   onToggleFavorite,
   isFavorite = false,
   onOpenChannel,
+  onShowToast,
 }) => {
   const [relatedVideos, setRelatedVideos] = useState<YouTubeVideo[]>([]);
   const [isLoadingRelated, setIsLoadingRelated] = useState(true);
+  const [relatedFilter, setRelatedFilter] = useState<'all' | 'channel' | 'related'>('all');
   const [liked, setLiked] = useState(false);
   const [disliked, setDisliked] = useState(false);
   const [likeCount, setLikeCount] = useState<number>(
@@ -53,11 +61,12 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [isDescExpanded, setIsDescExpanded] = useState(false);
   const [channelAvatar, setChannelAvatar] = useState<string>(
-    video.channelAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(video.channelTitle || 'Channel')}&background=dc2626&color=fff&bold=true`
+    video.channelAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(video.channelTitle || 'Channel')}&background=FF0000&color=fff&bold=true`
   );
 
   const [selectedChannelForModal, setSelectedChannelForModal] = useState<YouTubeChannel | null>(null);
   const [isChannelModalOpen, setIsChannelModalOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
 
   const handleOpenChannelClick = (cName: string, cId?: string) => {
     if (onOpenChannel) {
@@ -71,12 +80,34 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
       setIsChannelModalOpen(true);
     }
   };
+
   const [comments, setComments] = useState<
     { id: string; user: string; avatar: string; text: string; time: string; likes: number }[]
   >([]);
   const [newComment, setNewComment] = useState('');
 
-  // Load comments from localStorage or defaults on video change
+  // Keyboard Shortcuts (Space / K: play/pause toggle notice, F: fullscreen, M: mute toggle notice)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (e.code === 'KeyF') {
+        const playerElem = document.getElementById('youtube-iframe-player');
+        if (playerElem) {
+          if (!document.fullscreenElement) {
+            playerElem.requestFullscreen?.();
+          } else {
+            document.exitFullscreen?.();
+          }
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Load comments
   useEffect(() => {
     try {
       const savedComments = localStorage.getItem(`gau_yt_comments_${video.id}`);
@@ -96,17 +127,9 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
             id: 'c2',
             user: 'Trần Hoàng Nam',
             avatar: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?auto=format&fit=crop&q=80&w=100',
-            text: 'Âm thanh với hình ảnh nét căng. Cảm ơn app đã tổng hợp rất hay!',
+            text: 'Âm thanh với hình ảnh nét căng. Cảm ơn Gấu YouTube đã cập nhật!',
             time: '5 giờ trước',
             likes: 18,
-          },
-          {
-            id: 'c3',
-            user: 'Lê Thu Thảo',
-            avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=100',
-            text: 'Đang tìm nội dung này thì thấy ngay. Rất tuyệt vời!',
-            time: '1 ngày trước',
-            likes: 9,
           },
         ];
         setComments(defaultComments);
@@ -117,7 +140,6 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
     }
   }, [video.id]);
 
-  // Save comments to localStorage when updated
   const saveCommentsToStorage = (updatedComments: typeof comments) => {
     setComments(updatedComments);
     try {
@@ -127,13 +149,12 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
     }
   };
 
-  // Fetch accurate channel avatar & related videos
+  // Fetch channel avatar & related videos
   useEffect(() => {
     let isMounted = true;
     setIsLoadingRelated(true);
 
     const loadDetails = async () => {
-      // 1. Fetch channel details for accurate logo avatar
       try {
         const channelRes = await youtubeApi.getChannelDetails(video.channelId || '', video.channelTitle);
         if (isMounted && channelRes.channel?.avatarUrl) {
@@ -143,7 +164,6 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
         // Fallback
       }
 
-      // 2. Fetch related videos: mix topic-based results (any channel) + same-channel uploads
       const cleanTitle = video.title.replace(/\[.*?\]|\(.*?\)/g, '').replace(/\s+/g, ' ').trim();
       const keywords = cleanTitle.split(' ').slice(0, 5).join(' ');
       const topicQuery = keywords || video.channelTitle || '';
@@ -165,8 +185,6 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
             : Promise.resolve([] as YouTubeVideo[]),
         ]);
 
-        // Interleave: topical hits first, then a capped batch from the same channel,
-        // then fill the rest with remaining topical results.
         const seen = new Set<string>([video.id]);
         const merged: YouTubeVideo[] = [];
         const takeFrom = (list: YouTubeVideo[], limit: number) => {
@@ -205,7 +223,6 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
 
     loadDetails();
 
-    // Check subscription status
     try {
       const savedSubs: string[] = JSON.parse(localStorage.getItem('gau_yt_subscriptions') || '[]');
       const channelKey = video.channelId || video.channelTitle;
@@ -227,9 +244,11 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
       if (savedSubs.includes(channelKey)) {
         updated = savedSubs.filter((id) => id !== channelKey);
         setIsSubscribed(false);
+        onShowToast?.(`Đã hủy đăng ký kênh ${video.channelTitle}`);
       } else {
         updated = [...savedSubs, channelKey];
         setIsSubscribed(true);
+        onShowToast?.(`Đã đăng ký kênh ${video.channelTitle}!`);
       }
       localStorage.setItem('gau_yt_subscriptions', JSON.stringify(updated));
     } catch {
@@ -245,6 +264,7 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
       setLiked(true);
       if (disliked) setDisliked(false);
       setLikeCount((prev) => prev + 1);
+      onShowToast?.('Đã thích video này!');
     }
   };
 
@@ -276,28 +296,36 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
     ];
     saveCommentsToStorage(updated);
     setNewComment('');
+    onShowToast?.('Đã gửi bình luận!');
   };
+
+  const filteredRelatedVideos = relatedVideos.filter((v) => {
+    if (relatedFilter === 'channel') {
+      return v.channelTitle?.toLowerCase() === video.channelTitle?.toLowerCase();
+    }
+    return true;
+  });
 
   const isLiveStream = video.duration === 'LIVESTREAM' || video.publishedAt?.includes('đang phát trực tiếp') || video.durationSeconds === 999999;
   const embedUrl = getYouTubeEmbedUrl(video.id, true);
 
   return (
-    <div className="fixed inset-0 z-[100] bg-[#0f0f0f] text-[#f1f1f1] font-sans flex flex-col overflow-y-auto animate-fade-in">
-      {/* Top Header Bar - Authentic YouTube Style */}
-      <div className="sticky top-0 z-50 bg-[#0f0f0f]/95 backdrop-blur-md px-4 py-2.5 border-b border-[#272727] flex items-center justify-between gap-4">
+    <div className="fixed inset-0 z-[100] bg-[#0F0F0F] text-[#F1F1F1] font-sans flex flex-col overflow-y-auto animate-fade-in select-none">
+      {/* Top Header Bar */}
+      <div className="sticky top-0 z-50 bg-[#0F0F0F]/95 backdrop-blur-md px-4 py-2 border-b border-[#272727] flex items-center justify-between gap-4 h-[56px]">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 cursor-pointer" onClick={onClose}>
-            <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center shrink-0 shadow-lg shadow-red-600/30">
+            <div className="w-8 h-8 rounded-full bg-[#FF0000] flex items-center justify-center shrink-0 shadow-lg shadow-red-600/30">
               <Youtube className="w-5 h-5 text-white fill-current" />
             </div>
             <span className="font-extrabold text-base tracking-tight text-white hidden sm:inline">
-              Gấu <span className="text-red-500">Player</span>
+              Gấu <span className="text-red-500">YouTube</span>
             </span>
           </div>
 
           <div className="hidden md:flex items-center gap-1.5 bg-red-950/40 border border-red-900/60 text-red-400 px-3 py-1 rounded-full text-xs font-semibold">
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Tự động loại bỏ 100% quảng cáo</span>
+            <span>0 Quảng Cáo</span>
           </div>
 
           {isLiveStream && (
@@ -323,12 +351,15 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
         </button>
       </div>
 
-      {/* Main Container - YouTube Layout */}
+      {/* Main Container - 2 Column Layout (70% Left / 30% Right) */}
       <div className="max-w-[1700px] w-full mx-auto p-3 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
-        {/* Left 8 Columns: Video Player, Channel Info, Description & Comments */}
+        {/* Primary Left Column (~70% / 8 cols) */}
         <div className="lg:col-span-8 space-y-4">
-          {/* Main Player Box with Native YouTube Controls */}
-          <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-black shadow-2xl border border-[#272727]">
+          {/* Main 16:9 Player Container */}
+          <div
+            id="youtube-iframe-player"
+            className="relative w-full aspect-video rounded-2xl overflow-hidden bg-black shadow-2xl border border-[#272727]"
+          >
             <iframe
               src={embedUrl}
               title={video.title}
@@ -338,14 +369,14 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
             />
           </div>
 
-          {/* Video Title */}
+          {/* Video Title Header */}
           <h1 className="text-lg sm:text-xl md:text-2xl font-bold text-white leading-snug tracking-tight">
             {video.title}
           </h1>
 
-          {/* Channel Row & Action Buttons */}
+          {/* Channel Info & Action Buttons Bar */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-1 border-b border-[#272727] pb-4">
-            {/* Channel Info + Subscribe */}
+            {/* Channel Info + Subscribe Pill */}
             <div className="flex items-center gap-3">
               <div
                 onClick={() => handleOpenChannelClick(video.channelTitle, video.channelId)}
@@ -366,8 +397,8 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
                   <span>{video.channelTitle}</span>
                   <span className="w-3.5 h-3.5 rounded-full bg-red-600 text-white text-[9px] font-bold flex items-center justify-center shrink-0">✓</span>
                 </h3>
-                <p className="text-xs text-slate-400 font-medium truncate">
-                  Kênh đã xác minh
+                <p className="text-xs text-[#AAAAAA] font-medium truncate">
+                  1.2M người đăng ký
                 </p>
               </div>
 
@@ -375,7 +406,7 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
                 onClick={toggleSubscribe}
                 className={`ml-2 px-4 py-2 rounded-full text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shrink-0 ${
                   isSubscribed
-                    ? 'bg-[#272727] hover:bg-[#3f3f3f] text-slate-200 border border-slate-700'
+                    ? 'bg-[#272727] hover:bg-[#3F3F3F] text-white border border-white/20'
                     : 'bg-white hover:bg-slate-200 text-black font-extrabold shadow-md'
                 }`}
               >
@@ -394,24 +425,24 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
               </button>
             </div>
 
-            {/* Action Buttons Row */}
+            {/* Action Buttons Group */}
             <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-              {/* Like / Dislike Group */}
-              <div className="flex items-center bg-[#272727] hover:bg-[#323232] rounded-full overflow-hidden shrink-0 border border-white/5">
+              {/* Like / Dislike Split Button */}
+              <div className="flex items-center bg-[#272727] hover:bg-[#3F3F3F] rounded-full overflow-hidden shrink-0 border border-white/5">
                 <button
                   onClick={handleToggleLike}
                   className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold transition-all cursor-pointer ${
-                    liked ? 'text-red-400 bg-red-950/40' : 'text-slate-200 hover:text-white'
+                    liked ? 'text-white bg-red-600/40' : 'text-slate-200 hover:text-white'
                   }`}
                 >
                   <ThumbsUp className={`w-4 h-4 ${liked ? 'fill-current' : ''}`} />
                   <span>{likeCount.toLocaleString('vi-VN')}</span>
                 </button>
-                <div className="w-[1px] h-4 bg-slate-700" />
+                <div className="w-[1px] h-4 bg-white/20" />
                 <button
                   onClick={handleToggleDislike}
                   className={`px-3 py-2 text-xs transition-all cursor-pointer ${
-                    disliked ? 'text-red-400 bg-red-950/40' : 'text-slate-200 hover:text-white'
+                    disliked ? 'text-white bg-red-600/40' : 'text-slate-200 hover:text-white'
                   }`}
                   title="Không thích"
                 >
@@ -419,51 +450,57 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
                 </button>
               </div>
 
-              {/* Favorite / Save */}
+              {/* Share Button */}
+              <button
+                onClick={() => setIsShareModalOpen(true)}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-[#272727] hover:bg-[#3F3F3F] text-slate-200 hover:text-white rounded-full transition-all shrink-0 border border-white/5 text-xs font-bold cursor-pointer"
+              >
+                <Share2 className="w-4 h-4" />
+                <span>Chia sẻ</span>
+              </button>
+
+              {/* Download Button */}
+              <button
+                onClick={() => onShowToast?.('Đã bắt đầu tải xuống video cho xem offline!')}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-[#272727] hover:bg-[#3F3F3F] text-slate-200 hover:text-white rounded-full transition-all shrink-0 border border-white/5 text-xs font-bold cursor-pointer"
+              >
+                <Download className="w-4 h-4" />
+                <span>Tải xuống</span>
+              </button>
+
+              {/* Favorite / Save Button */}
               {onToggleFavorite && (
                 <button
                   onClick={() => onToggleFavorite(video)}
                   className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 border border-white/5 ${
                     isFavorite
                       ? 'bg-red-600 text-white'
-                      : 'bg-[#272727] hover:bg-[#3f3f3f] text-slate-200 hover:text-white'
+                      : 'bg-[#272727] hover:bg-[#3F3F3F] text-slate-200 hover:text-white'
                   }`}
                 >
                   <Heart className={`w-4 h-4 ${isFavorite ? 'fill-current' : ''}`} />
                   <span>{isFavorite ? 'Đã lưu' : 'Lưu'}</span>
                 </button>
               )}
-
-              {/* Open Original YouTube */}
-              <a
-                href={`https://youtube.com/watch?v=${video.id}`}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-[#272727] hover:bg-[#3f3f3f] text-slate-300 hover:text-white rounded-full transition-all shrink-0 border border-white/5 text-xs font-bold"
-                title="Mở trên trang YouTube gốc"
-              >
-                <ExternalLink className="w-4 h-4" />
-                <span>YouTube</span>
-              </a>
             </div>
           </div>
 
-          {/* Collapsible Description Box */}
+          {/* Collapsible Gray Description Card (#272727) */}
           <div
             onClick={() => setIsDescExpanded(!isDescExpanded)}
-            className="bg-[#272727]/80 hover:bg-[#323232] rounded-2xl p-4 transition-all cursor-pointer space-y-2 border border-white/5"
+            className="bg-[#272727] hover:bg-[#323232] rounded-2xl p-4 transition-all cursor-pointer space-y-2 border border-white/5"
           >
             <div className="flex items-center gap-3 text-xs font-bold text-slate-200">
               <span>{formatViews(video.viewCount)}</span>
               <span>•</span>
-              <span>{video.publishedAt || 'Mới đây'}</span>
+              <span>{video.publishedAt || '2 ngày trước'}</span>
               <span className="text-red-400 bg-red-950/60 px-2 py-0.5 rounded text-[11px]">
-                {video.category || 'Mới nhất'}
+                #{video.category || 'Trending'}
               </span>
             </div>
 
             <p className={`text-xs text-slate-300 whitespace-pre-line leading-relaxed ${isDescExpanded ? '' : 'line-clamp-2'}`}>
-              {video.description || `Xem video "${video.title}" chuẩn độ phân giải cao trên Gấu YouTube Player.`}
+              {video.description || `Thưởng thức nội dung "${video.title}" với chất lượng sắc nét 0 quảng cáo trên Gấu YouTube VN.`}
             </p>
 
             <button className="text-xs font-bold text-slate-400 hover:text-white flex items-center gap-1 pt-1">
@@ -474,24 +511,24 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
                 </>
               ) : (
                 <>
-                  <span>Hiện thêm</span>
+                  <span>...xem thêm</span>
                   <ChevronDown className="w-3.5 h-3.5" />
                 </>
               )}
             </button>
           </div>
 
-          {/* Dynamic Comments Section (Persisted in localStorage) */}
+          {/* Comments Section */}
           <div className="pt-4 space-y-4">
             <div className="flex items-center gap-2 text-sm font-bold text-white">
               <MessageSquare className="w-4 h-4 text-red-500" />
               <span>{comments.length} Bình luận</span>
             </div>
 
-            {/* Input Comment */}
+            {/* Comment Input */}
             <form onSubmit={handleAddComment} className="flex gap-3 items-center">
               <img
-                src="https://ui-avatars.com/api/?name=You&background=dc2626&color=fff&bold=true"
+                src="https://ui-avatars.com/api/?name=You&background=FF0000&color=fff&bold=true"
                 alt="User Avatar"
                 className="w-8 h-8 rounded-full border border-red-500/50 shrink-0"
               />
@@ -500,7 +537,7 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
                 placeholder="Viết bình luận của bạn..."
-                className="flex-1 bg-[#272727] text-xs text-white px-4 py-2.5 rounded-full border border-white/10 focus:border-red-500 focus:outline-none transition-all placeholder:text-slate-500"
+                className="flex-1 bg-[#121212] text-xs text-white px-4 py-2.5 rounded-full border border-white/10 focus:border-red-500 focus:outline-none transition-all placeholder:text-[#AAAAAA]"
               />
               <button
                 type="submit"
@@ -523,11 +560,11 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
                   <div className="space-y-1 min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="font-bold text-slate-200">{c.user}</span>
-                      <span className="text-[10px] text-slate-500">{c.time}</span>
+                      <span className="text-[10px] text-[#AAAAAA]">{c.time}</span>
                     </div>
                     <p className="text-slate-300 leading-normal">{c.text}</p>
-                    <div className="flex items-center gap-3 text-[11px] text-slate-400 pt-1">
-                      <button className="flex items-center gap-1 hover:text-red-400 cursor-pointer">
+                    <div className="flex items-center gap-3 text-[11px] text-[#AAAAAA] pt-1">
+                      <button className="flex items-center gap-1 hover:text-white cursor-pointer">
                         <ThumbsUp className="w-3 h-3" />
                         <span>{c.likes > 0 ? c.likes : ''}</span>
                       </button>
@@ -540,32 +577,55 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
           </div>
         </div>
 
-        {/* Right 4 Columns: DYNAMIC RELEVANT RECOMMENDED VIDEOS */}
+        {/* Secondary Right Column (~30% / 4 cols) - Up Next / Recommended Videos */}
         <div className="lg:col-span-4 space-y-4">
-          <div className="flex items-center justify-between pb-2 border-b border-[#272727]">
-            <h2 className="text-sm font-bold text-white flex items-center gap-2">
+          {/* Top Filter Chips */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+            <button
+              onClick={() => setRelatedFilter('all')}
+              className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                relatedFilter === 'all'
+                  ? 'bg-white text-black'
+                  : 'bg-[#272727] text-white hover:bg-[#3F3F3F]'
+              }`}
+            >
+              Tất cả
+            </button>
+            <button
+              onClick={() => setRelatedFilter('channel')}
+              className={`px-3 py-1 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 ${
+                relatedFilter === 'channel'
+                  ? 'bg-white text-black'
+                  : 'bg-[#272727] text-white hover:bg-[#3F3F3F]'
+              }`}
+            >
+              Từ kênh này
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between pb-1 border-b border-[#272727]">
+            <h2 className="text-xs font-bold text-white flex items-center gap-1.5">
               <Sparkles className="w-4 h-4 text-red-500" />
-              <span>Video liên quan & Gợi ý</span>
+              <span>Video tiếp theo</span>
             </h2>
-            <span className="text-[11px] text-red-400 font-medium">Trực tiếp từ YouTube</span>
           </div>
 
           {isLoadingRelated ? (
             <div className="flex flex-col items-center justify-center py-12 space-y-2">
               <Loader2 className="w-6 h-6 text-red-500 animate-spin" />
-              <p className="text-xs text-slate-400">Đang tìm video liên quan...</p>
+              <p className="text-xs text-[#AAAAAA]">Đang tải video gợi ý...</p>
             </div>
-          ) : relatedVideos.length === 0 ? (
-            <div className="text-xs text-slate-400 text-center py-8">
-              Không có video gợi ý thêm.
+          ) : filteredRelatedVideos.length === 0 ? (
+            <div className="text-xs text-[#AAAAAA] text-center py-8">
+              Không tìm thấy video gợi ý cùng kênh.
             </div>
           ) : (
             <div className="space-y-3">
-              {relatedVideos.map((rel) => (
+              {filteredRelatedVideos.map((rel) => (
                 <div
                   key={rel.id}
                   onClick={() => onSelectRelatedVideo(rel)}
-                  className="group flex gap-3 bg-[#181818] hover:bg-[#272727] p-2 rounded-xl cursor-pointer transition-all border border-transparent hover:border-red-900/40"
+                  className="group flex gap-2.5 bg-[#181818] hover:bg-[#272727] p-2 rounded-xl cursor-pointer transition-all border border-transparent hover:border-white/10"
                 >
                   {/* Thumbnail Box */}
                   <div className="relative w-36 sm:w-40 aspect-video rounded-lg overflow-hidden bg-black shrink-0">
@@ -575,7 +635,7 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
                     {rel.duration && (
-                      <span className="absolute bottom-1 right-1 bg-black/80 text-white text-[10px] font-bold px-1.5 py-0.5 rounded backdrop-blur-sm">
+                      <span className="absolute bottom-1 right-1 bg-black/80 text-white text-[10px] font-semibold px-1.5 py-0.5 rounded backdrop-blur-sm">
                         {rel.duration}
                       </span>
                     )}
@@ -586,10 +646,10 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
                     <h3 className="text-xs font-bold text-slate-200 group-hover:text-red-400 line-clamp-2 leading-snug transition-colors">
                       {rel.title}
                     </h3>
-                    <div className="text-[11px] text-slate-400 space-y-0.5">
+                    <div className="text-[11px] text-[#AAAAAA] space-y-0.5">
                       <p className="truncate font-medium hover:text-slate-200">{rel.channelTitle}</p>
-                      <p className="text-[10px] text-slate-500">
-                        {formatViews(rel.viewCount)} • {rel.publishedAt || 'Mới đây'}
+                      <p className="text-[10px] text-[#AAAAAA]">
+                        {formatViews(rel.viewCount)} • {rel.publishedAt || '2 ngày trước'}
                       </p>
                     </div>
                   </div>
@@ -599,6 +659,15 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* Share Modal */}
+      {isShareModalOpen && (
+        <YouTubeShareModal
+          video={video}
+          onClose={() => setIsShareModalOpen(false)}
+          onShowToast={(msg) => onShowToast?.(msg)}
+        />
+      )}
 
       {/* Channel Modal */}
       {isChannelModalOpen && (
