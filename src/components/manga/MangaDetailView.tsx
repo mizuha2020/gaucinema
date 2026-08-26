@@ -170,9 +170,9 @@ export const MangaDetailView: React.FC<MangaDetailViewProps> = ({
           <div className="text-center py-12 text-gray-500 text-sm">Không tìm thấy chương phù hợp.</div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 max-h-[500px] overflow-y-auto pr-2">
-            {filteredChapters.map((ch) => (
+            {filteredChapters.map((ch, idx) => (
               <button
-                key={ch.id}
+                key={`${ch.id || ch.chapterNumber || 'ch'}-${idx}`}
                 onClick={() => onReadChapter(ch)}
                 className="text-left px-4 py-3.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/5 text-sm text-gray-200 hover:text-white transition flex items-center justify-between group"
               >

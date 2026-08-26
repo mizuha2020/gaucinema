@@ -145,7 +145,7 @@ export const MovieRow: React.FC<MovieRowProps> = ({
         >
           {movies.map((movie, index) => (
             <div
-              key={movie.slug || movie._id || index}
+              key={`${movie.slug || movie._id || 'movie'}-${index}`}
               className="flex-shrink-0 h-full"
               style={{ width: `${itemWidth}px` }}
             >

@@ -13,17 +13,63 @@ import {
   ExternalLink,
   Search,
   X,
+  Shuffle,
+  ShieldCheck,
+  HardDrive,
+  Database,
+  Cpu,
+  Zap,
+  Activity,
+  Layers,
+  ArrowRight,
 } from 'lucide-react';
 
 interface AdminApisTabProps {
   onShowToast: (msg: string) => void;
+  currentSubTab?: 'api_status' | 'fallback_routing' | 'system_info';
+  onChangeSubTab?: (tab: 'api_status' | 'fallback_routing' | 'system_info') => void;
 }
 
-export const AdminApisTab: React.FC<AdminApisTabProps> = ({ onShowToast }) => {
+export const AdminApisTab: React.FC<AdminApisTabProps> = ({
+  onShowToast,
+  currentSubTab,
+  onChangeSubTab,
+}) => {
+  const [internalSubTab, setInternalSubTab] = useState<'api_status' | 'fallback_routing' | 'system_info'>('api_status');
+  const subTab = currentSubTab || internalSubTab;
+
+  const handleSetSubTab = (tab: 'api_status' | 'fallback_routing' | 'system_info') => {
+    if (onChangeSubTab) {
+      onChangeSubTab(tab);
+    } else {
+      setInternalSubTab(tab);
+    }
+  };
+
   const [apis, setApis] = useState<SystemApiEndpoint[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isCheckingAll, setIsCheckingAll] = useState<boolean>(false);
   const [pingingApiId, setPingingApiId] = useState<string | null>(null);
+
+  // Fallback Configuration state
+  const [fallbackEnabled, setFallbackEnabled] = useState<boolean>(() => {
+    try {
+      const val = localStorage.getItem('gau_api_smart_fallback');
+      return val !== 'false';
+    } catch {
+      return true;
+    }
+  });
+
+  const handleToggleFallback = (enabled: boolean) => {
+    setFallbackEnabled(enabled);
+    try {
+      localStorage.setItem('gau_api_smart_fallback', enabled ? 'true' : 'false');
+      onShowToast(enabled ? 'Đã kích hoạt chế độ Tự Động Dự Phòng (Smart Fallback)' : 'Đã tắt chế độ Tự Động Dự Phòng');
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   // Filters & Search
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -47,6 +93,9 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = ({ onShowToast }) => {
 
   // Delete confirmation
   const [deletingApi, setDeletingApi] = useState<SystemApiEndpoint | null>(null);
+
+  // Cache stats
+  const [cacheClearState, setCacheClearState] = useState<boolean>(false);
 
   useEffect(() => {
     const unsubscribe = systemApiService.subscribe((updated) => {
@@ -229,201 +278,545 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = ({ onShowToast }) => {
     );
   };
 
+  // API stats
+  const liveApisCount = apis.filter((a) => a.enabled && a.lastStatus === 'live').length;
+  const slowApisCount = apis.filter((a) => a.enabled && a.lastStatus === 'slow').length;
+  const downApisCount = apis.filter((a) => a.enabled && a.lastStatus === 'down').length;
+  const disabledApisCount = apis.filter((a) => !a.enabled).length;
+
+  const handleClearCache = () => {
+    try {
+      setCacheClearState(true);
+      // Clear non-critical cache keys while preserving active admin session
+      const keysToPreserve = ['gau_cinema_current_account', 'gau_admin_active_tab', 'gau_admin_main_section'];
+      const preserved: Record<string, string | null> = {};
+      keysToPreserve.forEach((k) => {
+        preserved[k] = localStorage.getItem(k);
+      });
+      localStorage.clear();
+      sessionStorage.clear();
+      keysToPreserve.forEach((k) => {
+        if (preserved[k] !== null) localStorage.setItem(k, preserved[k]!);
+      });
+      setTimeout(() => {
+        setCacheClearState(false);
+        onShowToast('Đã dọn dẹp bộ nhớ tạm (Cache) thành công!');
+      }, 500);
+    } catch (e: any) {
+      setCacheClearState(false);
+      onShowToast(`Lỗi dọn cache: ${e.message}`);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      {/* Top Header & Actions */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#0f172a] border border-blue-900/40 p-4 sm:p-5 rounded-2xl shadow-lg">
-        <div>
-          <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
-            <Server className="w-5 h-5 text-sky-400" />
-            <span>Quản Lý Hệ Thống API & Nguồn Phát</span>
-          </h2>
-          <p className="text-xs text-slate-400 mt-1">
-            Cấu hình, thêm mới, sửa, xóa và kiểm tra thời gian thực trạng thái máy chủ (Xanh: Live | Vàng: Slow | Đỏ: Down).
-          </p>
+      {/* Sub-Navigation Tabs Bar */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#0b1329] border border-blue-900/60 p-2 sm:p-2.5 rounded-2xl shadow-xl">
+        <div className="flex items-center gap-1.5 overflow-x-auto p-1 bg-[#070b16] rounded-xl border border-slate-800">
+          <button
+            id="subtab-api-status-btn"
+            onClick={() => handleSetSubTab('api_status')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              subTab === 'api_status'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Server className="w-3.5 h-3.5 text-sky-400" />
+            <span>Điểm Cuối API ({apis.length})</span>
+          </button>
+
+          <button
+            id="subtab-fallback-routing-btn"
+            onClick={() => handleSetSubTab('fallback_routing')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              subTab === 'fallback_routing'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Shuffle className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Cấu Hình Dự Phòng & Ưu Tiên</span>
+          </button>
+
+          <button
+            id="subtab-system-info-btn"
+            onClick={() => handleSetSubTab('system_info')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              subTab === 'system_info'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Hạ Tầng & Dữ Liệu Cache</span>
+          </button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={handleCheckAll}
-            disabled={isCheckingAll}
-            className="flex items-center gap-2 text-xs font-bold text-sky-300 bg-sky-950/80 hover:bg-sky-900 border border-sky-700/60 px-3.5 py-2.5 rounded-xl transition-all cursor-pointer disabled:opacity-50"
-            title="Gửi ping kiểm tra đồng loạt tất cả các API"
-          >
-            <RefreshCw className={`w-4 h-4 ${isCheckingAll ? 'animate-spin' : ''}`} />
-            <span>{isCheckingAll ? 'Đang Kiểm Tra...' : 'Kiểm Tra Tất Cả API'}</span>
-          </button>
-
-          <button
-            onClick={handleOpenAddModal}
-            className="flex items-center gap-2 text-xs font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/30 transition-transform active:scale-95 cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>+ Thêm API Mới</span>
-          </button>
-
-          <button
-            onClick={handleResetDefaults}
-            className="text-xs font-medium text-slate-400 hover:text-slate-200 bg-slate-800/80 hover:bg-slate-800 border border-slate-700 px-3 py-2.5 rounded-xl transition-colors cursor-pointer"
-            title="Khôi phục danh sách nguồn mặc định"
-          >
-            Khôi Phục Mặc Định
-          </button>
+        <div className="flex items-center justify-end gap-2 px-2 text-xs">
+          <span className="text-[11px] font-mono text-slate-400">
+            {liveApisCount} Live / {slowApisCount} Slow / {downApisCount} Down
+          </span>
         </div>
       </div>
 
-      {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        {/* Category tabs */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 bg-[#0f172a] border border-slate-800 p-1 rounded-xl">
-          {[
-            { id: 'all', label: 'Tất Cả' },
-            { id: 'movie', label: 'Phim Ảnh' },
-            { id: 'manga', label: 'Truyện Manga' },
-            { id: 'livetv', label: 'Truyền Hình TV' },
-            { id: 'utility', label: 'Tiện Ích / Proxy' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setSelectedCategory(tab.id)}
-              className={`text-xs px-3 py-1.5 rounded-lg font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                selectedCategory === tab.id
-                  ? 'bg-blue-600 text-white shadow'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+      {/* --- SUBTAB 1: API STATUS & ENDPOINTS --- */}
+      {subTab === 'api_status' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Top Header & Actions */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#0f172a] border border-blue-900/40 p-4 sm:p-5 rounded-2xl shadow-lg">
+            <div>
+              <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                <Server className="w-5 h-5 text-sky-400" />
+                <span>Quản Lý Hệ Thống API & Nguồn Phát</span>
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Cấu hình, thêm mới, sửa, xóa và kiểm tra thời gian thực trạng thái máy chủ (Xanh: Live | Vàng: Slow | Đỏ: Down).
+              </p>
+            </div>
 
-        {/* Search Input */}
-        <div className="relative min-w-[240px]">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Tìm theo tên, URL, ID..."
-            className="w-full bg-[#0f172a] border border-slate-800 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleCheckAll}
+                disabled={isCheckingAll}
+                className="flex items-center gap-2 text-xs font-bold text-sky-300 bg-sky-950/80 hover:bg-sky-900 border border-sky-700/60 px-3.5 py-2.5 rounded-xl transition-all cursor-pointer disabled:opacity-50"
+                title="Gửi ping kiểm tra đồng loạt tất cả các API"
+              >
+                <RefreshCw className={`w-4 h-4 ${isCheckingAll ? 'animate-spin' : ''}`} />
+                <span>{isCheckingAll ? 'Đang Kiểm Tra...' : 'Kiểm Tra Tất Cả API'}</span>
+              </button>
+
+              <button
+                onClick={handleOpenAddModal}
+                className="flex items-center gap-2 text-xs font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/30 transition-transform active:scale-95 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Thêm API Mới</span>
+              </button>
+
+              <button
+                onClick={handleResetDefaults}
+                className="text-xs font-medium text-slate-400 hover:text-slate-200 bg-slate-800/80 hover:bg-slate-800 border border-slate-700 px-3 py-2.5 rounded-xl transition-colors cursor-pointer"
+                title="Khôi phục danh sách nguồn mặc định"
+              >
+                Khôi Phục Mặc Định
+              </button>
+            </div>
+          </div>
+
+          {/* Filter and Search Bar */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            {/* Category tabs */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 bg-[#0f172a] border border-slate-800 p-1 rounded-xl">
+              {[
+                { id: 'all', label: 'Tất Cả' },
+                { id: 'movie', label: 'Phim Ảnh' },
+                { id: 'manga', label: 'Truyện Manga' },
+                { id: 'livetv', label: 'Truyền Hình TV' },
+                { id: 'utility', label: 'Tiện Ích / Proxy' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setSelectedCategory(tab.id)}
+                  className={`text-xs px-3 py-1.5 rounded-lg font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                    selectedCategory === tab.id
+                      ? 'bg-blue-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Search Input */}
+            <div className="relative min-w-[240px]">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Tìm theo tên, URL, ID..."
+                className="w-full bg-[#0f172a] border border-slate-800 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* API Cards Grid */}
+          {filteredApis.length === 0 ? (
+            <div className="bg-[#0f172a] border border-slate-800/80 rounded-2xl p-10 text-center space-y-3">
+              <Server className="w-8 h-8 text-slate-500 mx-auto" />
+              <p className="text-sm font-semibold text-slate-300">Không tìm thấy API nào phù hợp</p>
+              <p className="text-xs text-slate-500">
+                Bạn có thể thử tìm với từ khóa khác hoặc bấm "+ Thêm API Mới" để bổ sung endpoint mới.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredApis.map((api) => {
+                const isPinging = pingingApiId === api.id;
+                return (
+                  <div
+                    key={api.id}
+                    className={`bg-[#0f172a] border rounded-2xl p-4 sm:p-5 shadow-lg flex flex-col justify-between transition-all ${
+                      api.enabled
+                        ? 'border-blue-900/40 hover:border-blue-700/60'
+                        : 'border-slate-800/60 opacity-60 bg-slate-950/40'
+                    }`}
+                  >
+                    <div>
+                      {/* Top Bar: Name, Category & Enable Toggle */}
+                      <div className="flex items-start justify-between gap-2 pb-3 mb-3 border-b border-slate-800">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-sm text-white truncate">{api.name}</h3>
+                            <span className="text-[10px] font-mono uppercase bg-blue-950 text-sky-400 border border-blue-800/60 px-1.5 py-0.5 rounded">
+                              {api.category}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-400 font-mono truncate mt-0.5">
+                            ID: <span className="text-slate-300">@{api.id}</span>
+                            {api.priority && <span className="text-slate-500 ml-2">Ưu tiên: #{api.priority}</span>}
+                          </p>
+                        </div>
+
+                        {/* Enable / Disable Toggle Switch */}
+                        <button
+                          onClick={() => handleToggleEnabled(api)}
+                          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            api.enabled ? 'bg-blue-600' : 'bg-slate-700'
+                          }`}
+                          title={api.enabled ? 'Đang kích hoạt (Bấm để tắt)' : 'Đang tắt (Bấm để bật)'}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                              api.enabled ? 'translate-x-5' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+
+                      {/* URL presentation */}
+                      <div className="space-y-2 text-xs mb-4">
+                        <div className="bg-[#131f37]/60 p-2.5 rounded-xl border border-slate-800 font-mono text-[11px] break-all">
+                          <span className="text-slate-500 select-none">Base URL: </span>
+                          <span className="text-sky-300">{api.baseUrl}</span>
+                        </div>
+
+                        {api.description && (
+                          <p className="text-xs text-slate-400 line-clamp-2">{api.description}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Status Indicator & Actions Footer */}
+                    <div className="pt-3 border-t border-slate-800/60 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          {getStatusBadge(api.lastStatus, api.lastLatencyMs)}
+                        </div>
+
+                        <button
+                          onClick={() => handlePingSingle(api)}
+                          disabled={isPinging}
+                          className="flex items-center gap-1.5 text-xs text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 px-2.5 py-1.5 rounded-lg border border-slate-700 transition-colors cursor-pointer"
+                          title="Kiểm tra kết nối và đo độ trễ ms"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${isPinging ? 'animate-spin text-sky-400' : ''}`} />
+                          <span>{isPinging ? 'Đang đo...' : 'Ping Test'}</span>
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-1.5 pt-1">
+                        <button
+                          onClick={() => handleOpenEditModal(api)}
+                          className="flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300 bg-sky-950/60 hover:bg-sky-900/60 border border-sky-800/60 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                          <span>Sửa</span>
+                        </button>
+
+                        <button
+                          onClick={() => setDeletingApi(api)}
+                          className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 bg-red-950/60 hover:bg-red-900/60 border border-red-800/60 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Xóa</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
-      </div>
+      )}
 
-      {/* API Cards Grid */}
-      {filteredApis.length === 0 ? (
-        <div className="bg-[#0f172a] border border-slate-800/80 rounded-2xl p-10 text-center space-y-3">
-          <Server className="w-8 h-8 text-slate-500 mx-auto" />
-          <p className="text-sm font-semibold text-slate-300">Không tìm thấy API nào phù hợp</p>
-          <p className="text-xs text-slate-500">
-            Bạn có thể thử tìm với từ khóa khác hoặc bấm "+ Thêm API Mới" để bổ sung endpoint mới.
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredApis.map((api) => {
-            const isPinging = pingingApiId === api.id;
-            return (
-              <div
-                key={api.id}
-                className={`bg-[#0f172a] border rounded-2xl p-4 sm:p-5 shadow-lg flex flex-col justify-between transition-all ${
-                  api.enabled
-                    ? 'border-blue-900/40 hover:border-blue-700/60'
-                    : 'border-slate-800/60 opacity-60 bg-slate-950/40'
-                }`}
-              >
-                <div>
-                  {/* Top Bar: Name, Category & Enable Toggle */}
-                  <div className="flex items-start justify-between gap-2 pb-3 mb-3 border-b border-slate-800">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-bold text-sm text-white truncate">{api.name}</h3>
-                        <span className="text-[10px] font-mono uppercase bg-blue-950 text-sky-400 border border-blue-800/60 px-1.5 py-0.5 rounded">
-                          {api.category}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400 font-mono truncate mt-0.5">
-                        ID: <span className="text-slate-300">@{api.id}</span>
-                        {api.priority && <span className="text-slate-500 ml-2">Ưu tiên: #{api.priority}</span>}
-                      </p>
-                    </div>
-
-                    {/* Enable / Disable Toggle Switch */}
-                    <button
-                      onClick={() => handleToggleEnabled(api)}
-                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                        api.enabled ? 'bg-blue-600' : 'bg-slate-700'
-                      }`}
-                      title={api.enabled ? 'Đang kích hoạt (Bấm để tắt)' : 'Đang tắt (Bấm để bật)'}
-                    >
-                      <span
-                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                          api.enabled ? 'translate-x-5' : 'translate-x-0'
-                        }`}
-                      />
-                    </button>
-                  </div>
-
-                  {/* URL presentation */}
-                  <div className="space-y-2 text-xs mb-4">
-                    <div className="bg-[#131f37]/60 p-2.5 rounded-xl border border-slate-800 font-mono text-[11px] break-all">
-                      <span className="text-slate-500 select-none">Base URL: </span>
-                      <span className="text-sky-300">{api.baseUrl}</span>
-                    </div>
-
-                    {api.description && (
-                      <p className="text-xs text-slate-400 line-clamp-2">{api.description}</p>
-                    )}
-                  </div>
+      {/* --- SUBTAB 2: FALLBACK ROUTING & PRIORITY --- */}
+      {subTab === 'fallback_routing' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Smart Fallback Toggle Card */}
+          <div className="bg-[#0f172a] border border-blue-900/60 p-5 sm:p-6 rounded-3xl shadow-xl">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-5 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-950 border border-indigo-800 flex items-center justify-center text-indigo-400 shrink-0">
+                  <Shuffle className="w-6 h-6" />
                 </div>
-
-                {/* Status Indicator & Actions Footer */}
-                <div className="pt-3 border-t border-slate-800/60 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {getStatusBadge(api.lastStatus, api.lastLatencyMs)}
-                    </div>
-
-                    <button
-                      onClick={() => handlePingSingle(api)}
-                      disabled={isPinging}
-                      className="flex items-center gap-1.5 text-xs text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 px-2.5 py-1.5 rounded-lg border border-slate-700 transition-colors cursor-pointer"
-                      title="Kiểm tra kết nối và đo độ trễ ms"
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${isPinging ? 'animate-spin text-sky-400' : ''}`} />
-                      <span>{isPinging ? 'Đang đo...' : 'Ping Test'}</span>
-                    </button>
-                  </div>
-
-                  <div className="flex items-center justify-end gap-1.5 pt-1">
-                    <button
-                      onClick={() => handleOpenEditModal(api)}
-                      className="flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300 bg-sky-950/60 hover:bg-sky-900/60 border border-sky-800/60 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                      <span>Sửa</span>
-                    </button>
-
-                    <button
-                      onClick={() => setDeletingApi(api)}
-                      className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 bg-red-950/60 hover:bg-red-900/60 border border-red-800/60 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Xóa</span>
-                    </button>
-                  </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                    <span>Tự Động Chuyển Nguồn Thông Minh (Smart Auto-Fallback)</span>
+                    <span className="px-2 py-0.5 rounded-md bg-indigo-900 text-indigo-200 text-[10px] font-bold">
+                      ACTIVE
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Khi API nguồn chính gặp sự cố (Timeout, HTTP 500, Rate limit), hệ thống tự động định tuyến sang nguồn dự phòng tiếp theo.
+                  </p>
                 </div>
               </div>
-            );
-          })}
+
+              <button
+                onClick={() => handleToggleFallback(!fallbackEnabled)}
+                className={`relative inline-flex h-7 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  fallbackEnabled ? 'bg-blue-600' : 'bg-slate-700'
+                }`}
+                title="Bật/Tắt chế độ tự động dự phòng"
+              >
+                <span
+                  className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                    fallbackEnabled ? 'translate-x-7' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* Explanation & Algorithm Details */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-5">
+              <div className="bg-[#131f37]/60 p-4 rounded-2xl border border-slate-800 space-y-2">
+                <div className="flex items-center gap-2 text-sky-400 text-xs font-bold">
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>1. Phát Hiện Sự Cố Thời Gian Thực</span>
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Hệ thống liên tục theo dõi mã trạng thái HTTP và độ trễ phản hồi từ máy chủ nguồn. Nếu phát hiện lỗi hoặc timeout &gt; 6s, trình phát sẽ không bị gián đoạn.
+                </p>
+              </div>
+
+              <div className="bg-[#131f37]/60 p-4 rounded-2xl border border-slate-800 space-y-2">
+                <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold">
+                  <Layers className="w-4 h-4" />
+                  <span>2. Định Tuyến Theo Thứ Tự Ưu Tiên</span>
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Lựa chọn nguồn dự phòng tiếp theo có độ ưu tiên cao nhất (#1 → #2 → #3) và có trạng thái <code>Live</code> / <code>Slow</code> với độ trễ thấp nhất.
+                </p>
+              </div>
+
+              <div className="bg-[#131f37]/60 p-4 rounded-2xl border border-slate-800 space-y-2">
+                <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold">
+                  <Zap className="w-4 h-4" />
+                  <span>3. Trải Nghiệm Liền Mạch Cho Người Xem</span>
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Người xem tại rạp phim hoặc người đọc truyện không cần thao tác tải lại trang, luồng dữ liệu tự động đồng bộ hóa trong suốt và mượt mà.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Priority breakdown by category */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider">
+              Thứ Tự Ưu Tiên Nguồn Phát Theo Thể Loại
+            </h3>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Movies priority */}
+              <div className="bg-[#0f172a] border border-blue-900/40 p-4 sm:p-5 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span className="text-sky-400">🎬 Phim Ảnh (Movie Streaming)</span>
+                  </h4>
+                  <span className="text-[11px] text-slate-400 font-mono">
+                    {apis.filter((a) => a.category === 'movie' && a.enabled).length} nguồn hoạt động
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {apis
+                    .filter((a) => a.category === 'movie')
+                    .sort((a, b) => (a.priority || 99) - (b.priority || 99))
+                    .map((api, idx) => (
+                      <div
+                        key={api.id}
+                        className="flex items-center justify-between p-3 rounded-xl bg-[#131f37] border border-slate-800 text-xs"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-6 h-6 rounded-lg bg-blue-950 text-sky-400 border border-blue-800 flex items-center justify-center font-bold text-xs shrink-0">
+                            #{idx + 1}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="font-bold text-white truncate">{api.name}</p>
+                            <p className="text-[11px] text-slate-400 font-mono truncate">{api.baseUrl}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {getStatusBadge(api.lastStatus, api.lastLatencyMs)}
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                              api.enabled ? 'bg-emerald-950 text-emerald-300' : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {api.enabled ? 'Ưu tiên ' + (api.priority || idx + 1) : 'Tắt'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+
+              {/* Manga priority */}
+              <div className="bg-[#0f172a] border border-blue-900/40 p-4 sm:p-5 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span className="text-indigo-400">📖 Truyện Tranh (Manga Reader)</span>
+                  </h4>
+                  <span className="text-[11px] text-slate-400 font-mono">
+                    {apis.filter((a) => a.category === 'manga' && a.enabled).length} nguồn hoạt động
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {apis
+                    .filter((a) => a.category === 'manga')
+                    .sort((a, b) => (a.priority || 99) - (b.priority || 99))
+                    .map((api, idx) => (
+                      <div
+                        key={api.id}
+                        className="flex items-center justify-between p-3 rounded-xl bg-[#131f37] border border-slate-800 text-xs"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="w-6 h-6 rounded-lg bg-indigo-950 text-indigo-400 border border-indigo-800 flex items-center justify-center font-bold text-xs shrink-0">
+                            #{idx + 1}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="font-bold text-white truncate">{api.name}</p>
+                            <p className="text-[11px] text-slate-400 font-mono truncate">{api.baseUrl}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {getStatusBadge(api.lastStatus, api.lastLatencyMs)}
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                              api.enabled ? 'bg-emerald-950 text-emerald-300' : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {api.enabled ? 'Ưu tiên ' + (api.priority || idx + 1) : 'Tắt'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- SUBTAB 3: SYSTEM INFO & CACHE --- */}
+      {subTab === 'system_info' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Cloud Firestore Info Card */}
+          <div className="bg-[#0f172a] border border-blue-900/60 p-5 sm:p-6 rounded-3xl shadow-xl space-y-4">
+            <div className="flex items-center gap-3 pb-4 border-b border-slate-800">
+              <div className="w-12 h-12 rounded-2xl bg-sky-950 border border-sky-800 flex items-center justify-center text-sky-400 shrink-0">
+                <Database className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                  <span>Cơ Sở Dữ Liệu Cloud Firestore</span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>Đồng Bộ Trực Tiếp</span>
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Lưu trữ dữ liệu thời gian thực người dùng, hồ sơ, tiến trình xem phim, lịch sử và kho ảnh đại diện.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-[#131f37] p-3.5 rounded-2xl border border-slate-800 space-y-1">
+                <p className="text-[11px] text-slate-400">Database Project ID</p>
+                <p className="text-xs font-mono font-bold text-sky-300 truncate">ai-studio-qtbrpphimcnhn</p>
+              </div>
+              <div className="bg-[#131f37] p-3.5 rounded-2xl border border-slate-800 space-y-1">
+                <p className="text-[11px] text-slate-400">Khu Vực Máy Chủ (Region)</p>
+                <p className="text-xs font-mono font-bold text-emerald-400">asia-southeast1 (Singapore)</p>
+              </div>
+              <div className="bg-[#131f37] p-3.5 rounded-2xl border border-slate-800 space-y-1">
+                <p className="text-[11px] text-slate-400">Thời Gian Lưu Session</p>
+                <p className="text-xs font-mono font-bold text-indigo-400">Heartbeat 15s (Presence)</p>
+              </div>
+              <div className="bg-[#131f37] p-3.5 rounded-2xl border border-slate-800 space-y-1">
+                <p className="text-[11px] text-slate-400">Phiên Bản Hệ Thống</p>
+                <p className="text-xs font-mono font-bold text-amber-400">Gấu Cinema v2.5 Admin</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Cache Management Card */}
+          <div className="bg-[#0f172a] border border-blue-900/60 p-5 sm:p-6 rounded-3xl shadow-xl">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-amber-950/80 border border-amber-800 flex items-center justify-center text-amber-400 shrink-0">
+                  <HardDrive className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-white">
+                    Bộ Nhớ Tạm & Dọn Dẹp Dữ Liệu Trình Duyệt (Cache)
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Xóa các bộ nhớ đệm tạm thời của tìm kiếm và lịch sử hiển thị giao diện để giải phóng dung lượng.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={handleClearCache}
+                disabled={cacheClearState}
+                className="flex items-center gap-2 text-xs font-bold text-white bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 px-4 py-2.5 rounded-xl shadow-lg shadow-amber-600/30 transition-transform active:scale-95 cursor-pointer disabled:opacity-50 shrink-0"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{cacheClearState ? 'Đang Dọn Dẹp...' : 'Dọn Dẹp Cache Trình Duyệt'}</span>
+              </button>
+            </div>
+
+            <div className="pt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-400">
+              <div className="flex items-center gap-2 bg-[#131f37]/50 p-3 rounded-xl border border-slate-800">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Bảo toàn phiên đăng nhập của Admin</span>
+              </div>
+              <div className="flex items-center gap-2 bg-[#131f37]/50 p-3 rounded-xl border border-slate-800">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Làm mới toàn bộ danh sách API trên RAM</span>
+              </div>
+              <div className="flex items-center gap-2 bg-[#131f37]/50 p-3 rounded-xl border border-slate-800">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Tối ưu hóa tốc độ tải trang cho thiết bị yếu</span>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

@@ -92,7 +92,7 @@ export const Theater3DCarousel: React.FC<Theater3DCarouselProps> = ({ title, mov
 
             return (
               <motion.div
-                key={movie.slug || index}
+                key={`${movie.slug || movie._id || 'theater'}-${index}`}
                 initial={false}
                 animate={{
                   x: adjustedOffset * xSpacing,

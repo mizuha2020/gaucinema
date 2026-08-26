@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { YouTubeVideo, YouTubeChannel, UserProfile, Account } from '../../types';
-import { youtubeApi, formatViews } from '../../services/youtubeApi';
+import { youtubeApi, formatViews, CURATED_CHANNELS } from '../../services/youtubeApi';
+import { youtubeSubscriptionService } from '../../services/youtubeSubscriptionService';
 import { firestoreStorage } from '../../services/firestoreStorage';
 import { YouTubeVideoCard } from './YouTubeVideoCard';
 import { YouTubePlayerModal } from './YouTubePlayerModal';
@@ -140,6 +141,10 @@ interface YouTubeViewProps {
   activeProfile: UserProfile | null;
   searchQuery?: string;
   activeCategory?: string;
+  selectedVnTopic?: string;
+  selectedChannel?: YouTubeChannel | null;
+  onClearSelectedChannel?: () => void;
+  onSelectVnTopic?: (topicId: string) => void;
   onChannelViewChange?: (isOpen: boolean) => void;
   onShowToast?: (msg: string) => void;
 }
@@ -149,6 +154,10 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
   activeProfile,
   searchQuery = '',
   activeCategory = 'all',
+  selectedVnTopic = 'all',
+  selectedChannel = null,
+  onClearSelectedChannel,
+  onSelectVnTopic,
   onChannelViewChange,
   onShowToast,
 }) => {
@@ -159,10 +168,14 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
   const [nextToken, setNextToken] = useState<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<YouTubeVideo | null>(null);
-  const [selectedChannelView, setSelectedChannelView] = useState<YouTubeChannel | null>(null);
+  const [selectedChannelView, setSelectedChannelView] = useState<YouTubeChannel | null>(selectedChannel);
   const [shareVideoTarget, setShareVideoTarget] = useState<YouTubeVideo | null>(null);
 
-  const [selectedVnTopic, setSelectedVnTopic] = useState<string>('all');
+  useEffect(() => {
+    if (selectedChannel) {
+      setSelectedChannelView(selectedChannel);
+    }
+  }, [selectedChannel]);
 
   const [favorites, setFavorites] = useState<YouTubeVideo[]>(() => {
     try {
@@ -349,7 +362,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
     else if (activeCategory === 'history') setVideos(historyRef.current);
   }, [favorites, history, activeCategory, searchQuery, isLoading]);
 
-  const effectiveCategory = activeCategory === 'trending' && selectedVnTopic !== 'all' ? selectedVnTopic : activeCategory;
+  const effectiveCategory = selectedVnTopic !== 'all' ? selectedVnTopic : activeCategory;
 
   const fetchVideos = useCallback(
     async (opts?: { force?: boolean }) => {
@@ -395,14 +408,25 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
           homeCursorRef.current = 0;
 
           if (sources.length === 0) {
-            const page = await youtubeApi.getTrendingPage('all');
+            // Multi-topic blended recommendation mix for Home
+            const [allPage, musicItems, gamingItems, comedyItems] = await Promise.all([
+              youtubeApi.getTrendingPage('all').catch(() => ({ items: [], nextToken: null })),
+              youtubeApi.getTrending('music_vn').catch(() => []),
+              youtubeApi.getTrending('gaming_vn').catch(() => []),
+              youtubeApi.getTrending('comedy_vn').catch(() => []),
+            ]);
             if (gen !== opGenRef.current) return;
-            result = { videos: page.items, channels: [], nextToken: page.nextToken };
-            if (page.items.length === 0) {
-              const legacy = await youtubeApi.getTrending('all');
-              if (gen !== opGenRef.current) return;
-              result = { videos: legacy, channels: [], nextToken: null };
-            }
+            const merged = interleaveVideos([
+              allPage.items,
+              musicItems,
+              gamingItems,
+              comedyItems,
+            ]);
+            result = {
+              videos: merged.length > 0 ? merged : allPage.items,
+              channels: [],
+              nextToken: allPage.nextToken,
+            };
           } else {
             const first = sources.slice(0, 3);
             homeCursorRef.current = first.length;
@@ -417,6 +441,31 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
               if (gen !== opGenRef.current) return;
               result = { videos: page.items, channels: [], nextToken: page.nextToken };
             }
+          }
+        } else if (effectiveCategory === 'subscriptions') {
+          const subChans = youtubeSubscriptionService.getSubscribedChannels(profileId);
+          if (subChans.length > 0) {
+            const groups = await Promise.all(
+              subChans.slice(0, 6).map((c) =>
+                youtubeApi
+                  .getChannelDetails(c.id, c.title)
+                  .then((res) => res.items)
+                  .catch(() => [])
+              )
+            );
+            if (gen !== opGenRef.current) return;
+            const merged = interleaveVideos(groups);
+            if (merged.length > 0) {
+              result = { videos: merged, channels: subChans, nextToken: null };
+            } else {
+              const page = await youtubeApi.getTrendingPage('all');
+              if (gen !== opGenRef.current) return;
+              result = { videos: page.items, channels: subChans, nextToken: page.nextToken };
+            }
+          } else {
+            const page = await youtubeApi.getTrendingPage('all');
+            if (gen !== opGenRef.current) return;
+            result = { videos: page.items, channels: [], nextToken: page.nextToken };
           }
         } else {
           const page = await youtubeApi.getTrendingPage(effectiveCategory === 'trending' ? 'all' : effectiveCategory);
@@ -575,6 +624,8 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
       isFavorite={isFavorite(selectedVideo.id)}
       onOpenChannel={handleOpenChannelByName}
       onShowToast={onShowToast}
+      currentAccount={currentAccount}
+      activeProfile={activeProfile}
     />
   ) : null;
 
@@ -582,10 +633,14 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
     return (
       <>
         <YouTubeChannelPageView
+          key={selectedChannelView.id || selectedChannelView.title}
           channel={selectedChannelView}
           currentAccount={currentAccount}
           activeProfile={activeProfile}
-          onBack={() => setSelectedChannelView(null)}
+          onBack={() => {
+            setSelectedChannelView(null);
+            onClearSelectedChannel?.();
+          }}
           onPlayVideo={handleOpenVideo}
         />
         {playerModal}
@@ -594,39 +649,17 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
   }
 
   return (
-    <div className="min-h-screen bg-[#0F0F0F] text-[#FFFFFF] font-sans pb-24 pt-4">
-      <div className="max-w-[1800px] mx-auto px-4 sm:px-6 space-y-6">
+    <div className="min-h-screen bg-[#0F0F0F] text-[#FFFFFF] font-sans pb-24 pt-2 w-full min-w-0 overflow-x-hidden">
+      <div className="max-w-[1800px] mx-auto px-2 sm:px-6 space-y-4 sm:space-y-6 w-full min-w-0">
         {/* Search Results Header */}
         {searchQuery && (
-          <div className="flex items-center justify-between gap-4 border-b border-[#272727] pb-3">
+          <div className="flex items-center justify-between gap-4 border-b border-[#272727] pb-3 px-1">
             <h2 className="text-base sm:text-lg font-bold text-white truncate">
               Kết quả cho <span className="text-[#FF0000]">&quot;{searchQuery}&quot;</span>
             </h2>
             <span className="text-xs text-[#AAAAAA] shrink-0 font-medium">
               {isLoading ? 'Đang tải...' : `${videos.length} video`}
             </span>
-          </div>
-        )}
-
-        {/* Filter Chips Bar */}
-        {!searchQuery && (activeCategory === 'home' || activeCategory === 'trending' || activeCategory === 'all') && (
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none pt-1">
-            {VIETNAM_TOPIC_PILLS.map((pill) => {
-              const isSelected = selectedVnTopic === pill.id;
-              return (
-                <button
-                  key={pill.id}
-                  onClick={() => setSelectedVnTopic(pill.id)}
-                  className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                    isSelected
-                      ? 'bg-white text-black font-bold scale-[1.02]'
-                      : 'bg-[#272727] text-[#AAAAAA] hover:bg-[#3F3F3F] hover:text-white'
-                  }`}
-                >
-                  {pill.label}
-                </button>
-              );
-            })}
           </div>
         )}
 
@@ -639,9 +672,9 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
             </h3>
 
             <div className="divide-y divide-[#272727] rounded-2xl border border-[#272727] bg-[#181818] overflow-hidden">
-              {channels.map((chan) => (
+              {channels.map((chan, idx) => (
                 <div
-                  key={chan.id || chan.title}
+                  key={`${chan.id || chan.title || 'chan'}-${idx}`}
                   onClick={() => handleOpenChannel(chan)}
                   className="group flex items-center gap-4 px-4 py-3.5 hover:bg-[#272727] transition-colors cursor-pointer"
                 >
@@ -649,6 +682,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
                     src={chan.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(chan.title)}&background=FF0000&color=fff&bold=true`}
                     alt={chan.title}
                     className="w-12 h-12 sm:w-14 sm:h-14 rounded-full object-cover border border-white/10 shrink-0"
+                    referrerPolicy="no-referrer"
                   />
 
                   <div className="flex-1 min-w-0 space-y-0.5">
@@ -677,46 +711,162 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
           </div>
         )}
 
-        {/* Hero Featured Banner for Home / Trending */}
+        {/* Hero Featured Card for Home / Trending */}
         {heroVideo && !searchQuery && (activeCategory === 'home' || activeCategory === 'trending' || activeCategory === 'all') && selectedVnTopic === 'all' && (
-          <div className="group relative rounded-3xl overflow-hidden border border-[#272727] bg-[#181818] shadow-2xl transition-all">
-            <div className="relative aspect-video md:aspect-[21/9] w-full bg-black overflow-hidden">
-              <img
-                src={heroVideo.thumbnailUrl}
-                alt={heroVideo.title}
-                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 opacity-80"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-[#0F0F0F] via-[#0F0F0F]/40 to-transparent" />
-
+          <div className="group relative rounded-2xl sm:rounded-3xl overflow-hidden border border-[#272727] bg-[#181818] shadow-xl transition-all max-w-full min-w-0">
+            <div className="flex flex-col md:flex-row items-stretch">
+              {/* Thumbnail Container (Controlled Height to prevent huge layout shifting) */}
               <div
                 onClick={() => handleOpenVideo(heroVideo)}
-                className="absolute inset-0 flex items-center justify-center cursor-pointer"
+                className="relative aspect-video max-h-[220px] sm:max-h-[340px] md:max-h-none md:w-3/5 lg:w-2/3 bg-black overflow-hidden cursor-pointer shrink-0"
               >
-                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-[#FF0000] text-white flex items-center justify-center shadow-2xl shadow-red-600/60 group-hover:scale-110 transition-transform">
-                  <Play className="w-8 h-8 sm:w-10 sm:h-10 fill-current ml-1" />
+                <img
+                  src={heroVideo.thumbnailUrl}
+                  alt={heroVideo.title}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 opacity-90"
+                  referrerPolicy="no-referrer"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent md:hidden" />
+
+                {/* Badge on Mobile Thumbnail */}
+                <div className="absolute top-2.5 left-2.5 md:hidden z-10">
+                  <span className="bg-[#FF0000] text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full tracking-wider shadow-lg">
+                    {activeCategory === 'home' ? 'GỢI Ý DÀNH CHO BẠN' : 'NỔI BẬT HÔM NAY'}
+                  </span>
                 </div>
+
+                {/* Play Button */}
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-10 h-10 sm:w-16 sm:h-16 rounded-full bg-[#FF0000] text-white flex items-center justify-center shadow-xl shadow-red-600/50 group-hover:scale-110 transition-transform">
+                    <Play className="w-5 h-5 sm:w-8 sm:h-8 fill-current ml-0.5" />
+                  </div>
+                </div>
+
+                {/* Duration Badge */}
+                {heroVideo.duration && (
+                  <div className="absolute bottom-2.5 right-2.5 bg-black/85 text-white text-[11px] sm:text-xs font-semibold px-2 py-0.5 rounded tracking-wide font-mono z-10">
+                    {heroVideo.duration}
+                  </div>
+                )}
               </div>
 
-              <div className="absolute bottom-4 left-4 right-4 sm:bottom-6 sm:left-6 sm:right-6 space-y-2 pointer-events-none">
-                <span className="bg-[#FF0000] text-white text-[10px] sm:text-xs font-black uppercase px-3 py-1 rounded-full tracking-wider shadow-lg">
-                  {activeCategory === 'home' ? 'GỢI Ý DÀNH CHO BẠN' : 'NỔI BẬT HÔM NAY'}
-                </span>
-                <h2 className="text-lg sm:text-2xl font-black text-white line-clamp-2 drop-shadow-md">
-                  {heroVideo.title}
-                </h2>
-                <div className="flex items-center gap-3 text-xs text-slate-300 font-medium">
-                  <span className="font-bold text-red-400">{heroVideo.channelTitle}</span>
-                  <span>•</span>
-                  <span>{formatViews(heroVideo.viewCount)}</span>
-                  {heroVideo.duration && (
-                    <>
-                      <span>•</span>
-                      <span>{heroVideo.duration}</span>
-                    </>
+              {/* Metadata Container */}
+              <div className="p-3.5 sm:p-6 md:w-2/5 lg:w-1/3 flex flex-col justify-between gap-2.5 bg-[#181818] min-w-0">
+                <div className="space-y-1.5">
+                  <div className="hidden md:block">
+                    <span className="bg-[#FF0000] text-white text-xs font-black uppercase px-3 py-1 rounded-full tracking-wider shadow-md">
+                      {activeCategory === 'home' ? 'GỢI Ý DÀNH CHO BẠN' : 'NỔI BẬT HÔM NAY'}
+                    </span>
+                  </div>
+
+                  <h2
+                    onClick={() => handleOpenVideo(heroVideo)}
+                    className="text-sm sm:text-lg lg:text-xl font-bold text-white line-clamp-2 leading-snug cursor-pointer hover:text-red-400 transition-colors"
+                    title={heroVideo.title}
+                  >
+                    {heroVideo.title}
+                  </h2>
+
+                  {heroVideo.description && (
+                    <p className="text-xs text-[#AAAAAA] line-clamp-2 hidden lg:block leading-relaxed">
+                      {heroVideo.description}
+                    </p>
                   )}
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#272727]">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <img
+                      src={heroVideo.channelAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(heroVideo.channelTitle)}&background=FF0000&color=fff&bold=true`}
+                      alt={heroVideo.channelTitle}
+                      className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover border border-white/10 shrink-0"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-white truncate">{heroVideo.channelTitle}</p>
+                      <p className="text-[10px] sm:text-[11px] text-[#AAAAAA] font-medium">{formatViews(heroVideo.viewCount)}</p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => handleOpenVideo(heroVideo)}
+                    className="bg-white hover:bg-slate-200 text-black text-xs font-bold px-3 py-1.5 sm:px-4 sm:py-2 rounded-full transition-all cursor-pointer shrink-0 flex items-center gap-1 shadow"
+                  >
+                    <Play className="w-3 h-3 fill-current" />
+                    <span>Xem ngay</span>
+                  </button>
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Subscriptions Horizontal Channels Bar */}
+        {!searchQuery && activeCategory === 'subscriptions' && (
+          <div className="space-y-4 bg-[#181818] p-4 rounded-2xl border border-[#272727]">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Youtube className="w-4 h-4 text-[#FF0000]" />
+                <span>Kênh đã đăng ký ({youtubeSubscriptionService.getSubscribedChannels(profileId).length})</span>
+              </h3>
+            </div>
+
+            {youtubeSubscriptionService.getSubscribedChannels(profileId).length > 0 ? (
+              <div className="flex items-center gap-4 overflow-x-auto pb-2 scrollbar-none">
+                {youtubeSubscriptionService.getSubscribedChannels(profileId).map((chan, idx) => (
+                  <button
+                    key={`${chan.id || chan.title || 'sub'}-${idx}`}
+                    onClick={() => handleOpenChannel(chan)}
+                    className="flex flex-col items-center gap-1.5 min-w-[72px] max-w-[84px] group cursor-pointer shrink-0"
+                  >
+                    <div className="relative">
+                      <img
+                        src={chan.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(chan.title)}&background=FF0000&color=fff&bold=true`}
+                        alt={chan.title}
+                        className="w-12 h-12 rounded-full object-cover border-2 border-red-600/60 group-hover:border-red-500 transition-all shadow-md group-hover:scale-105"
+                        referrerPolicy="no-referrer"
+                      />
+                      <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-red-600 border-2 border-[#181818]" />
+                    </div>
+                    <span className="text-[11px] font-semibold text-slate-200 group-hover:text-white truncate w-full text-center">
+                      {chan.title}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs text-[#AAAAAA]">
+                  Bạn chưa đăng ký kênh nào. Hãy bấm <strong>Đăng ký</strong> các kênh nổi bật dưới đây để xem video mới nhất:
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                  {CURATED_CHANNELS.slice(0, 6).map((pop, idx) => (
+                    <div
+                      key={`${pop.id || 'curated'}-${idx}`}
+                      className="bg-[#222222] p-3 rounded-xl border border-[#333333] flex flex-col items-center text-center gap-2"
+                    >
+                      <img
+                        src={pop.avatarUrl}
+                        alt={pop.title}
+                        className="w-10 h-10 rounded-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                      <span className="text-xs font-bold text-white truncate w-full">{pop.title}</span>
+                      <button
+                        onClick={async () => {
+                          await youtubeSubscriptionService.toggleSubscribe(currentAccount, activeProfile, pop);
+                          fetchVideos({ force: true });
+                          onShowToast?.(`Đã đăng ký ${pop.title}!`);
+                        }}
+                        className="w-full bg-red-600 hover:bg-red-700 text-white text-[11px] font-bold py-1 px-2 rounded-full transition-colors cursor-pointer"
+                      >
+                        Đăng ký
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -726,6 +876,8 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
             <div className="flex items-center gap-2">
               {activeCategory === 'home' ? (
                 <Sparkles className="w-5 h-5 text-[#FF0000]" />
+              ) : activeCategory === 'subscriptions' ? (
+                <Youtube className="w-5 h-5 text-[#FF0000]" />
               ) : activeCategory === 'saved' || activeCategory === 'liked' || activeCategory === 'watch_later' ? (
                 <Heart className="w-5 h-5 text-[#FF0000] fill-current" />
               ) : activeCategory === 'history' ? (
@@ -738,6 +890,8 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
                   ? `Video Đã Lưu (${favorites.length})`
                   : activeCategory === 'history'
                   ? `Lịch Sử Xem (${history.length})`
+                  : activeCategory === 'subscriptions'
+                  ? `Video Từ Kênh Đã Đăng Ký`
                   : activeCategory === 'home'
                   ? 'Dành Cho Bạn'
                   : selectedVnTopic !== 'all'
@@ -764,11 +918,11 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
 
         {/* Grid of Video Cards using YouTubeVideoCard Component */}
         {isLoading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4 lg:gap-5">
             {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => (
               <div
                 key={i}
-                className="bg-[#272727] rounded-xl overflow-hidden animate-pulse h-64"
+                className="bg-[#272727] rounded-xl overflow-hidden animate-pulse h-60 sm:h-64"
               />
             ))}
           </div>
@@ -791,13 +945,13 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-4 gap-y-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-x-3 gap-y-6 sm:gap-x-4 sm:gap-y-6 lg:gap-x-4 lg:gap-y-8">
             {((!searchQuery && (activeCategory === 'home' || activeCategory === 'trending' || activeCategory === 'all') && selectedVnTopic === 'all')
               ? mainGridVideos
               : videos
-            ).map((v) => (
+            ).map((v, idx) => (
               <YouTubeVideoCard
-                key={v.id}
+                key={`${v.id || 'yt'}-${idx}`}
                 video={v}
                 onSelectVideo={handleOpenVideo}
                 onOpenChannel={handleOpenChannelByName}

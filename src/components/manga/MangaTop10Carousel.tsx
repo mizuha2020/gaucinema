@@ -49,7 +49,7 @@ export const MangaTop10Carousel: React.FC<MangaTop10CarouselProps> = ({ title, m
           style={{ scrollbarWidth: 'none' }}
         >
           {top10.map((manga, index) => (
-            <div key={manga.id} className="relative flex-shrink-0 w-48 sm:w-56 h-64 sm:h-72 flex items-end">
+            <div key={`${manga.id || manga.slug || 'top10'}-${index}`} className="relative flex-shrink-0 w-48 sm:w-56 h-64 sm:h-72 flex items-end">
               {/* Background Number Layer */}
               <div className="absolute -left-4 sm:-left-6 bottom-[-10px] z-0 flex items-center justify-start h-full">
                 <span

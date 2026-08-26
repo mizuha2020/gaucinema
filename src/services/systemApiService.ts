@@ -7,7 +7,7 @@ import {
   updateDoc,
   deleteDoc,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType, sanitizeData } from './firebase';
+import { db, handleFirestoreError, isFirestoreQuotaExhausted, OperationType, sanitizeData } from './firebase';
 import { SystemApiEndpoint, ApiCategory, ApiHealthStatus } from '../types';
 import { getFullApiUrl } from './apiConfig';
 
@@ -197,6 +197,11 @@ class SystemApiService {
    */
   async getAllApis(): Promise<SystemApiEndpoint[]> {
     try {
+      if (isFirestoreQuotaExhausted()) {
+        this.loadFromLocalStorage();
+        return this.inMemoryApis.length > 0 ? this.inMemoryApis : DEFAULT_SYSTEM_APIS;
+      }
+
       const colRef = collection(db, 'system_apis');
       const snap = await getDocs(colRef);
 
@@ -212,7 +217,7 @@ class SystemApiService {
       console.log('Seeding initial system APIs into Firestore...');
       for (const api of DEFAULT_SYSTEM_APIS) {
         const docRef = doc(db, 'system_apis', api.id);
-        await setDoc(docRef, sanitizeData(api));
+        await setDoc(docRef, sanitizeData(api)).catch(() => {});
       }
 
       this.saveToLocalStorage(DEFAULT_SYSTEM_APIS);
@@ -220,6 +225,7 @@ class SystemApiService {
       return DEFAULT_SYSTEM_APIS;
     } catch (err) {
       console.warn('getAllApis Firestore fallback:', err);
+      this.loadFromLocalStorage();
       return this.inMemoryApis.length > 0 ? this.inMemoryApis : DEFAULT_SYSTEM_APIS;
     }
   }

@@ -252,6 +252,8 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
           onClose={handleCloseReader}
           onSelectChapter={(ch) => setActiveReadingSession({ manga: selectedManga, chapter: ch, pageIndex: 0 })}
           onChapterRead={handleChapterRead}
+          currentAccount={currentAccount}
+          activeProfile={activeProfile}
         />
       )}
 
@@ -291,11 +293,11 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 sm:gap-6">
-              {savedMangaList.map((manga) => {
+              {savedMangaList.map((manga, idx) => {
                 const active = isSourceActive(manga.source);
                 return (
                   <div
-                    key={manga.id}
+                    key={`${manga.id || manga.slug || 'saved'}-${idx}`}
                     onClick={() => {
                       if (!active) {
                         setDisabledSourceAlert(`Nguồn "${manga.source.toUpperCase()}" hiện đang tạm vô hiệu hóa bởi Quản trị viên.`);
@@ -600,14 +602,14 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
               <div className="hidden lg:flex lg:col-span-4 flex-col gap-6">
                 {[mangaList[1], mangaList[2]].map((manga, idx) => (
                   <div 
-                    key={manga.id}
+                    key={`${manga?.id || manga?.slug || 'feat'}-${idx}`}
                     onClick={() => handleOpenDetail(manga)}
                     className="group relative rounded-3xl overflow-hidden flex-1 cursor-pointer"
                   >
                     <div className="absolute inset-0 bg-gray-900">
                       <img 
                         src={manga.coverUrl} 
-                        alt={manga.title}
+                        alt={manga.title} 
                         referrerPolicy="no-referrer"
                         className="w-full h-full object-cover opacity-60 group-hover:opacity-70 group-hover:scale-105 transition duration-700"
                         onError={(e) => {
@@ -664,8 +666,8 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
                       </h3>
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-5 lg:gap-6">
-                      {mangaList.map((manga) => (
-                        <div key={manga.id} onClick={() => handleOpenDetail(manga)} className="group relative flex flex-col cursor-pointer">
+                      {mangaList.map((manga, idx) => (
+                        <div key={`${manga.id || manga.slug || 'search'}-${idx}`} onClick={() => handleOpenDetail(manga)} className="group relative flex flex-col cursor-pointer">
                           <div className="relative aspect-[2/3] overflow-hidden rounded-2xl bg-[#18181b] mb-3">
                             <img
                               src={manga.coverUrl}

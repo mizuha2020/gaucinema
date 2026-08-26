@@ -55,7 +55,15 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
     if (t) setMovieType(t);
     if (initialGenre) setSelectedGenre(initialGenre);
     if (initialCountry) setSelectedCountry(initialCountry);
-    if (initialKeyword !== undefined) setKeyword(initialKeyword);
+    if (initialKeyword !== undefined) {
+      setKeyword(initialKeyword);
+      // If a search keyword is passed (e.g. from clicking an actor), clear specific category/country filters to avoid over-filtering
+      if (initialKeyword.trim() && !fixedType) {
+        setSelectedGenre('');
+        setSelectedCountry('');
+        setMovieType('all');
+      }
+    }
     setCurrentPage(1);
   }, [fixedType, initialType, initialGenre, initialCountry, initialKeyword]);
 
@@ -336,6 +344,28 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
       </div>
 
       {/* Movie Results Grid */}
+      {keyword && (
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 bg-blue-950/40 border border-blue-800/50 rounded-xl px-4 py-3 shadow-inner">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+            <span className="text-xs sm:text-sm text-slate-200">
+              Kết quả tìm kiếm cho: <strong className="text-sky-300 font-bold">"{keyword}"</strong>
+              <span className="text-slate-400 ml-1 text-xs">(Bao gồm tên phim, diễn viên và đạo diễn)</span>
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              setKeyword('');
+              setCurrentPage(1);
+            }}
+            className="text-xs text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700 cursor-pointer transition-colors flex items-center gap-1"
+          >
+            <span>Xóa từ khóa</span>
+            <span className="text-slate-400">✕</span>
+          </button>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="py-20 flex flex-col items-center justify-center text-center">
           <div className="w-12 h-12 border-4 border-slate-700 border-t-blue-500 rounded-full animate-spin mb-4" />
@@ -355,7 +385,7 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
         <>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-5 sm:gap-7 lg:gap-8">
             {movies.map((movie, idx) => (
-              <div key={movie.slug || movie._id || idx} className="flex justify-center">
+              <div key={`${movie.slug || movie._id || 'filter'}-${idx}`} className="flex justify-center">
                 <MovieCard
                   movie={movie}
                   onPlay={handlePlay}

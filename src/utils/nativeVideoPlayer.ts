@@ -10,10 +10,48 @@ export interface NativeVideoPlayerPlugin {
   playExternal(options: {
     url: string;
   }): Promise<void>;
+  enterPip(): Promise<void>;
+  setVideoPlaying(options: { playing: boolean }): Promise<void>;
+  isPipSupported(): Promise<{ supported: boolean }>;
   isNativeSupported(): Promise<{ supported: boolean }>;
 }
 
 const NativeVideoPlayer = registerPlugin<NativeVideoPlayerPlugin>('NativeVideoPlayer');
+
+export async function enterNativePip(): Promise<boolean> {
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+    try {
+      await NativeVideoPlayer.enterPip();
+      return true;
+    } catch (err) {
+      console.warn('[NativeVideoPlayer] Failed to enter native PiP:', err);
+      return false;
+    }
+  }
+  return false;
+}
+
+export async function setNativeVideoPlaying(playing: boolean): Promise<void> {
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+    try {
+      await NativeVideoPlayer.setVideoPlaying({ playing });
+    } catch (err) {
+      console.warn('[NativeVideoPlayer] Failed to set video playing flag:', err);
+    }
+  }
+}
+
+export async function checkNativePipSupported(): Promise<boolean> {
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+    try {
+      const res = await NativeVideoPlayer.isPipSupported();
+      return !!res.supported;
+    } catch (err) {
+      return false;
+    }
+  }
+  return false;
+}
 
 export async function playInNativeExoPlayer(options: {
   url: string;

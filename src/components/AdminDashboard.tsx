@@ -5,6 +5,7 @@ import { firestoreStorage } from '../services/firestoreStorage';
 import { AdminConfirmModal } from './AdminConfirmModal';
 import { AdminOverviewTab } from './admin/AdminOverviewTab';
 import { AdminApisTab } from './admin/AdminApisTab';
+import { AdminNotificationsTab } from './admin/AdminNotificationsTab';
 import {
   Users,
   Image as ImageIcon,
@@ -27,6 +28,7 @@ import {
   Check,
   Server,
   Activity,
+  Bell,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -41,17 +43,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onBackToCinema,
   onShowToast,
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'apis' | 'accounts' | 'avatars'>(() => {
+  const [activeTab, setActiveTab] = useState<'overview' | 'apis' | 'notifications' | 'accounts' | 'avatars'>(() => {
     try {
       const saved = localStorage.getItem('gau_admin_active_tab');
-      if (saved && ['overview', 'apis', 'accounts', 'avatars'].includes(saved)) {
-        return saved as 'overview' | 'apis' | 'accounts' | 'avatars';
+      if (saved && ['overview', 'apis', 'notifications', 'accounts', 'avatars'].includes(saved)) {
+        return saved as 'overview' | 'apis' | 'notifications' | 'accounts' | 'avatars';
       }
     } catch (e) {
       console.error('Failed to read admin active tab from localStorage:', e);
     }
     return 'overview';
   });
+
+  // Sub-tab states for each major section
+  const [overviewSubTab, setOverviewSubTab] = useState<'live' | 'users_stats' | 'watch_history'>('live');
+  const [apisSubTab, setApisSubTab] = useState<'api_status' | 'fallback_routing' | 'system_info'>('api_status');
+  const [accountsSubTab, setAccountsSubTab] = useState<'accounts_list' | 'roles_permissions' | 'security_audit'>('accounts_list');
+  const [avatarsSubTab, setAvatarsSubTab] = useState<'avatar_gallery' | 'avatar_upload' | 'default_presets'>('avatar_gallery');
 
   useEffect(() => {
     try {
@@ -337,395 +345,847 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   return (
     <div
       id="qtb-admin-dashboard"
-      className="min-h-screen w-full bg-[#070b16] text-white pt-6 sm:pt-10 pb-32 px-3 sm:px-6 lg:px-8 overflow-y-auto overflow-x-hidden"
+      className="min-h-screen w-full bg-[#070b16] text-white overflow-y-auto overflow-x-hidden flex"
       style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
     >
-      <div className="max-w-7xl mx-auto space-y-5 sm:space-y-6">
-        {/* Top Bar Header */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#0b1329]/95 border border-blue-900/60 p-4 sm:p-5 rounded-3xl backdrop-blur-md shadow-2xl">
-          <div className="flex items-center gap-3 min-w-0 w-full sm:w-auto">
-            <button
-              id="admin-back-btn"
-              onClick={onBackToCinema}
-              className="p-2.5 rounded-2xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700 shrink-0"
-              title="Quay lại rạp phim"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
+      {/* --- DESKTOP SIDEBAR (Visible on md and lg screens) --- */}
+      <aside
+        id="admin-desktop-sidebar"
+        className="hidden md:flex md:w-64 lg:w-72 md:fixed md:top-0 md:bottom-0 md:left-0 md:z-30 bg-[#091122]/95 border-r border-blue-900/60 p-4 sm:p-5 flex-col justify-between shadow-2xl backdrop-blur-xl"
+      >
+        <div className="space-y-6">
+          {/* Sidebar Header */}
+          <div className="flex items-center gap-3 pb-4 border-b border-slate-800">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white font-bold shadow-lg shadow-blue-600/30 shrink-0">
+              <Shield className="w-5 h-5" />
+            </div>
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-lg sm:text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-indigo-400 truncate">
-                  Bảng Quản Trị Hệ Thống
-                </span>
-                <span className="px-2 py-0.5 rounded-md bg-indigo-950 text-indigo-300 border border-indigo-700/60 text-[10px] uppercase font-bold shrink-0">
-                  Admin Portal
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-0.5 hidden sm:block">
-                Quản lý người dùng, cấp quyền bảo mật và kho ảnh đại diện
-              </p>
+              <h1 className="text-sm font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-indigo-400 truncate">
+                Bảng Quản Trị
+              </h1>
+              <span className="text-[10px] text-indigo-300 bg-indigo-950/80 border border-indigo-700/60 px-1.5 py-0.2 rounded font-mono uppercase font-bold">
+                Admin Portal
+              </span>
             </div>
           </div>
 
-          {/* Tab Selector & Refresh */}
-          <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-2">
-            <button
-              onClick={loadData}
-              className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white cursor-pointer border border-slate-700 shrink-0"
-              title="Làm mới dữ liệu"
-            >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-            </button>
-            <div className="flex items-center p-1 bg-[#131f37] rounded-2xl border border-slate-800 flex-1 sm:flex-initial overflow-x-auto">
-              <button
-                id="admin-tab-overview-btn"
-                onClick={() => setActiveTab('overview')}
-                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  activeTab === 'overview'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Activity className="w-3.5 h-3.5" />
-                <span>Thống Kê & Đang Xem</span>
-              </button>
-              <button
-                id="admin-tab-apis-btn"
-                onClick={() => setActiveTab('apis')}
-                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  activeTab === 'apis'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Server className="w-3.5 h-3.5" />
-                <span>Quản Lý API</span>
-              </button>
-              <button
-                id="admin-tab-accounts-btn"
-                onClick={() => setActiveTab('accounts')}
-                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  activeTab === 'accounts'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Users className="w-3.5 h-3.5" />
-                <span>Tài Khoản ({accounts.length})</span>
-              </button>
-              <button
-                id="admin-tab-avatars-btn"
-                onClick={() => setActiveTab('avatars')}
-                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  activeTab === 'avatars'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <ImageIcon className="w-3.5 h-3.5" />
-                <span>Kho Avatar ({customAvatars.length})</span>
-              </button>
+          {/* Logged in admin info */}
+          <div className="p-3 bg-[#0d172e] rounded-2xl border border-blue-900/50 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-blue-600/20 border border-blue-500/40 text-blue-300 flex items-center justify-center font-bold text-xs shrink-0">
+                {currentAccount.displayName ? currentAccount.displayName.charAt(0).toUpperCase() : 'A'}
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-white truncate">{currentAccount.displayName || currentAccount.username}</p>
+                <p className="text-[10px] text-slate-400 font-mono truncate">@{currentAccount.username}</p>
+              </div>
             </div>
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Online" />
           </div>
+
+          {/* Sidebar Navigation Links */}
+          <nav className="space-y-1.5">
+            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-3 mb-2">
+              Danh Mục Quản Lý
+            </div>
+
+            {/* Item 1: Overview */}
+            <button
+              id="sidebar-nav-overview-btn"
+              onClick={() => setActiveTab('overview')}
+              className={`w-full flex items-center justify-between p-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'overview'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Activity className="w-4 h-4" />
+                <span>Tổng Quan</span>
+              </div>
+            </button>
+
+            {/* Item 2: APIs */}
+            <button
+              id="sidebar-nav-apis-btn"
+              onClick={() => setActiveTab('apis')}
+              className={`w-full flex items-center justify-between p-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'apis'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Server className="w-4 h-4" />
+                <span>Hệ Thống API</span>
+              </div>
+            </button>
+
+            {/* Item 3: Notifications */}
+            <button
+              id="sidebar-nav-notifications-btn"
+              onClick={() => setActiveTab('notifications')}
+              className={`w-full flex items-center justify-between p-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'notifications'
+                  ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
+                  : 'text-amber-400 hover:text-amber-300 hover:bg-amber-950/40'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Bell className="w-4 h-4 text-amber-400" />
+                <span>Gửi Thông Báo</span>
+              </div>
+              <span className="px-1.5 py-0.2 text-[9px] bg-amber-950 text-amber-300 border border-amber-800/80 rounded-full font-mono">
+                Banner
+              </span>
+            </button>
+
+            {/* Item 4: Accounts */}
+            <button
+              id="sidebar-nav-accounts-btn"
+              onClick={() => setActiveTab('accounts')}
+              className={`w-full flex items-center justify-between p-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'accounts'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Users className="w-4 h-4" />
+                <span>Quản Lý Tài Khoản</span>
+              </div>
+              <span className="px-2 py-0.5 text-[10px] bg-slate-800 rounded-full text-slate-300 font-mono">
+                {accounts.length}
+              </span>
+            </button>
+
+            {/* Item 5: Avatars */}
+            <button
+              id="sidebar-nav-avatars-btn"
+              onClick={() => setActiveTab('avatars')}
+              className={`w-full flex items-center justify-between p-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'avatars'
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <ImageIcon className="w-4 h-4" />
+                <span>Kho Avatar</span>
+              </div>
+              <span className="px-2 py-0.5 text-[10px] bg-slate-800 rounded-full text-slate-300 font-mono">
+                {customAvatars.length}
+              </span>
+            </button>
+          </nav>
         </div>
+
+        {/* Sidebar Footer Actions */}
+        <div className="space-y-2 pt-4 border-t border-slate-800">
+          <button
+            onClick={loadData}
+            disabled={isLoading}
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold transition-all cursor-pointer border border-slate-700 shadow-sm disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-sky-400 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>{isLoading ? 'Đang làm mới...' : 'Làm mới dữ liệu'}</span>
+          </button>
+
+          <button
+            onClick={onBackToCinema}
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-red-950/50 hover:bg-red-900/60 text-red-300 border border-red-900/60 text-xs font-semibold transition-all cursor-pointer"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Quay lại rạp phim</span>
+          </button>
+        </div>
+      </aside>
+
+      {/* --- MAIN CONTENT AREA --- */}
+      <main className="flex-1 md:pl-64 lg:pl-72 w-full min-h-screen admin-mobile-safe-pt pb-28 md:pb-10 px-3 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto space-y-5 sm:space-y-6">
+          {/* Top Bar Header (Visible on Mobile or as breadcrumb header) */}
+          <div className="flex items-center justify-between gap-3 bg-[#0b1329]/95 border border-blue-900/60 p-3 sm:p-4 rounded-3xl backdrop-blur-md shadow-2xl">
+            <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+              <button
+                id="admin-back-btn"
+                onClick={onBackToCinema}
+                className="md:hidden min-w-[44px] min-h-[44px] p-2.5 rounded-2xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700 shrink-0 flex items-center justify-center active:scale-95"
+                title="Quay lại rạp phim"
+              >
+                <ArrowLeft className="w-5 h-5 text-sky-400" />
+              </button>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm sm:text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-sky-300 to-indigo-400 truncate">
+                    Bảng Quản Trị Hệ Thống
+                  </span>
+                  <span className="px-1.5 py-0.5 sm:px-2 sm:py-0.5 rounded-md bg-indigo-950 text-indigo-300 border border-indigo-700/60 text-[9px] sm:text-[10px] uppercase font-bold shrink-0">
+                    Admin Portal
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5 hidden sm:block">
+                  Quản lý người dùng, cấp quyền bảo mật, thông báo chữ chạy và nguồn API
+                </p>
+              </div>
+            </div>
+
+            {/* Refresh Icon Button */}
+            <button
+              id="admin-refresh-data-btn"
+              onClick={loadData}
+              disabled={isLoading}
+              className="min-w-[44px] min-h-[44px] p-2.5 rounded-2xl bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white transition-all cursor-pointer border border-slate-700 shadow-sm active:scale-95 disabled:opacity-50 shrink-0 flex items-center justify-center"
+              title={isLoading ? 'Đang đồng bộ dữ liệu...' : 'Làm mới dữ liệu'}
+            >
+              <RefreshCw className={`w-4 h-4 text-sky-400 ${isLoading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
 
         {/* --- TAB 0: OVERVIEW & REAL-TIME STATS --- */}
         {activeTab === 'overview' && (
           <div className="animate-in fade-in duration-200">
-            <AdminOverviewTab onSwitchToApisTab={() => setActiveTab('apis')} />
+            <AdminOverviewTab
+              currentSubTab={overviewSubTab}
+              onChangeSubTab={setOverviewSubTab}
+              onSwitchToApisTab={() => {
+                setActiveTab('apis');
+                setApisSubTab('api_status');
+              }}
+              onShowToast={onShowToast}
+            />
           </div>
         )}
 
         {/* --- TAB 0.5: API MANAGEMENT --- */}
         {activeTab === 'apis' && (
           <div className="animate-in fade-in duration-200">
-            <AdminApisTab onShowToast={onShowToast} />
+            <AdminApisTab
+              currentSubTab={apisSubTab}
+              onChangeSubTab={setApisSubTab}
+              onShowToast={onShowToast}
+            />
           </div>
         )}
 
-        {/* --- TAB 1: ACCOUNTS MANAGEMENT --- */}
+        {/* --- TAB 0.8: NOTIFICATIONS MANAGEMENT --- */}
+        {activeTab === 'notifications' && (
+          <div className="animate-in fade-in duration-200">
+            <AdminNotificationsTab
+              currentAccount={currentAccount}
+              onShowToast={onShowToast}
+            />
+          </div>
+        )}
+
+        {/* --- TAB 1: ACCOUNTS & SECURITY MANAGEMENT --- */}
         {activeTab === 'accounts' && (
-          <div className="space-y-4 animate-in fade-in duration-200">
-            {/* Search & Actions Bar */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#0f172a] p-3.5 sm:p-4 rounded-2xl border border-slate-800">
-              <div className="relative flex-1 max-w-md">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Tìm theo tên user hoặc tên hiển thị..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full bg-[#131f37] border border-slate-700/80 rounded-xl pl-9 pr-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                />
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* Accounts Sub-Navigation Tabs Bar */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#0b1329] border border-blue-900/60 p-2 sm:p-2.5 rounded-2xl shadow-xl">
+              <div className="flex items-center gap-1.5 overflow-x-auto p-1 bg-[#070b16] rounded-xl border border-slate-800">
+                <button
+                  id="subtab-accounts-list-btn"
+                  onClick={() => setAccountsSubTab('accounts_list')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    accountsSubTab === 'accounts_list'
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Danh Sách Tài Khoản ({accounts.length})</span>
+                </button>
+
+                <button
+                  id="subtab-roles-permissions-btn"
+                  onClick={() => setAccountsSubTab('roles_permissions')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    accountsSubTab === 'roles_permissions'
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Phân Quyền & Vai Trò</span>
+                </button>
+
+                <button
+                  id="subtab-security-audit-btn"
+                  onClick={() => setAccountsSubTab('security_audit')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    accountsSubTab === 'security_audit'
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Lock className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Bảo Mật & Phiên Đăng Nhập</span>
+                </button>
               </div>
 
-              <button
-                id="admin-add-account-btn"
-                onClick={() => {
-                  setNewUsername('');
-                  setNewPassword('');
-                  setNewDisplayName('');
-                  setModalError(null);
-                  setIsAddAccountOpen(true);
-                }}
-                className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/30 transition-transform active:scale-95 cursor-pointer"
-              >
-                <UserPlus className="w-4 h-4" />
-                <span>+ Tạo Tài Khoản Mới</span>
-              </button>
+              <div className="flex items-center justify-end gap-2 px-2 text-xs">
+                <span className="text-[11px] font-mono text-slate-400">
+                  {accounts.filter((a) => a.status !== 'blocked').length} Hoạt động /{' '}
+                  {accounts.filter((a) => a.status === 'blocked').length} Đã khóa
+                </span>
+              </div>
             </div>
 
-            {/* Accounts List Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredAccounts.map((acc) => {
-                const isAdmin = acc.username === 'admin';
-                return (
-                  <div
-                    key={acc.id}
-                    id={`account-card-${acc.username}`}
-                    className="bg-[#0f172a] border border-blue-900/40 hover:border-blue-700/60 rounded-2xl p-4 sm:p-5 shadow-lg flex flex-col justify-between transition-all"
-                  >
-                    <div>
-                      <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="w-10 h-10 rounded-xl bg-blue-950/80 border border-blue-800/80 flex items-center justify-center font-bold text-sky-400 text-sm shrink-0">
-                            {acc.username.substring(0, 2).toUpperCase()}
-                          </div>
-                          <div className="min-w-0">
-                            <h3 className="font-bold text-sm text-white flex items-center gap-1.5 truncate">
-                              <span className="truncate">{acc.displayName || acc.username}</span>
-                              {isAdmin && (
-                                <span className="text-[10px] bg-red-950 text-red-300 border border-red-800/60 px-1.5 py-0.2 rounded font-bold shrink-0">
-                                  ADMIN
-                                </span>
-                              )}
-                            </h3>
-                            <p className="text-xs text-sky-400 font-mono truncate">@{acc.username}</p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1 shrink-0 ml-2">
-                          <span
-                            className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${
-                              acc.status === 'blocked'
-                                ? 'bg-red-950/80 text-red-300 border-red-800'
-                                : 'bg-emerald-950/80 text-emerald-300 border-emerald-800'
-                            }`}
-                          >
-                            {acc.status === 'blocked' ? 'Đã khóa' : 'Hoạt động'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Info details (Password HIDDEN as requested) */}
-                      <div className="space-y-1.5 text-xs text-slate-400 mb-4 bg-[#131f37]/60 p-3 rounded-xl border border-slate-800">
-                        <div className="flex justify-between items-center">
-                          <span>Quyền hạn:</span>
-                          <span className="font-semibold text-slate-200">
-                            {isAdmin ? 'Quản trị viên (Admin)' : 'Người dùng rạp phim'}
-                          </span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span>Số hồ sơ:</span>
-                          <span className="font-bold text-sky-300">{acc.profilesCount || 1} / 5 hồ sơ</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span>Ngày khởi tạo:</span>
-                          <span className="text-slate-300">
-                            {acc.createdAt ? new Date(acc.createdAt).toLocaleDateString('vi-VN') : 'Mặc định'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Actions bar */}
-                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800/60">
-                      {!isAdmin && (
-                        <button
-                          onClick={() => handleToggleStatusClick(acc)}
-                          className={`p-2 rounded-xl text-xs font-semibold cursor-pointer border transition-colors ${
-                            acc.status === 'blocked'
-                              ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800 hover:bg-emerald-900/80'
-                              : 'bg-amber-950/60 text-amber-300 border-amber-800 hover:bg-amber-900/80'
-                          }`}
-                          title={acc.status === 'blocked' ? 'Mở khóa tài khoản' : 'Tạm khóa tài khoản'}
-                        >
-                          {acc.status === 'blocked' ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-                        </button>
-                      )}
-
-                      <button
-                        onClick={() => {
-                          setEditingAccount(acc);
-                          setEditDisplayName(acc.displayName || acc.username);
-                          setEditPassword('');
-                          setEditStatus(acc.status || 'active');
-                        }}
-                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-bold text-sky-300 rounded-xl cursor-pointer border border-slate-700 flex items-center gap-1.5 transition-colors"
-                      >
-                        <KeyRound className="w-3.5 h-3.5" />
-                        <span>Sửa / Đổi MK</span>
-                      </button>
-
-                      {!isAdmin && (
-                        <button
-                          onClick={() => handleDeleteAccountClick(acc)}
-                          className="p-2 bg-red-950/60 hover:bg-red-900/80 text-red-300 rounded-xl cursor-pointer border border-red-800 transition-colors"
-                          title="Xóa vĩnh viễn tài khoản"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
+            {/* Sub-tab 1: Accounts List */}
+            {accountsSubTab === 'accounts_list' && (
+              <div className="space-y-4 animate-in fade-in duration-150">
+                {/* Search & Actions Bar */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#0f172a] p-3.5 sm:p-4 rounded-2xl border border-slate-800">
+                  <div className="relative flex-1 max-w-md">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Tìm theo tên user hoặc tên hiển thị..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="w-full bg-[#131f37] border border-slate-700/80 rounded-xl pl-9 pr-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                    />
                   </div>
-                );
-              })}
-            </div>
+
+                  <button
+                    id="admin-add-account-btn"
+                    onClick={() => {
+                      setNewUsername('');
+                      setNewPassword('');
+                      setNewDisplayName('');
+                      setModalError(null);
+                      setIsAddAccountOpen(true);
+                    }}
+                    className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/30 transition-transform active:scale-95 cursor-pointer"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>+ Tạo Tài Khoản Mới</span>
+                  </button>
+                </div>
+
+                {/* Accounts List Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredAccounts.map((acc) => {
+                    const isAdmin = acc.username === 'admin';
+                    return (
+                      <div
+                        key={acc.id}
+                        id={`account-card-${acc.username}`}
+                        className="bg-[#0f172a] border border-blue-900/40 hover:border-blue-700/60 rounded-2xl p-4 sm:p-5 shadow-lg flex flex-col justify-between transition-all"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="w-10 h-10 rounded-xl bg-blue-950/80 border border-blue-800/80 flex items-center justify-center font-bold text-sky-400 text-sm shrink-0">
+                                {acc.username.substring(0, 2).toUpperCase()}
+                              </div>
+                              <div className="min-w-0">
+                                <h3 className="font-bold text-sm text-white flex items-center gap-1.5 truncate">
+                                  <span className="truncate">{acc.displayName || acc.username}</span>
+                                  {isAdmin && (
+                                    <span className="text-[10px] bg-red-950 text-red-300 border border-red-800/60 px-1.5 py-0.2 rounded font-bold shrink-0">
+                                      ADMIN
+                                    </span>
+                                  )}
+                                </h3>
+                                <p className="text-xs text-sky-400 font-mono truncate">@{acc.username}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0 ml-2">
+                              <span
+                                className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${
+                                  acc.status === 'blocked'
+                                    ? 'bg-red-950/80 text-red-300 border-red-800'
+                                    : 'bg-emerald-950/80 text-emerald-300 border-emerald-800'
+                                }`}
+                              >
+                                {acc.status === 'blocked' ? 'Đã khóa' : 'Hoạt động'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Info details */}
+                          <div className="space-y-1.5 text-xs text-slate-400 mb-4 bg-[#131f37]/60 p-3 rounded-xl border border-slate-800">
+                            <div className="flex justify-between items-center">
+                              <span>Quyền hạn:</span>
+                              <span className="font-semibold text-slate-200">
+                                {isAdmin ? 'Quản trị viên (Admin)' : 'Người dùng rạp phim'}
+                              </span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span>Số hồ sơ:</span>
+                              <span className="font-bold text-sky-300">{acc.profilesCount || 1} / 5 hồ sơ</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span>Ngày khởi tạo:</span>
+                              <span className="text-slate-300">
+                                {acc.createdAt ? new Date(acc.createdAt).toLocaleDateString('vi-VN') : 'Mặc định'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Actions bar */}
+                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800/60">
+                          {!isAdmin && (
+                            <button
+                              onClick={() => handleToggleStatusClick(acc)}
+                              className={`p-2 rounded-xl text-xs font-semibold cursor-pointer border transition-colors ${
+                                acc.status === 'blocked'
+                                  ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800 hover:bg-emerald-900/80'
+                                  : 'bg-amber-950/60 text-amber-300 border-amber-800 hover:bg-amber-900/80'
+                              }`}
+                              title={acc.status === 'blocked' ? 'Mở khóa tài khoản' : 'Tạm khóa tài khoản'}
+                            >
+                              {acc.status === 'blocked' ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => {
+                              setEditingAccount(acc);
+                              setEditDisplayName(acc.displayName || acc.username);
+                              setEditPassword('');
+                              setEditStatus(acc.status || 'active');
+                            }}
+                            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-bold text-sky-300 rounded-xl cursor-pointer border border-slate-700 flex items-center gap-1.5 transition-colors"
+                          >
+                            <KeyRound className="w-3.5 h-3.5" />
+                            <span>Sửa / Đổi MK</span>
+                          </button>
+
+                          {!isAdmin && (
+                            <button
+                              onClick={() => handleDeleteAccountClick(acc)}
+                              className="p-2 bg-red-950/60 hover:bg-red-900/80 text-red-300 rounded-xl cursor-pointer border border-red-800 transition-colors"
+                              title="Xóa vĩnh viễn tài khoản"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Sub-tab 2: Roles & Permissions */}
+            {accountsSubTab === 'roles_permissions' && (
+              <div className="space-y-5 animate-in fade-in duration-150">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Role Super Admin */}
+                  <div className="bg-[#0f172a] border border-blue-900/60 p-5 rounded-3xl space-y-4">
+                    <div className="flex items-center gap-3 pb-3 border-b border-slate-800">
+                      <div className="w-10 h-10 rounded-xl bg-red-950 border border-red-800 flex items-center justify-center text-red-400 font-bold">
+                        <Shield className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-white text-sm">Quản Trị Viên Tối Cao (Super Admin)</h4>
+                        <p className="text-xs text-slate-400">Tài khoản chính: @admin</p>
+                      </div>
+                    </div>
+
+                    <ul className="space-y-2.5 text-xs text-slate-300">
+                      <li className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>Toàn quyền thêm, sửa, xóa, kiểm tra và chuyển đổi nguồn API</span>
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>Quản lý, tạo mới, khóa và cấp lại mật khẩu mọi tài khoản</span>
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>Xem số liệu thống kê thời gian thực và quản lý kho avatar</span>
+                      </li>
+                    </ul>
+                  </div>
+
+                  {/* Role Standard User */}
+                  <div className="bg-[#0f172a] border border-blue-900/60 p-5 rounded-3xl space-y-4">
+                    <div className="flex items-center gap-3 pb-3 border-b border-slate-800">
+                      <div className="w-10 h-10 rounded-xl bg-blue-950 border border-blue-800 flex items-center justify-center text-sky-400 font-bold">
+                        <User className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-white text-sm">Người Dùng Rạp Phim (Standard User)</h4>
+                        <p className="text-xs text-slate-400">Các thành viên xem phim & đọc truyện</p>
+                      </div>
+                    </div>
+
+                    <ul className="space-y-2.5 text-xs text-slate-300">
+                      <li className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
+                        <span>Tạo và quản lý tối đa 5 hồ sơ cá nhân / gia đình</span>
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
+                        <span>Tự động lưu lịch sử xem phim, danh sách yêu thích và tập đang xem</span>
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
+                        <span>Không có quyền truy cập vào cổng cấu hình Admin Portal</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Sub-tab 3: Security Audit */}
+            {accountsSubTab === 'security_audit' && (
+              <div className="bg-[#0f172a] border border-blue-900/60 p-5 sm:p-6 rounded-3xl space-y-5 animate-in fade-in duration-150">
+                <div className="flex items-center gap-3 pb-4 border-b border-slate-800">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-950 border border-emerald-800 flex items-center justify-center text-emerald-400 shrink-0">
+                    <ShieldCheck className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">Chính Sách An Toàn & Bảo Mật Mật Khẩu</h3>
+                    <p className="text-xs text-slate-400">
+                      Đảm bảo tính riêng tư, bảo mật mật khẩu và xác thực an toàn nhiều lớp
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-300">
+                  <div className="bg-[#131f37] p-4 rounded-2xl border border-slate-800 space-y-2">
+                    <p className="font-bold text-sky-300">🔒 Ẩn Mật Khẩu Tuyệt Đối</p>
+                    <p className="text-slate-400">
+                      Mật khẩu của người dùng không bao giờ được hiển thị công khai trên giao diện quản trị viên.
+                    </p>
+                  </div>
+                  <div className="bg-[#131f37] p-4 rounded-2xl border border-slate-800 space-y-2">
+                    <p className="font-bold text-indigo-300">🔑 Đặt Lại Mật Khẩu An Toàn</p>
+                    <p className="text-slate-400">
+                      Mọi hành động đổi mật khẩu hoặc xóa tài khoản đều yêu cầu mật khẩu Admin xác thực.
+                    </p>
+                  </div>
+                  <div className="bg-[#131f37] p-4 rounded-2xl border border-slate-800 space-y-2">
+                    <p className="font-bold text-emerald-300">🛡️ Tự Động Khóa Khi Cần</p>
+                    <p className="text-slate-400">
+                      Admin có thể khóa tạm thời bất kỳ tài khoản vi phạm nào chỉ với một cú nhấp chuột.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         {/* --- TAB 2: AVATAR GALLERY MANAGEMENT --- */}
         {activeTab === 'avatars' && (
           <div className="space-y-6 animate-in fade-in duration-200">
-            {/* Upload New Avatar Card */}
-            <div className="bg-[#0f172a] border border-blue-900/60 rounded-3xl p-4 sm:p-6 shadow-2xl">
-              <h2 className="text-base sm:text-lg font-bold text-white mb-1 flex items-center gap-2">
-                <Upload className="w-5 h-5 text-sky-400" />
-                <span>Thêm Ảnh Đại Diện Mới (Upload Ảnh / URL)</span>
-              </h2>
-              <p className="text-xs text-slate-400 mb-5">
-                Các avatar thêm vào đây sẽ hiển thị ngay trong danh sách lựa chọn avatar khi người dùng chỉnh sửa hồ sơ.
-              </p>
+            {/* Avatars Sub-Navigation Tabs Bar */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#0b1329] border border-blue-900/60 p-2 sm:p-2.5 rounded-2xl shadow-xl">
+              <div className="flex items-center gap-1.5 overflow-x-auto p-1 bg-[#070b16] rounded-xl border border-slate-800">
+                <button
+                  id="subtab-avatar-gallery-btn"
+                  onClick={() => setAvatarsSubTab('avatar_gallery')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    avatarsSubTab === 'avatar_gallery'
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <ImageIcon className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Kho Avatar Tải Lên ({customAvatars.length})</span>
+                </button>
 
-              <form onSubmit={handleAddAvatar} className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                {/* Upload from device */}
-                <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-blue-500 rounded-2xl p-4 bg-[#131f37]/50 text-center relative group cursor-pointer transition-colors">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleAvatarFileChange}
-                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                  />
-                  {avatarFilePreview ? (
-                    <div className="relative w-24 h-24 rounded-2xl overflow-hidden border-2 border-sky-400 shadow-lg">
-                      <img src={avatarFilePreview} alt="Preview" className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-xs text-white">
-                        Đổi ảnh
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="w-12 h-12 rounded-2xl bg-blue-950/80 border border-blue-800 flex items-center justify-center text-sky-400 mb-2">
-                        <Upload className="w-5 h-5" />
-                      </div>
-                      <span className="text-xs font-bold text-slate-200">Tải ảnh từ máy tính / điện thoại</span>
-                      <span className="text-[10px] text-slate-400 mt-1">PNG, JPG, WEBP (Tự động nén HD)</span>
-                    </>
-                  )}
-                </div>
+                <button
+                  id="subtab-avatar-upload-btn"
+                  onClick={() => setAvatarsSubTab('avatar_upload')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    avatarsSubTab === 'avatar_upload'
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Upload className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Tải Lên Avatar Mới</span>
+                </button>
 
-                {/* Direct URL & Name */}
-                <div className="md:col-span-2 space-y-3.5">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Tên / Nhãn đại diện:
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Ví dụ: Người Nhện, Iron Man, Anime Chibi..."
-                      value={avatarName}
-                      onChange={(e) => setAvatarName(e.target.value)}
-                      className="w-full bg-[#131f37] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
+                <button
+                  id="subtab-default-presets-btn"
+                  onClick={() => setAvatarsSubTab('default_presets')}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    avatarsSubTab === 'default_presets'
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Bộ Mặc Định Có Sẵn ({DEFAULT_AVATARS.length})</span>
+                </button>
+              </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Hoặc nhập trực tiếp đường dẫn URL hình ảnh:
-                    </label>
-                    <input
-                      type="url"
-                      placeholder="https://images.unsplash.com/..."
-                      value={avatarUrl}
-                      onChange={(e) => {
-                        setAvatarUrl(e.target.value);
-                        if (e.target.value) setAvatarFilePreview(null);
-                      }}
-                      className="w-full bg-[#131f37] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-
-                  <div className="flex justify-end pt-1">
-                    <button
-                      type="submit"
-                      disabled={isUploadingAvatar || (!avatarFilePreview && !avatarUrl.trim())}
-                      className="w-full sm:w-auto px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-blue-600/30 transition-transform active:scale-95 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
-                    >
-                      {isUploadingAvatar ? (
-                        <>
-                          <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                          <span>Đang lưu...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-4 h-4" />
-                          <span>Lưu Vào Kho Avatar</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </form>
+              <div className="flex items-center justify-end gap-2 px-2 text-xs">
+                <span className="text-[11px] font-mono text-slate-400">
+                  Tổng {customAvatars.length + DEFAULT_AVATARS.length} ảnh đại diện
+                </span>
+              </div>
             </div>
 
-            {/* Custom Avatars Display */}
-            <div>
-              <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">
-                Avatar do Admin đã thêm ({customAvatars.length})
-              </h3>
-              {customAvatars.length > 0 ? (
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3 sm:gap-4">
-                  {customAvatars.map((av) => (
-                    <div
-                      key={av.id}
-                      className="group relative bg-[#0f172a] border border-slate-800 hover:border-sky-500/80 rounded-2xl p-2 sm:p-2.5 flex flex-col items-center text-center transition-all shadow-md"
-                    >
-                      <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl overflow-hidden border border-slate-700 mb-1.5 relative">
-                        <img src={av.url} alt={av.name} className="w-full h-full object-cover" />
-                        <button
-                          onClick={() => handleDeleteAvatar(av)}
-                          className="absolute inset-0 bg-red-950/80 opacity-0 group-hover:opacity-100 flex items-center justify-center text-red-200 transition-opacity cursor-pointer"
-                          title="Xóa avatar này"
-                        >
-                          <Trash2 className="w-5 h-5 text-red-400" />
-                        </button>
+            {/* Sub-tab 1: Upload New Avatar */}
+            {avatarsSubTab === 'avatar_upload' && (
+              <div className="bg-[#0f172a] border border-blue-900/60 rounded-3xl p-4 sm:p-6 shadow-2xl animate-in fade-in duration-150">
+                <h2 className="text-base sm:text-lg font-bold text-white mb-1 flex items-center gap-2">
+                  <Upload className="w-5 h-5 text-sky-400" />
+                  <span>Thêm Ảnh Đại Diện Mới (Upload Ảnh / URL)</span>
+                </h2>
+                <p className="text-xs text-slate-400 mb-5">
+                  Các avatar thêm vào đây sẽ hiển thị ngay trong danh sách lựa chọn avatar khi người dùng chỉnh sửa hồ sơ.
+                </p>
+
+                <form onSubmit={handleAddAvatar} className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  {/* Upload from device */}
+                  <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-blue-500 rounded-2xl p-4 bg-[#131f37]/50 text-center relative group cursor-pointer transition-colors">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleAvatarFileChange}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                    />
+                    {avatarFilePreview ? (
+                      <div className="relative w-24 h-24 rounded-2xl overflow-hidden border-2 border-sky-400 shadow-lg">
+                        <img src={avatarFilePreview} alt="Preview" className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-xs text-white">
+                          Đổi ảnh
+                        </div>
                       </div>
-                      <span className="text-[11px] sm:text-xs font-medium text-slate-300 truncate w-full">{av.name}</span>
+                    ) : (
+                      <>
+                        <div className="w-12 h-12 rounded-2xl bg-blue-950/80 border border-blue-800 flex items-center justify-center text-sky-400 mb-2">
+                          <Upload className="w-5 h-5" />
+                        </div>
+                        <span className="text-xs font-bold text-slate-200">Tải ảnh từ máy tính / điện thoại</span>
+                        <span className="text-[10px] text-slate-400 mt-1">PNG, JPG, WEBP (Tự động nén HD)</span>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Direct URL & Name */}
+                  <div className="md:col-span-2 space-y-3.5">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        Tên / Nhãn đại diện:
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Ví dụ: Người Nhện, Iron Man, Anime Chibi..."
+                        value={avatarName}
+                        onChange={(e) => setAvatarName(e.target.value)}
+                        className="w-full bg-[#131f37] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        Hoặc nhập trực tiếp đường dẫn URL hình ảnh:
+                      </label>
+                      <input
+                        type="url"
+                        placeholder="https://images.unsplash.com/..."
+                        value={avatarUrl}
+                        onChange={(e) => {
+                          setAvatarUrl(e.target.value);
+                          if (e.target.value) setAvatarFilePreview(null);
+                        }}
+                        className="w-full bg-[#131f37] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="submit"
+                        disabled={isUploadingAvatar || (!avatarFilePreview && !avatarUrl.trim())}
+                        className="w-full sm:w-auto px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-blue-600/30 transition-transform active:scale-95 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        {isUploadingAvatar ? (
+                          <>
+                            <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                            <span>Đang lưu...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-4 h-4" />
+                            <span>Lưu Vào Kho Avatar</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* Sub-tab 2: Custom Avatars Display */}
+            {avatarsSubTab === 'avatar_gallery' && (
+              <div className="space-y-4 animate-in fade-in duration-150">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider">
+                    Avatar do Admin đã thêm ({customAvatars.length})
+                  </h3>
+                  <button
+                    onClick={() => setAvatarsSubTab('avatar_upload')}
+                    className="text-xs font-bold text-sky-400 hover:text-sky-300 flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>+ Tải lên thêm</span>
+                  </button>
+                </div>
+
+                {customAvatars.length > 0 ? (
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3 sm:gap-4">
+                    {customAvatars.map((av) => (
+                      <div
+                        key={av.id}
+                        className="group relative bg-[#0f172a] border border-slate-800 hover:border-sky-500/80 rounded-2xl p-2 sm:p-2.5 flex flex-col items-center text-center transition-all shadow-md"
+                      >
+                        <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl overflow-hidden border border-slate-700 mb-1.5 relative">
+                          <img src={av.url} alt={av.name} className="w-full h-full object-cover" />
+                          <button
+                            onClick={() => handleDeleteAvatar(av)}
+                            className="absolute inset-0 bg-red-950/80 opacity-0 group-hover:opacity-100 flex items-center justify-center text-red-200 transition-opacity cursor-pointer"
+                            title="Xóa avatar này"
+                          >
+                            <Trash2 className="w-5 h-5 text-red-400" />
+                          </button>
+                        </div>
+                        <span className="text-[11px] sm:text-xs font-medium text-slate-300 truncate w-full">{av.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-8 text-center bg-[#0f172a]/50 rounded-2xl border border-slate-800 text-slate-400 text-xs">
+                    Chưa có avatar tải lên nào. Admin có thể bấm vào tab "Tải Lên Avatar Mới" ở trên để bổ sung.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Sub-tab 3: Default Avatar Presets */}
+            {avatarsSubTab === 'default_presets' && (
+              <div className="space-y-4 animate-in fade-in duration-150">
+                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">
+                  Avatar mặc định có sẵn của hệ thống ({DEFAULT_AVATARS.length})
+                </h3>
+                <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-12 gap-3">
+                  {DEFAULT_AVATARS.map((av, idx) => (
+                    <div key={idx} className="w-16 h-16 sm:w-18 sm:h-18 rounded-2xl overflow-hidden border border-slate-800 shadow bg-[#0f172a] p-1">
+                      <img src={av} alt={`Preset ${idx + 1}`} className="w-full h-full object-cover rounded-xl" />
                     </div>
                   ))}
                 </div>
-              ) : (
-                <div className="p-8 text-center bg-[#0f172a]/50 rounded-2xl border border-slate-800 text-slate-400 text-xs">
-                  Chưa có avatar tải lên nào. Admin có thể tải ảnh lên ở khung phía trên.
-                </div>
-              )}
-            </div>
-
-            {/* Default Avatar Presets */}
-            <div>
-              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3">
-                Avatar mặc định có sẵn của hệ thống
-              </h3>
-              <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-10 gap-2.5 opacity-80">
-                {DEFAULT_AVATARS.map((av, idx) => (
-                  <div key={idx} className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl overflow-hidden border border-slate-800 shadow">
-                    <img src={av} alt="Default" className="w-full h-full object-cover" />
-                  </div>
-                ))}
               </div>
-            </div>
+            )}
           </div>
         )}
+
+        {/* --- BOTTOM NAVIGATION BAR (VISIBLE ONLY ON MOBILE) --- */}
+        <div
+          id="admin-bottom-nav"
+          className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#070b16]/95 backdrop-blur-xl border-t border-blue-900/60 py-2 sm:py-2.5 px-3 sm:px-8 shadow-2xl transition-all admin-mobile-safe-pb"
+        >
+          <div className="max-w-4xl mx-auto flex items-center justify-around gap-1 sm:gap-2">
+            {/* Nav item 1: Overview */}
+            <button
+              id="bottom-nav-overview-btn"
+              onClick={() => setActiveTab('overview')}
+              className={`flex flex-col items-center justify-center py-1 px-3 sm:px-6 rounded-2xl transition-all cursor-pointer relative ${
+                activeTab === 'overview'
+                  ? 'text-sky-400 bg-blue-950/80 border border-blue-700/60 shadow-lg shadow-blue-900/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
+              }`}
+            >
+              <Activity className="w-5 h-5" />
+              <span className="text-[11px] sm:text-xs font-bold mt-1">Tổng Quan</span>
+              {activeTab === 'overview' && (
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 absolute -bottom-1" />
+              )}
+            </button>
+
+            {/* Nav item 2: Accounts */}
+            <button
+              id="bottom-nav-accounts-btn"
+              onClick={() => setActiveTab('accounts')}
+              className={`flex flex-col items-center justify-center py-1 px-3 sm:px-6 rounded-2xl transition-all cursor-pointer relative ${
+                activeTab === 'accounts'
+                  ? 'text-sky-400 bg-blue-950/80 border border-blue-700/60 shadow-lg shadow-blue-900/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
+              }`}
+            >
+              <div className="relative">
+                <Users className="w-5 h-5" />
+                <span className="absolute -top-1.5 -right-3 bg-blue-600 text-white text-[9px] font-bold px-1.5 py-0.2 rounded-full">
+                  {accounts.length}
+                </span>
+              </div>
+              <span className="text-[11px] sm:text-xs font-bold mt-1">Tài Khoản</span>
+              {activeTab === 'accounts' && (
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 absolute -bottom-1" />
+              )}
+            </button>
+
+            {/* Nav item 3: APIs */}
+            <button
+              id="bottom-nav-apis-btn"
+              onClick={() => setActiveTab('apis')}
+              className={`flex flex-col items-center justify-center py-1 px-3 sm:px-6 rounded-2xl transition-all cursor-pointer relative ${
+                activeTab === 'apis'
+                  ? 'text-sky-400 bg-blue-950/80 border border-blue-700/60 shadow-lg shadow-blue-900/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
+              }`}
+            >
+              <Server className="w-5 h-5" />
+              <span className="text-[11px] sm:text-xs font-bold mt-1">Hệ Thống API</span>
+              {activeTab === 'apis' && (
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 absolute -bottom-1" />
+              )}
+            </button>
+
+            {/* Nav item 4: Notifications */}
+            <button
+              id="bottom-nav-notifications-btn"
+              onClick={() => setActiveTab('notifications')}
+              className={`flex flex-col items-center justify-center py-1 px-3 sm:px-6 rounded-2xl transition-all cursor-pointer relative ${
+                activeTab === 'notifications'
+                  ? 'text-amber-400 bg-amber-950/80 border border-amber-700/60 shadow-lg shadow-amber-900/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
+              }`}
+            >
+              <Bell className="w-5 h-5 text-amber-400" />
+              <span className="text-[11px] sm:text-xs font-bold mt-1">Thông Báo</span>
+              {activeTab === 'notifications' && (
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 absolute -bottom-1" />
+              )}
+            </button>
+
+            {/* Nav item 5: Avatars */}
+            <button
+              id="bottom-nav-avatars-btn"
+              onClick={() => setActiveTab('avatars')}
+              className={`flex flex-col items-center justify-center py-1 px-3 sm:px-6 rounded-2xl transition-all cursor-pointer relative ${
+                activeTab === 'avatars'
+                  ? 'text-sky-400 bg-blue-950/80 border border-blue-700/60 shadow-lg shadow-blue-900/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
+              }`}
+            >
+              <div className="relative">
+                <ImageIcon className="w-5 h-5" />
+                <span className="absolute -top-1.5 -right-3 bg-indigo-600 text-white text-[9px] font-bold px-1.5 py-0.2 rounded-full">
+                  {customAvatars.length}
+                </span>
+              </div>
+              <span className="text-[11px] sm:text-xs font-bold mt-1">Kho Avatar</span>
+              {activeTab === 'avatars' && (
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 absolute -bottom-1" />
+              )}
+            </button>
+          </div>
+        </div>
 
         {/* --- MODAL 1: ADD ACCOUNT --- */}
         {isAddAccountOpen && (
@@ -915,7 +1375,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           onConfirm={confirmModalConfig.onExecute}
           onCancel={() => setConfirmModalConfig((prev) => ({ ...prev, isOpen: false }))}
         />
-      </div>
+        </div>
+      </main>
     </div>
   );
 };

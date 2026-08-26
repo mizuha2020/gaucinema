@@ -51,9 +51,50 @@ export interface FirestoreErrorInfo {
   };
 }
 
+const QUOTA_EXHAUSTED_KEY = 'qtb_firestore_quota_exhausted_time';
+let quotaExhausted = false;
+
+export function isFirestoreQuotaExhausted(): boolean {
+  if (quotaExhausted) return true;
+  try {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      const saved = sessionStorage.getItem(QUOTA_EXHAUSTED_KEY);
+      if (saved) {
+        const time = parseInt(saved, 10);
+        if (Date.now() - time < 2 * 60 * 60 * 1000) {
+          quotaExhausted = true;
+          return true;
+        }
+      }
+    }
+  } catch {}
+  return false;
+}
+
+export function markFirestoreQuotaExhausted(): void {
+  if (!quotaExhausted) {
+    quotaExhausted = true;
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        sessionStorage.setItem(QUOTA_EXHAUSTED_KEY, String(Date.now()));
+      }
+    } catch {}
+    console.warn('Firestore write quota limit reached (resource-exhausted). Switching to local persistence fallback.');
+  }
+}
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errMessage = error instanceof Error ? error.message : String(error);
+  const errCode = (error as any)?.code;
+
+  if (errCode === 'resource-exhausted' || errMessage.includes('Quota limit exceeded') || errMessage.includes('resource-exhausted')) {
+    markFirestoreQuotaExhausted();
+    console.warn(`Firestore Quota Exceeded on ${operationType} ${path || ''}. Operation skipped.`);
+    return;
+  }
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errMessage,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -69,8 +110,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path,
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  console.warn('Firestore Warning: ', JSON.stringify(errInfo));
 }
 
 // Sanitize objects by stripping undefined fields to prevent Firestore unsupported field value errors
@@ -93,8 +133,9 @@ export function sanitizeData<T>(data: T): T {
   return data;
 }
 
-// Connection test
+// Connection test (optional debug helper, not run automatically on module load)
 export async function testConnection() {
+  if (isFirestoreQuotaExhausted()) return;
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
@@ -103,4 +144,3 @@ export async function testConnection() {
     }
   }
 }
-testConnection();

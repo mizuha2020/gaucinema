@@ -253,18 +253,18 @@ export const YouTubeSidebar: React.FC<YouTubeSidebarProps> = ({
 
   return (
     <>
-      {/* Desktop Persistent Sidebar */}
+      {/* Desktop Persistent Sidebar (>= 960px / lg) */}
       <aside
-        className={`fixed top-14 left-0 bottom-0 z-40 bg-[#0F0F0F] border-r border-[#272727] transition-all duration-300 hidden md:block ${
+        className={`fixed top-[calc(56px+env(safe-area-inset-top,0px))] left-0 bottom-0 z-40 bg-[#0F0F0F] border-r border-[#272727] transition-all duration-300 hidden lg:block ${
           isExpanded ? 'w-[240px]' : 'w-[72px]'
         }`}
       >
         {sidebarContent}
       </aside>
 
-      {/* Mobile / Tablet Drawer Overlay */}
+      {/* Mobile / Tablet Drawer Overlay (< 960px) */}
       {mobileOpen && (
-        <div className="fixed inset-0 z-[110] md:hidden flex">
+        <div className="fixed inset-0 z-[110] lg:hidden flex">
           {/* Backdrop */}
           <div
             onClick={onCloseMobile}

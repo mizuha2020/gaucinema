@@ -27,6 +27,7 @@ import {
   ShieldCheck,
   Zap,
   ExternalLink,
+  PictureInPicture2,
 } from 'lucide-react';
 import Hls from 'hls.js';
 import shaka from 'shaka-player';
@@ -38,7 +39,7 @@ import { systemApiService } from '../services/systemApiService';
 import { presenceService } from '../services/presenceService';
 import { DEFAULT_CHANNELS } from '../data/defaultChannels';
 import { parseClearkeyToHexMap, parseM3uWithDrmAndUA, isLicenseServerUrl } from '../utils/drmParser';
-import { playInNativeExoPlayer, playInExternalPlayer } from '../utils/nativeVideoPlayer';
+import { playInNativeExoPlayer, playInExternalPlayer, enterNativePip, setNativeVideoPlaying, checkNativePipSupported } from '../utils/nativeVideoPlayer';
 import { CloudflareWorkerModal } from './livetv/CloudflareWorkerModal';
 import { DrmChannelTesterModal } from './livetv/DrmChannelTesterModal';
 
@@ -139,6 +140,76 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
   const [volume, setVolume] = useState(1.0);
   const [isLoadingStream, setIsLoadingStream] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [isPip, setIsPip] = useState(false);
+  const [pipSupported, setPipSupported] = useState(true);
+
+  // Check PiP support on mount
+  useEffect(() => {
+    const isWebPip = typeof document !== 'undefined' && 'pictureInPictureEnabled' in document && document.pictureInPictureEnabled;
+    if (Capacitor.isNativePlatform()) {
+      checkNativePipSupported().then((sup) => setPipSupported(sup || isWebPip));
+    } else {
+      setPipSupported(isWebPip);
+    }
+  }, []);
+
+  // PiP Event Listeners
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    try {
+      (video as any).autoPictureInPicture = true;
+    } catch (e) {}
+
+    const onEnterPip = () => setIsPip(true);
+    const onLeavePip = () => setIsPip(false);
+
+    video.addEventListener('enterpictureinpicture', onEnterPip);
+    video.addEventListener('leavepictureinpicture', onLeavePip);
+
+    const onNativePipChange = (e: any) => {
+      setIsPip(!!e.detail?.isPip);
+    };
+    window.addEventListener('native-pip-change', onNativePipChange);
+
+    return () => {
+      video.removeEventListener('enterpictureinpicture', onEnterPip);
+      video.removeEventListener('leavepictureinpicture', onLeavePip);
+      window.removeEventListener('native-pip-change', onNativePipChange);
+    };
+  }, [activeChannel]);
+
+  // Auto PiP when exiting/leaving app or switching tabs while Live TV is playing
+  useEffect(() => {
+    setNativeVideoPlaying(isPlaying && !!activeChannel);
+
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'hidden') {
+        const video = videoRef.current;
+        if (video && !video.paused && !video.ended && activeChannel) {
+          if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+            await enterNativePip();
+          } else if (document.pictureInPictureEnabled && !document.pictureInPictureElement) {
+            try {
+              await video.requestPictureInPicture();
+            } catch (e) {
+              console.warn('[Auto-PiP LiveTV] Warning:', e);
+            }
+          }
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handleVisibilityChange);
+      setNativeVideoPlaying(false);
+    };
+  }, [isPlaying, activeChannel]);
 
   // Initialize Shaka polyfill
   useEffect(() => {
@@ -835,6 +906,24 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     }
   };
 
+  const togglePip = async () => {
+    if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+      const res = await enterNativePip();
+      if (res) return;
+    }
+    const video = videoRef.current;
+    if (!video) return;
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else if (document.pictureInPictureEnabled) {
+        await video.requestPictureInPicture();
+      }
+    } catch (e) {
+      console.warn('[LiveTV PiP] Warning:', e);
+    }
+  };
+
   const handleNextChannel = () => {
     if (!activeChannel || filteredChannels.length === 0) return;
     const currIdx = filteredChannels.findIndex((c) => c.url === activeChannel.url);
@@ -854,6 +943,44 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     setMobileTab('player');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  // MediaSession API setup for Live TV
+  useEffect(() => {
+    if ('mediaSession' in navigator && activeChannel) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: activeChannel.name,
+        artist: `Gấu TV • ${activeChannel.group}`,
+        album: currentSourceObj.name || 'Live TV',
+        artwork: [
+          {
+            src: activeChannel.logo || '/app_logo.jpg',
+            sizes: '512x512',
+            type: 'image/jpeg',
+          },
+        ],
+      });
+
+      try {
+        navigator.mediaSession.setActionHandler('play', () => {
+          videoRef.current?.play();
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+          videoRef.current?.pause();
+        });
+        navigator.mediaSession.setActionHandler('previoustrack', () => {
+          handlePrevChannel();
+        });
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          handleNextChannel();
+        });
+        (navigator.mediaSession.setActionHandler as any)('enterpictureinpicture', () => {
+          togglePip();
+        });
+      } catch (e) {
+        console.warn('[LiveTV MediaSession] Warning:', e);
+      }
+    }
+  }, [activeChannel, currentSourceObj]);
 
   return (
     <div className="min-h-screen bg-[#070c18] text-slate-100 pt-16 sm:pt-20 pb-20 px-3 sm:px-6 lg:px-8 max-w-7xl mx-auto space-y-4 sm:space-y-6 font-sans">
@@ -982,6 +1109,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                   className="w-full h-full object-contain bg-black"
                   playsInline
                   autoPlay
+                  {...({ autopictureinpicture: 'true' } as any)}
                 />
 
                 {/* Stream Loading Overlay */}
@@ -1198,6 +1326,19 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                       <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
                       LIVE
                     </span>
+
+                    {pipSupported && (
+                      <button
+                        onClick={togglePip}
+                        className={`text-slate-200 hover:text-white bg-white/15 hover:bg-white/30 p-2 rounded-xl transition-all cursor-pointer shadow-lg flex items-center gap-1 text-xs font-bold ${
+                          isPip ? 'text-orange-400 bg-orange-500/20' : ''
+                        }`}
+                        title={isPip ? 'Thoát Picture-in-Picture' : 'Hình trong hình / Thu nhỏ (PiP)'}
+                        aria-label="Picture-in-Picture"
+                      >
+                        <PictureInPicture2 className="w-4 h-4" />
+                      </button>
+                    )}
 
                     <button
                       onClick={toggleFullscreen}

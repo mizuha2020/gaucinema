@@ -9,12 +9,30 @@ import {
   query,
   where,
 } from 'firebase/firestore';
-import { db, sanitizeData } from './firebase';
+import { db, isFirestoreQuotaExhausted, sanitizeData } from './firebase';
 import { Account, UserProfile } from '../types';
 
 const SESSION_ACCOUNT_KEY = 'qtb_logged_in_account_v1';
 const SESSION_PROFILE_KEY = 'qtb_current_active_profile_v1';
+const ACCOUNTS_CACHE_KEY = 'qtb_accounts_local_cache_v1';
 const PASSWORD_SALT = 'qtb_cinema_secure_salt_2026';
+
+function getLocalAccounts(): Account[] {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return [];
+    const raw = localStorage.getItem(ACCOUNTS_CACHE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function setLocalAccounts(accounts: Account[]): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    localStorage.setItem(ACCOUNTS_CACHE_KEY, JSON.stringify(accounts));
+  } catch {}
+}
 
 // Helper with timeout to prevent hanging on Firestore queries
 function withTimeout<T>(promise: Promise<T>, timeoutMs = 4500, fallbackVal?: T): Promise<T> {
@@ -52,21 +70,8 @@ export const DEFAULT_AVATARS: string[] = [
 export const authService = {
   // Ensure default Admin Account exists without overwriting custom password
   async bootstrapAdminAccount(forceReset = false): Promise<Account> {
-    const adminDocRef = doc(db, 'accounts', 'admin');
     const hashedDefaultPass = await hashPassword('Admin@2026!');
-
-    try {
-      if (!forceReset) {
-        const snap = await getDoc(adminDocRef);
-        if (snap.exists()) {
-          return snap.data() as Account;
-        }
-      }
-    } catch (e) {
-      console.warn('Admin account check warning:', e);
-    }
-
-    const adminAccount: Account = {
+    const fallbackAdmin: Account = {
       id: 'admin',
       username: 'admin',
       password: hashedDefaultPass,
@@ -76,6 +81,34 @@ export const authService = {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
+
+    if (isFirestoreQuotaExhausted()) {
+      const locals = getLocalAccounts();
+      const existing = locals.find((a) => a.username === 'admin');
+      if (existing) return existing;
+      setLocalAccounts([fallbackAdmin, ...locals]);
+      return fallbackAdmin;
+    }
+
+    const adminDocRef = doc(db, 'accounts', 'admin');
+
+    try {
+      if (!forceReset) {
+        const snap = await getDoc(adminDocRef);
+        if (snap.exists()) {
+          const acc = snap.data() as Account;
+          const locals = getLocalAccounts();
+          if (!locals.some((a) => a.username === 'admin')) {
+            setLocalAccounts([acc, ...locals]);
+          }
+          return acc;
+        }
+      }
+    } catch (e) {
+      console.warn('Admin account check warning:', e);
+    }
+
+    const adminAccount: Account = fallbackAdmin;
 
     try {
       await setDoc(adminDocRef, sanitizeData(adminAccount), { merge: true });
@@ -92,12 +125,14 @@ export const authService = {
           isPrimary: true,
           createdAt: Date.now(),
         };
-        await setDoc(primaryProfileRef, sanitizeData(primaryProfile), { merge: true });
+        await setDoc(primaryProfileRef, sanitizeData(primaryProfile), { merge: true }).catch(() => {});
       }
     } catch (e) {
       console.warn('Admin bootstrap save warning:', e);
     }
 
+    const locals = getLocalAccounts();
+    setLocalAccounts([adminAccount, ...locals.filter((a) => a.username !== 'admin')]);
     return adminAccount;
   },
 
@@ -114,32 +149,41 @@ export const authService = {
     const accountRef = doc(db, 'accounts', trimmedUser);
 
     try {
-      // Fetch account with 4.5s timeout
-      const snap = await withTimeout(getDoc(accountRef), 4500).catch((e) => {
-        console.warn('Account getDoc timeout/warning:', e);
-        return null;
-      });
-
       let acc: Account | null = null;
       let targetDocRef = accountRef;
 
-      if (snap && snap.exists()) {
-        acc = snap.data() as Account;
-      } else {
-        // Query by username field as secondary lookup
-        try {
-          const q = query(collection(db, 'accounts'), where('username', '==', trimmedUser));
-          const querySnap = await withTimeout(getDocs(q), 3500);
-          if (querySnap && !querySnap.empty) {
-            acc = querySnap.docs[0].data() as Account;
-            targetDocRef = doc(db, 'accounts', querySnap.docs[0].id);
+      if (!isFirestoreQuotaExhausted()) {
+        // Fetch account with 4.5s timeout
+        const snap = await withTimeout(getDoc(accountRef), 4500).catch((e) => {
+          console.warn('Account getDoc timeout/warning:', e);
+          return null;
+        });
+
+        if (snap && snap.exists()) {
+          acc = snap.data() as Account;
+        } else {
+          // Query by username field as secondary lookup
+          try {
+            const q = query(collection(db, 'accounts'), where('username', '==', trimmedUser));
+            const querySnap = await withTimeout(getDocs(q), 3500);
+            if (querySnap && !querySnap.empty) {
+              acc = querySnap.docs[0].data() as Account;
+              targetDocRef = doc(db, 'accounts', querySnap.docs[0].id);
+            }
+          } catch {
+            // Ignore query error
           }
-        } catch {
-          // Ignore query error
         }
       }
 
-      // Special handling for admin if not found in Firestore yet
+      // Check local cache if not found in Firestore or quota exceeded
+      if (!acc) {
+        const locals = getLocalAccounts();
+        const found = locals.find((a) => a.username.toLowerCase() === trimmedUser);
+        if (found) acc = found;
+      }
+
+      // Special handling for admin if not found yet
       if (!acc && trimmedUser === 'admin') {
         const bootstrapped = await this.bootstrapAdminAccount(false);
         acc = bootstrapped;
@@ -161,7 +205,7 @@ export const authService = {
       }
 
       // Upgrade plaintext password to SHA-256 hash if needed
-      if (!isSha256Hash(storedPass)) {
+      if (!isSha256Hash(storedPass) && !isFirestoreQuotaExhausted()) {
         updateDoc(targetDocRef, {
           password: hashedInput,
           updatedAt: Date.now(),
@@ -238,6 +282,15 @@ export const authService = {
 
   // Admin: Get all Accounts
   async getAllAccounts(): Promise<Account[]> {
+    const local = getLocalAccounts();
+    if (isFirestoreQuotaExhausted()) {
+      if (!local.some((a) => a.username === 'admin')) {
+        const adminAcc = await this.bootstrapAdminAccount(false);
+        return [adminAcc, ...local];
+      }
+      return local;
+    }
+
     const colRef = collection(db, 'accounts');
     try {
       const snap = await withTimeout(getDocs(colRef), 4000);
@@ -259,10 +312,11 @@ export const authService = {
         accounts.unshift(adminAcc);
       }
 
+      setLocalAccounts(accounts);
       return accounts.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     } catch (err) {
       console.warn('getAllAccounts error:', err);
-      return [];
+      return local;
     }
   },
 
@@ -276,23 +330,35 @@ export const authService = {
       throw new Error('Mật khẩu phải có ít nhất 4 ký tự.');
     }
 
+    const locals = getLocalAccounts();
+    if (locals.some((a) => a.username.toLowerCase() === trimmedUser)) {
+      throw new Error(`Tên đăng nhập "${trimmedUser}" đã tồn tại! Vui lòng chọn tên khác.`);
+    }
+
+    const hashedPassword = await hashPassword(password.trim());
+    const newAccount: Account = {
+      id: trimmedUser,
+      username: trimmedUser,
+      password: hashedPassword,
+      role: 'user',
+      displayName: displayName.trim() || trimmedUser,
+      status: 'active',
+      createdAt: Date.now(),
+    };
+
+    // Save locally first
+    setLocalAccounts([newAccount, ...locals]);
+
+    if (isFirestoreQuotaExhausted()) {
+      return newAccount;
+    }
+
     const accountRef = doc(db, 'accounts', trimmedUser);
     try {
       const existing = await withTimeout(getDoc(accountRef), 3500).catch(() => null);
       if (existing && existing.exists()) {
         throw new Error(`Tên đăng nhập "${trimmedUser}" đã tồn tại! Vui lòng chọn tên khác.`);
       }
-
-      const hashedPassword = await hashPassword(password.trim());
-      const newAccount: Account = {
-        id: trimmedUser,
-        username: trimmedUser,
-        password: hashedPassword,
-        role: 'user',
-        displayName: displayName.trim() || trimmedUser,
-        status: 'active',
-        createdAt: Date.now(),
-      };
 
       await setDoc(accountRef, sanitizeData(newAccount));
 
@@ -307,7 +373,7 @@ export const authService = {
         isPrimary: true,
         createdAt: Date.now(),
       };
-      await setDoc(primaryProfileRef, sanitizeData(primaryProfile));
+      await setDoc(primaryProfileRef, sanitizeData(primaryProfile)).catch(() => {});
 
       return newAccount;
     } catch (err: any) {
@@ -315,7 +381,7 @@ export const authService = {
         throw err;
       }
       console.error('createAccount error:', err);
-      throw new Error(err.message || 'Không thể tạo tài khoản');
+      return newAccount;
     }
   },
 
@@ -324,28 +390,35 @@ export const authService = {
     accountId: string,
     updates: Partial<Pick<Account, 'password' | 'displayName' | 'status'>>
   ): Promise<void> {
+    const sanitizedUpdates: any = {
+      ...updates,
+      updatedAt: Date.now(),
+    };
+    if (updates.password && updates.password.trim()) {
+      sanitizedUpdates.password = await hashPassword(updates.password.trim());
+    }
+
+    // Update local accounts cache
+    const locals = getLocalAccounts();
+    const updatedLocals = locals.map((a) => (a.id === accountId ? { ...a, ...sanitizedUpdates } : a));
+    setLocalAccounts(updatedLocals);
+
+    // If updating current active session account, update localStorage
+    const currentSession = this.getSessionAccount();
+    if (currentSession && currentSession.id === accountId) {
+      this.saveSessionAccount({
+        ...currentSession,
+        ...sanitizedUpdates,
+      });
+    }
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const accountRef = doc(db, 'accounts', accountId);
     try {
-      const sanitizedUpdates: any = {
-        ...updates,
-        updatedAt: Date.now(),
-      };
-      if (updates.password && updates.password.trim()) {
-        sanitizedUpdates.password = await hashPassword(updates.password.trim());
-      }
       await setDoc(accountRef, sanitizeData(sanitizedUpdates), { merge: true });
-
-      // If updating current active session account, update localStorage
-      const currentSession = this.getSessionAccount();
-      if (currentSession && currentSession.id === accountId) {
-        this.saveSessionAccount({
-          ...currentSession,
-          ...sanitizedUpdates,
-        });
-      }
     } catch (err) {
       console.error('updateAccount error:', err);
-      throw err;
     }
   },
 
@@ -354,16 +427,24 @@ export const authService = {
     if (accountId === 'admin') {
       throw new Error('Không thể xóa tài khoản Quản trị viên gốc!');
     }
+
+    // Update local accounts cache
+    const locals = getLocalAccounts();
+    setLocalAccounts(locals.filter((a) => a.id !== accountId));
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const accountRef = doc(db, 'accounts', accountId);
     try {
-      const profilesSnap = await getDocs(collection(db, 'accounts', accountId, 'profiles'));
-      for (const pDoc of profilesSnap.docs) {
-        await deleteDoc(pDoc.ref);
+      const profilesSnap = await getDocs(collection(db, 'accounts', accountId, 'profiles')).catch(() => null);
+      if (profilesSnap) {
+        for (const pDoc of profilesSnap.docs) {
+          await deleteDoc(pDoc.ref).catch(() => {});
+        }
       }
       await deleteDoc(accountRef);
     } catch (err) {
       console.error('deleteAccount error:', err);
-      throw err;
     }
   },
 };

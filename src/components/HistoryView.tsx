@@ -78,9 +78,9 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 
       {history.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5 sm:gap-7 lg:gap-8">
-          {history.map((item) => (
+          {history.map((item, idx) => (
             <div
-              key={item.movieSlug}
+              key={`${item.movieSlug}-${idx}`}
               id={`history-card-${item.movieSlug}`}
               className="group bg-[#0f172a] rounded-2xl overflow-hidden border border-blue-900/50 hover:border-blue-500/80 transition-all hover:scale-[1.02] shadow-lg flex flex-col"
             >

@@ -68,9 +68,9 @@ export const MangaRow: React.FC<MangaRowProps> = ({ title, mangas, onOpenDetail,
           className="flex w-full overflow-x-auto scrollbar-none scroll-smooth gap-4 sm:gap-5 py-2"
           style={{ WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}
         >
-          {mangas.map((manga) => (
+          {mangas.map((manga, idx) => (
             <div
-              key={manga.id}
+              key={`${manga.id || manga.slug || 'manga'}-${idx}`}
               onClick={() => onOpenDetail(manga)}
               className="group relative flex-shrink-0 w-32 sm:w-40 md:w-44 flex flex-col cursor-pointer"
             >

@@ -18,10 +18,13 @@ import {
   Calendar,
   Globe,
   MoreVertical,
+  ChevronDown,
+  Users,
 } from 'lucide-react';
 import { YouTubeChannel, YouTubeVideo, UserProfile, Account } from '../../types';
 import { youtubeApi } from '../../services/youtubeApi';
 import { firestoreStorage } from '../../services/firestoreStorage';
+import { YouTubeChannelBioModal } from './YouTubeChannelBioModal';
 
 interface YouTubeChannelPageViewProps {
   channel: YouTubeChannel | null;
@@ -48,13 +51,23 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [activeTab, setActiveTab] = useState<'home' | 'videos' | 'shorts' | 'live' | 'about'>('home');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isBioModalOpen, setIsBioModalOpen] = useState(false);
   const [channelSearchQuery, setChannelSearchQuery] = useState('');
   const [channelSearchResults, setChannelSearchResults] = useState<YouTubeVideo[] | null>(null);
   const [isSearchingVideos, setIsSearchingVideos] = useState(false);
 
+  // Re-trigger state cleanup immediately on route / channel parameter change
   useEffect(() => {
     let isMounted = true;
+    // Strict state isolation: immediately reset videos and set loading
+    setVideos([]);
+    setChannelSearchResults(null);
+    setChannelSearchQuery('');
+    setIsSearchOpen(false);
     setIsLoading(true);
+    if (initialChannel) {
+      setChannelData(initialChannel);
+    }
 
     const loadChannel = async () => {
       const cId = initialChannel?.id || channelId || '';
@@ -92,7 +105,7 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
             }
           }
         }
-        setVideos(result.items);
+        setVideos(result.items || []);
         setIsLoading(false);
       }
     };
@@ -102,7 +115,7 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [initialChannel, channelId, channelName, currentAccount?.id, activeProfile?.id]);
+  }, [initialChannel?.id, initialChannel?.title, channelId, channelName, currentAccount?.id, activeProfile?.id]);
 
   const displayTitle = channelData?.title || channelName || 'Kênh YouTube';
   const displayAvatar =
@@ -227,7 +240,7 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
   const featuredVideo = videos.length > 0 ? videos[0] : null;
 
   return (
-    <div className="min-h-screen bg-[#0f0f0f] text-white animate-fade-in pb-20 pt-14">
+    <div className="min-h-screen bg-[#0f0f0f] text-white animate-fade-in pb-20 pt-14 w-full max-w-full overflow-hidden">
       {/* Channel Header Navigator */}
       <div className="fixed top-0 left-0 right-0 z-50 bg-[#0f0f0f]/95 backdrop-blur-md border-b border-white/10">
         <div className="max-w-7xl mx-auto pl-2 pr-3 sm:px-4 h-14 flex items-center gap-1.5 sm:gap-2.5">
@@ -242,6 +255,7 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
             src={displayAvatar}
             alt={displayTitle}
             className="w-8 h-8 rounded-full object-cover border border-white/15 shrink-0"
+            referrerPolicy="no-referrer"
           />
           <div className="min-w-0 flex-1 leading-tight">
             <p className="text-sm font-bold text-white truncate">{displayTitle}</p>
@@ -255,106 +269,131 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
       </div>
 
       {/* Banner / Header */}
-      <div className="relative h-36 sm:h-56 md:h-64 bg-gradient-to-r from-red-950 via-[#1f1216] to-[#0f0f0f] overflow-hidden">
-        {channelData?.bannerUrl ? (
-          <img
-            src={channelData.bannerUrl}
-            alt="Channel Banner"
-            className="w-full h-full object-cover opacity-85"
-          />
-        ) : (
-          <div className="absolute inset-0 bg-gradient-to-r from-red-900/40 via-red-950/60 to-black" />
-        )}
+      <div className="w-full max-w-full overflow-hidden">
+        <div className="w-full h-28 sm:h-44 md:h-56 lg:h-64 relative bg-zinc-900 overflow-hidden flex items-center justify-center">
+          {channelData?.bannerUrl ? (
+            <img
+              src={channelData.bannerUrl}
+              alt="Channel Banner"
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className="absolute inset-0 bg-gradient-to-r from-red-950/80 via-neutral-900 to-black flex items-center justify-center">
+              <div className="text-center px-4">
+                <h2 className="text-lg sm:text-2xl font-black text-white/90 tracking-wide drop-shadow-md truncate max-w-md">
+                  {displayTitle}
+                </h2>
+                <p className="text-[11px] sm:text-xs text-slate-400 mt-0.5 drop-shadow font-medium">
+                  Kênh YouTube chính thức
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Channel Details Banner Area */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="flex flex-col md:flex-row items-center md:items-start gap-6 -mt-16 sm:-mt-20 md:-mt-24 mb-6 relative z-10">
-          {/* Avatar */}
-          <div className="relative shrink-0">
+      {/* Channel Metadata & Actions Container */}
+      <div className="max-w-7xl mx-auto px-3.5 sm:px-6 lg:px-8 pt-3 pb-4 sm:py-6 w-full min-w-0">
+        <div className="flex flex-col sm:flex-row items-center sm:items-start gap-3 sm:gap-6 -mt-8 sm:-mt-14 md:-mt-18 mb-3 sm:mb-6 relative z-10 w-full min-w-0">
+          {/* Avatar with Live / Verified Pill */}
+          <div className="relative shrink-0 flex flex-col items-center">
             <img
               src={displayAvatar}
               alt={displayTitle}
-              className="w-28 h-28 sm:w-36 sm:h-36 rounded-full border-4 border-[#0f0f0f] shadow-2xl object-cover bg-black"
+              className="w-16 h-16 sm:w-28 sm:h-28 md:w-32 md:h-32 rounded-full border-2 sm:border-4 border-[#0f0f0f] shadow-2xl object-cover bg-black"
+              referrerPolicy="no-referrer"
             />
+            {liveVideos.length > 0 && (
+              <span className="absolute -bottom-2 bg-red-600 text-white text-[9px] sm:text-[10px] font-black px-2 sm:px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-md animate-pulse border-2 border-[#0f0f0f]">
+                Trực tiếp
+              </span>
+            )}
           </div>
 
-          {/* Info & Subscriptions */}
-          <div className="flex-1 text-center md:text-left space-y-3">
-            <h1 className="text-2xl sm:text-3xl font-black text-white flex items-center gap-2 justify-center md:justify-start">
-              <span>{displayTitle}</span>
+          {/* Info & Dynamic Handle */}
+          <div className="flex-1 text-center sm:text-left space-y-1.5 sm:space-y-2 w-full min-w-0">
+            <h1 className="text-lg sm:text-2xl md:text-3xl font-black text-white flex items-center justify-center sm:justify-start gap-1.5 sm:gap-2">
+              <span className="truncate max-w-[85vw] sm:max-w-xl">{displayTitle}</span>
               <span
-                className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-600 text-white text-xs font-bold"
+                className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-600 text-white text-[10px] font-bold shrink-0"
                 title="Đã xác minh"
               >
                 ✓
               </span>
             </h1>
 
-            <div className="flex flex-wrap items-center justify-center md:justify-start gap-3 text-xs sm:text-sm text-slate-400 font-medium">
-              {channelData?.handle && <span className="text-slate-300 font-semibold">{channelData.handle}</span>}
-              {channelData?.subscribers && (
-                <>
-                  <span>•</span>
-                  <span className="text-red-400 font-bold">{channelData.subscribers}</span>
-                </>
-              )}
-              {videos.length > 0 && (
-                <>
-                  <span>•</span>
-                  <span>{videos.length} video</span>
-                </>
-              )}
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1.5 text-xs sm:text-sm text-slate-400 font-medium">
+              <span className="text-slate-300 font-semibold truncate max-w-[200px]">
+                {channelData?.handle
+                  ? channelData.handle.startsWith('@')
+                    ? channelData.handle
+                    : `@${channelData.handle}`
+                  : `@${displayTitle.toLowerCase().replace(/[^a-z0-9]/g, '')}`}
+              </span>
+              <span className="text-slate-600">•</span>
+              <span className="text-slate-300 font-semibold">{channelData?.subscribers || 'Nhiều người đăng ký'}</span>
+              <span className="text-slate-600">•</span>
+              <span>{videos.length} video</span>
             </div>
 
+            {/* Description Snippet with xem thêm */}
             {channelData?.description && (
-              <p className="text-xs sm:text-sm text-slate-300 line-clamp-2 max-w-3xl leading-relaxed">
-                {channelData.description}
-              </p>
+              <div className="text-xs sm:text-sm text-slate-300 max-w-3xl leading-relaxed mx-auto sm:mx-0">
+                <p className="line-clamp-1">
+                  {channelData.description}
+                  <button
+                    onClick={() => setIsBioModalOpen(true)}
+                    className="text-white font-bold ml-1 hover:underline cursor-pointer inline-flex items-center"
+                  >
+                    ...xem thêm
+                  </button>
+                </p>
+              </div>
             )}
 
-            <div className="flex flex-wrap items-center justify-center md:justify-start gap-3 pt-2">
+            {/* Action Buttons row */}
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 pt-1.5 w-full">
               <button
                 onClick={toggleSubscribe}
-                className={`px-6 py-2.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer shadow-lg ${
+                className={`flex-1 sm:flex-initial px-4 sm:px-5 py-2 rounded-full text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-lg ${
                   isSubscribed
                     ? 'bg-neutral-800 hover:bg-neutral-700 text-slate-200 border border-neutral-700'
                     : 'bg-red-600 hover:bg-red-700 text-white shadow-red-600/40'
                 }`}
               >
-                {isSubscribed ? (
-                  <>
-                    <UserCheck className="w-4 h-4 text-green-400" />
-                    <span>Đã đăng ký</span>
-                    <Bell className="w-3.5 h-3.5 text-yellow-400 ml-1" />
-                  </>
-                ) : (
-                  <>
-                    <UserPlus className="w-4 h-4" />
-                    <span>Đăng ký</span>
-                  </>
-                )}
+                <Bell className="w-3.5 h-3.5 text-yellow-400 shrink-0" />
+                <span>{isSubscribed ? 'Đã đăng ký' : 'Đăng ký'}</span>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400 ml-0.5 shrink-0" />
               </button>
 
               <button
-                onClick={() => alert(`Đã bật thông báo cho kênh ${displayTitle}`)}
-                className="px-4 py-2.5 rounded-full bg-white/10 hover:bg-white/20 text-xs sm:text-sm font-semibold flex items-center gap-2 transition-colors cursor-pointer"
+                onClick={() => alert(`Tham gia hội viên kênh ${displayTitle}`)}
+                className="flex-1 sm:flex-initial px-4 py-2 rounded-full bg-neutral-800 hover:bg-neutral-700 text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-slate-200 border border-neutral-700"
               >
-                <Bell className="w-4 h-4 text-slate-300" />
-                <span>Thông báo</span>
+                <span className="text-yellow-400 text-sm">⭐</span>
+                <span>Tham gia</span>
+              </button>
+
+              <button
+                onClick={() => alert(`Cộng đồng kênh ${displayTitle}`)}
+                className="hidden sm:flex px-4 py-2 rounded-full bg-neutral-800 hover:bg-neutral-700 text-xs sm:text-sm font-bold items-center justify-center gap-1.5 transition-colors cursor-pointer text-slate-200 border border-neutral-700"
+              >
+                <Users className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                <span>Cộng đồng</span>
               </button>
             </div>
           </div>
         </div>
 
         {/* Tab Navigation & YouTube-style Search Button */}
-        <div className="sticky top-14 z-30 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 bg-[#0f0f0f]/95 backdrop-blur-md border-b border-white/10 flex items-center justify-between overflow-x-auto scrollbar-none">
-          <div className="flex items-center gap-2 sm:gap-6">
+        <div className="sticky top-14 z-30 -mx-3.5 px-3.5 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 bg-[#0f0f0f]/95 backdrop-blur-md border-b border-white/10 flex items-center justify-between gap-1 overflow-hidden">
+          <div className="flex items-center gap-1 sm:gap-3 overflow-x-auto scrollbar-none flex-1 py-0.5 max-w-full">
             {[
-              { id: 'home', label: 'Trang chủ', icon: Compass },
+              { id: 'home', label: 'Trang Chủ', icon: Compass },
               { id: 'videos', label: 'Video', icon: Film },
               { id: 'shorts', label: 'Shorts', icon: Smartphone },
-              { id: 'live', label: 'Trực tiếp', icon: Radio },
+              { id: 'live', label: 'Trực Tiếp', icon: Radio },
               { id: 'about', label: 'Giới thiệu', icon: Info },
             ].map((tab) => {
               const Icon = tab.icon;
@@ -363,13 +402,13 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
-                  className={`flex items-center gap-2 py-3 px-4 text-xs sm:text-sm font-bold transition-all cursor-pointer whitespace-nowrap border-b-2 ${
+                  className={`flex items-center gap-1 sm:gap-1.5 py-2.5 sm:py-3 px-2.5 sm:px-3 text-xs sm:text-sm font-bold transition-all cursor-pointer whitespace-nowrap border-b-2 shrink-0 ${
                     isActive
                       ? 'border-white text-white'
                       : 'border-transparent text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  <Icon className={`w-4 h-4 ${isActive ? 'text-red-500' : 'text-slate-400'}`} />
+                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-red-500' : 'text-slate-400'}`} />
                   <span>{tab.label}</span>
                 </button>
               );
@@ -455,9 +494,33 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
 
         {/* Tab Content Display */}
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center py-24 space-y-3">
-            <Loader2 className="w-10 h-10 text-red-500 animate-spin" />
-            <p className="text-xs text-slate-400">Đang đồng bộ dữ liệu kênh từ YouTube...</p>
+          <div className="space-y-6 mt-6">
+            {/* Featured video skeleton */}
+            <div className="bg-neutral-900/60 border border-neutral-800/80 rounded-3xl p-4 sm:p-6 animate-pulse grid grid-cols-1 lg:grid-cols-12 gap-4">
+              <div className="lg:col-span-7 aspect-video bg-neutral-800 rounded-2xl" />
+              <div className="lg:col-span-5 flex flex-col justify-center space-y-3">
+                <div className="w-24 h-4 bg-neutral-800 rounded-full" />
+                <div className="w-3/4 h-6 bg-neutral-800 rounded-lg" />
+                <div className="w-1/2 h-4 bg-neutral-800 rounded-md" />
+                <div className="w-full h-12 bg-neutral-800/60 rounded-xl" />
+              </div>
+            </div>
+
+            {/* Video grid skeleton cards */}
+            <div className="space-y-3">
+              <div className="w-36 h-5 bg-neutral-800 rounded-md animate-pulse" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <div key={i} className="bg-neutral-900/80 border border-neutral-800/80 rounded-2xl overflow-hidden animate-pulse">
+                    <div className="aspect-video bg-neutral-800" />
+                    <div className="p-3.5 space-y-2.5">
+                      <div className="w-full h-4 bg-neutral-800 rounded" />
+                      <div className="w-2/3 h-3 bg-neutral-800/60 rounded" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         ) : activeTab === 'about' && !channelSearchQuery ? (
           <div className="bg-neutral-900/60 border border-neutral-800 rounded-3xl p-6 sm:p-8 space-y-6 max-w-4xl mt-6">
@@ -633,6 +696,7 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
                           src={vid.thumbnailUrl}
                           alt={vid.title}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                          referrerPolicy="no-referrer"
                         />
                         <span className="absolute top-2 left-2 bg-red-600 text-white text-[10px] font-black px-2 py-0.5 rounded animate-pulse flex items-center gap-1 shadow-md">
                           <span className="w-2 h-2 rounded-full bg-white animate-ping" />
@@ -680,6 +744,7 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
                           src={vid.thumbnailUrl}
                           alt={vid.title}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                          referrerPolicy="no-referrer"
                         />
                         {vid.duration && (
                           <span className="absolute bottom-2 right-2 bg-black/80 text-white text-[10px] font-bold px-2 py-0.5 rounded">
@@ -725,6 +790,7 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
                         src={vid.thumbnailUrl}
                         alt={vid.title}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                        referrerPolicy="no-referrer"
                       />
                       {vid.duration && (
                         <span className="absolute bottom-2 right-2 bg-black/80 text-white text-[10px] font-bold px-2 py-0.5 rounded">
@@ -748,6 +814,14 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Channel Bio Full Modal */}
+      {isBioModalOpen && channelData && (
+        <YouTubeChannelBioModal
+          channel={channelData}
+          onClose={() => setIsBioModalOpen(false)}
+        />
+      )}
     </div>
   );
 };

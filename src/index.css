@@ -132,5 +132,39 @@ video::-webkit-media-controls {
   background-clip: content-box;
 }
 
+/* Cucumber Marquee Ticker Animation */
+@keyframes cucumberMarquee {
+  0% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+.animate-cucumber-marquee {
+  display: inline-block;
+  white-space: nowrap;
+  animation-name: cucumberMarquee;
+  animation-timing-function: linear;
+  will-change: transform;
+}
+
+/* Mobile Safe Area and Status Bar Padding for Admin Page */
+.admin-mobile-safe-pt {
+  padding-top: max(3.5rem, calc(1.5rem + env(safe-area-inset-top, 0px)));
+}
+
+.admin-mobile-safe-pb {
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 768px) {
+  .admin-mobile-safe-pt {
+    padding-top: 1.5rem !important;
+  }
+}
+
+
 
 

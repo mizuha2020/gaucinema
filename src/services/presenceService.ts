@@ -6,8 +6,9 @@ import {
   deleteDoc,
   onSnapshot,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType, sanitizeData } from './firebase';
-import { ActiveViewerSession } from '../types';
+import { db, handleFirestoreError, isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, OperationType, sanitizeData } from './firebase';
+import { ActiveViewerSession, MediaActivityType } from '../types';
+import { userAnalyticsService } from './userAnalyticsService';
 
 const HEARTBEAT_EXPIRATION_MS = 90 * 1000; // 90 seconds timeout for active viewers
 
@@ -15,29 +16,44 @@ class PresenceService {
   private currentSessionId: string | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private lastSentData: Partial<ActiveViewerSession> | null = null;
+  private lastPingTimestamp: number = 0;
 
   /**
    * Start or update real-time viewing/reading heartbeat
    */
   startHeartbeat(session: Omit<ActiveViewerSession, 'sessionId' | 'lastHeartbeat'>): void {
+    if (isFirestoreQuotaExhausted()) {
+      return;
+    }
     const sessionId = `${session.accountId}_${session.profileId}`.replace(/[^a-zA-Z0-9_-]/g, '_');
     this.currentSessionId = sessionId;
     this.lastSentData = session;
+    this.lastPingTimestamp = Date.now();
 
     // Send initial ping immediately
-    this.sendPing(sessionId, session);
+    this.sendPing(sessionId, session, 5);
 
     // Clear existing timer if any
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
     }
 
-    // Schedule regular heartbeat every 20 seconds
+    // Schedule regular heartbeat every 45 seconds (optimized for Firestore quota preservation)
     this.heartbeatTimer = setInterval(() => {
-      if (this.currentSessionId && this.lastSentData) {
-        this.sendPing(this.currentSessionId, this.lastSentData);
+      if (isFirestoreQuotaExhausted()) {
+        if (this.heartbeatTimer) {
+          clearInterval(this.heartbeatTimer);
+          this.heartbeatTimer = null;
+        }
+        return;
       }
-    }, 20000);
+      if (this.currentSessionId && this.lastSentData) {
+        const now = Date.now();
+        const elapsedSeconds = this.lastPingTimestamp > 0 ? Math.round((now - this.lastPingTimestamp) / 1000) : 45;
+        this.lastPingTimestamp = now;
+        this.sendPing(this.currentSessionId, this.lastSentData, elapsedSeconds);
+      }
+    }, 45000);
   }
 
   /**
@@ -51,7 +67,7 @@ class PresenceService {
         duration,
         progressPercent,
       };
-      this.sendPing(this.currentSessionId, this.lastSentData);
+      this.sendPing(this.currentSessionId, this.lastSentData, 0);
     }
   }
 
@@ -69,10 +85,19 @@ class PresenceService {
       deleteDoc(docRef).catch(() => {});
       this.currentSessionId = null;
       this.lastSentData = null;
+      this.lastPingTimestamp = 0;
     }
   }
 
-  private async sendPing(sessionId: string, sessionData: Partial<ActiveViewerSession>): Promise<void> {
+  private async sendPing(sessionId: string, sessionData: Partial<ActiveViewerSession>, secondsElapsed: number = 20): Promise<void> {
+    if (isFirestoreQuotaExhausted()) {
+      if (this.heartbeatTimer) {
+        clearInterval(this.heartbeatTimer);
+        this.heartbeatTimer = null;
+      }
+      return;
+    }
+
     try {
       const fullSession: ActiveViewerSession = {
         sessionId,
@@ -95,8 +120,50 @@ class PresenceService {
 
       const docRef = doc(db, 'activeSessions', sessionId);
       await setDoc(docRef, sanitizeData(fullSession), { merge: true });
-    } catch (e) {
-      // Non-blocking warning for presence heartbeat
+
+      // Record to persistent Analytics & History
+      if (secondsElapsed > 0 && sessionData.accountId) {
+        let mediaType: MediaActivityType = 'browsing';
+        let isActivelyPlaying = false;
+
+        if (sessionData.type === 'watching_movie') {
+          mediaType = 'movie';
+          isActivelyPlaying = true;
+        } else if (sessionData.type === 'reading_manga') {
+          mediaType = 'manga';
+          isActivelyPlaying = true;
+        } else if (sessionData.type === 'watching_tv') {
+          mediaType = 'livetv';
+          isActivelyPlaying = true;
+        }
+
+        userAnalyticsService.recordActivityHeartbeat({
+          accountId: sessionData.accountId,
+          accountDisplayName: sessionData.accountDisplayName,
+          profileId: sessionData.profileId,
+          profileName: sessionData.profileName,
+          profileAvatar: sessionData.profileAvatar,
+          mediaType,
+          contentId: sessionData.itemTitle,
+          title: sessionData.itemTitle,
+          subtitle: sessionData.itemSubtitle,
+          coverUrl: sessionData.itemCover,
+          apiSource: sessionData.apiSourceUsed,
+          currentTime: sessionData.currentTime,
+          duration: sessionData.duration,
+          progressPercent: sessionData.progressPercent,
+          isActivelyPlaying,
+          secondsElapsed,
+        }).catch((err) => console.warn('Analytics heartbeat recording warning:', err));
+      }
+    } catch (e: any) {
+      if (e?.code === 'resource-exhausted' || String(e).includes('Quota limit exceeded')) {
+        markFirestoreQuotaExhausted();
+        if (this.heartbeatTimer) {
+          clearInterval(this.heartbeatTimer);
+          this.heartbeatTimer = null;
+        }
+      }
       console.warn('Presence heartbeat ping warning:', e);
     }
   }
@@ -114,6 +181,12 @@ class PresenceService {
       browsing: number;
     };
   }> {
+    if (isFirestoreQuotaExhausted()) {
+      return {
+        sessions: [],
+        stats: { total: 0, movies: 0, manga: 0, tv: 0, browsing: 0 },
+      };
+    }
     try {
       const colRef = collection(db, 'activeSessions');
       const snap = await getDocs(colRef);
@@ -164,6 +237,13 @@ class PresenceService {
       };
     }) => void
   ): () => void {
+    if (isFirestoreQuotaExhausted()) {
+      callback({
+        sessions: [],
+        stats: { total: 0, movies: 0, manga: 0, tv: 0, browsing: 0 },
+      });
+      return () => {};
+    }
     const colRef = collection(db, 'activeSessions');
     
     const unsubscribe = onSnapshot(

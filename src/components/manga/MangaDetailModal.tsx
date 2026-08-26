@@ -132,9 +132,9 @@ export const MangaDetailModal: React.FC<MangaDetailModalProps> = ({
               <div className="text-center py-10 text-gray-500 text-sm">Không tìm thấy chương phù hợp.</div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-1">
-                {filteredChapters.map((ch) => (
+                {filteredChapters.map((ch, idx) => (
                   <button
-                    key={ch.id}
+                    key={`${ch.id || ch.chapterNumber || 'ch'}-${idx}`}
                     onClick={() => onReadChapter(manga, ch)}
                     className="text-left px-4 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 text-xs text-gray-200 hover:text-white transition flex items-center justify-between group"
                   >

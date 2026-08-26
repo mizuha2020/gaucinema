@@ -17,6 +17,8 @@
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:exported="true">
 
             <intent-filter>
@@ -28,8 +30,10 @@
 
         <activity
             android:name=".NativePlayerActivity"
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|uiMode"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|uiMode|navigation|density"
             android:theme="@style/AppTheme.NoActionBar"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:exported="false">
         </activity>
 

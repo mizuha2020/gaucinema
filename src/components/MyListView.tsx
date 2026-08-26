@@ -56,9 +56,9 @@ export const MyListView: React.FC<MyListViewProps> = ({
 
       {myList.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-5 sm:gap-7 lg:gap-8">
-          {myList.map((item) => (
+          {myList.map((item, idx) => (
             <div
-              key={item.movieSlug}
+              key={`${item.movieSlug}-${idx}`}
               id={`mylist-card-${item.movieSlug}`}
               className="group relative bg-[#0f172a] rounded-2xl overflow-hidden border border-blue-900/50 hover:border-blue-500/80 transition-all hover:scale-105 shadow-lg flex flex-col"
             >

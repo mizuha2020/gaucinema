@@ -71,6 +71,47 @@ public class NativeVideoPlayerPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void enterPip(PluginCall call) {
+        try {
+            if (getActivity() instanceof MainActivity) {
+                getActivity().runOnUiThread(() -> {
+                    ((MainActivity) getActivity()).enterPipMode();
+                });
+                call.resolve();
+            } else {
+                call.reject("Activity không hỗ trợ PiP");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            call.reject("Lỗi bật PiP: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void setVideoPlaying(PluginCall call) {
+        try {
+            boolean playing = call.getBoolean("playing", false);
+            if (getActivity() instanceof MainActivity) {
+                getActivity().runOnUiThread(() -> {
+                    ((MainActivity) getActivity()).setPlayingVideo(playing);
+                });
+            }
+            call.resolve();
+        } catch (Exception e) {
+            e.printStackTrace();
+            call.reject("Lỗi cập nhật trạng thái phát: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void isPipSupported(PluginCall call) {
+        JSObject ret = new JSObject();
+        boolean supported = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O;
+        ret.put("supported", supported);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
     public void isNativeSupported(PluginCall call) {
         JSObject ret = new JSObject();
         ret.put("supported", true);

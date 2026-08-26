@@ -46,7 +46,7 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({ title, movies, onO
           style={{ scrollbarWidth: 'none' }}
         >
           {top10Movies.map((movie, index) => (
-            <div key={movie.slug || index} className="relative flex-shrink-0 w-64 h-80 flex items-end">
+            <div key={`${movie.slug || 'top10'}-${index}`} className="relative flex-shrink-0 w-64 h-80 flex items-end">
               {/* Background Number Layer */}
               <div className="absolute left-0 bottom-0 z-0 flex items-center justify-start h-full">
                 <span

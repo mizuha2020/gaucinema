@@ -658,7 +658,7 @@ export const movieApi = {
     });
   },
 
-  // 8. Tìm kiếm đa nguồn (Multi-Source Search)
+  // 8. Tìm kiếm đa nguồn & Diễn viên thông minh (Smart Multi-Source & Cast Search)
   async search(keyword: string, page = 1, limit = 24, sourceOverride?: ApiSource): Promise<MovieListResponse> {
     if (!keyword.trim()) return { status: true, items: [] };
     const kw = keyword.trim();
@@ -666,43 +666,59 @@ export const movieApi = {
     const cacheKey = `search:${kw}:${source}:${page}:${limit}`;
 
     return cachedFetch(cacheKey, async () => {
-      if (source === 'kkphim') {
-        const raw = await fetchKKPhim<any>('v1/api/tim-kiem', { keyword: kw, page, limit });
-        return normalizeMovieList(raw, 'kkphim');
-      }
-      if (source === 'ophim') {
-        const raw = await fetchOPhim<any>('v1/api/tim-kiem', { keyword: kw, page, limit });
-        return normalizeMovieList(raw, 'ophim');
-      }
-      if (source === 'nguonc') {
-        const raw = await fetchNguonC<any>('films/search', { keyword: kw, page });
-        return normalizeMovieList(raw, 'nguonc');
+      // If a specific source is selected, try it first
+      if (source !== 'all') {
+        let singleResult: MovieListResponse | null = null;
+        try {
+          if (source === 'kkphim') {
+            const raw = await fetchKKPhim<any>('v1/api/tim-kiem', { keyword: kw, page, limit });
+            singleResult = normalizeMovieList(raw, 'kkphim');
+          } else if (source === 'ophim') {
+            const raw = await fetchOPhim<any>('v1/api/tim-kiem', { keyword: kw, page, limit });
+            singleResult = normalizeMovieList(raw, 'ophim');
+          } else if (source === 'nguonc') {
+            const raw = await fetchNguonC<any>('films/search', { keyword: kw, page });
+            singleResult = normalizeMovieList(raw, 'nguonc');
+          }
+        } catch {}
+
+        // If specific source found items, return it!
+        if (singleResult && singleResult.items && singleResult.items.length > 0) {
+          return singleResult;
+        }
+        // If 0 items were found (common when searching for actors/directors because upstream only indexes titles),
+        // seamlessly fallback to our Smart Actor/Multi-source search below!
       }
 
-      // 'all' Mode: Use server search aggregation or direct multi-fetch
+      // Smart Aggregator & Cast Search via server proxy
       try {
         const res = await fetch(getFullApiUrl(`/api/proxy/search-all?keyword=${encodeURIComponent(kw)}`));
         if (res.ok) {
           const payload = await res.json();
-          if (payload?.items && Array.isArray(payload.items)) {
+          if (payload?.items && Array.isArray(payload.items) && payload.items.length > 0) {
+            let filtered = payload.items;
+            if (source !== 'all') {
+              const bySource = payload.items.filter((m: any) => m.source === source);
+              if (bySource.length > 0) filtered = bySource;
+            }
             return {
               status: true,
-              items: payload.items.map((m: any) => normalizeMovieItem(m, m.source || 'kkphim')),
+              items: filtered.map((m: any) => normalizeMovieItem(m, m.source || 'kkphim')),
               pagination: {
-                totalItems: payload.total || payload.items.length,
+                totalItems: filtered.length,
                 totalItemsPerPage: limit,
                 currentPage: 1,
-                totalPages: 1,
+                totalPages: Math.max(1, Math.ceil(filtered.length / limit)),
               },
             };
           }
         }
       } catch {}
 
-      // Fallback: parallel client search
+      // Fallback: parallel client search across all sources
       const [kk, op, nc] = await Promise.allSettled([
-        fetchKKPhim<any>('v1/api/tim-kiem', { keyword: kw, limit: 12 }),
-        fetchOPhim<any>('v1/api/tim-kiem', { keyword: kw, limit: 12 }),
+        fetchKKPhim<any>('v1/api/tim-kiem', { keyword: kw, limit: 16 }),
+        fetchOPhim<any>('v1/api/tim-kiem', { keyword: kw, limit: 16 }),
         fetchNguonC<any>('films/search', { keyword: kw }),
       ]);
 
@@ -715,9 +731,16 @@ export const movieApi = {
         if (!map.has(m.slug)) map.set(m.slug, m);
       }
 
+      const merged = Array.from(map.values());
       return {
         status: true,
-        items: Array.from(map.values()),
+        items: merged,
+        pagination: {
+          totalItems: merged.length,
+          totalItemsPerPage: limit,
+          currentPage: 1,
+          totalPages: Math.max(1, Math.ceil(merged.length / limit)),
+        },
       };
     });
   },

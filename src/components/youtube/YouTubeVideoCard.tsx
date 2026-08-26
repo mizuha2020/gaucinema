@@ -73,20 +73,27 @@ export const YouTubeVideoCard: React.FC<YouTubeVideoCardProps> = ({
     video.channelAvatar ||
     `https://ui-avatars.com/api/?name=${encodeURIComponent(video.channelTitle || 'Channel')}&background=333&color=fff&bold=true`;
 
+  const [avatarSrc, setAvatarSrc] = useState(avatarUrl);
+
+  useEffect(() => {
+    setAvatarSrc(avatarUrl);
+  }, [avatarUrl]);
+
   return (
-    <div className="group flex flex-col gap-2.5 cursor-pointer relative select-none">
+    <div className="group flex flex-col gap-2 cursor-pointer relative select-none w-full min-w-0 max-w-full">
       {/* 16:9 Thumbnail Container */}
       <div
         onClick={() => onSelectVideo(video)}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        className="relative aspect-video w-full rounded-xl overflow-hidden bg-[#272727] shadow-lg transition-transform duration-300 group-hover:scale-[1.02] group-hover:rounded-none sm:group-hover:rounded-xl"
+        className="relative aspect-video w-full rounded-xl overflow-hidden bg-[#272727] shadow-md transition-transform duration-300 group-hover:scale-[1.02]"
       >
         <img
           src={video.thumbnailUrl}
           alt={video.title}
           className="w-full h-full object-cover transition-opacity duration-300"
           loading="lazy"
+          referrerPolicy="no-referrer"
         />
 
         {/* Hover Play Overlay */}
@@ -117,7 +124,7 @@ export const YouTubeVideoCard: React.FC<YouTubeVideoCardProps> = ({
       </div>
 
       {/* Video Meta Info */}
-      <div className="flex gap-3 px-0.5">
+      <div className="flex gap-2 sm:gap-3 px-0.5">
         {/* Channel Avatar */}
         <button
           onClick={(e) => {
@@ -132,9 +139,16 @@ export const YouTubeVideoCard: React.FC<YouTubeVideoCardProps> = ({
           title={video.channelTitle}
         >
           <img
-            src={avatarUrl}
+            src={avatarSrc}
             alt={video.channelTitle}
-            className="w-9 h-9 rounded-full object-cover border border-white/10 hover:opacity-90 transition-opacity"
+            className="w-7 h-7 sm:w-9 sm:h-9 rounded-full object-cover border border-white/10 hover:opacity-90 transition-opacity"
+            referrerPolicy="no-referrer"
+            onError={() => {
+              const fallback = `https://ui-avatars.com/api/?name=${encodeURIComponent(video.channelTitle || 'Channel')}&background=333&color=fff&bold=true`;
+              if (avatarSrc !== fallback) {
+                setAvatarSrc(fallback);
+              }
+            }}
           />
         </button>
 
@@ -142,7 +156,7 @@ export const YouTubeVideoCard: React.FC<YouTubeVideoCardProps> = ({
         <div className="flex-1 min-w-0 pr-1">
           <h3
             onClick={() => onSelectVideo(video)}
-            className="text-sm font-semibold text-white line-clamp-2 leading-snug group-hover:text-red-400 transition-colors"
+            className="text-xs sm:text-sm font-semibold text-white line-clamp-2 leading-snug group-hover:text-red-400 transition-colors"
             title={video.title}
           >
             {video.title}
@@ -158,14 +172,14 @@ export const YouTubeVideoCard: React.FC<YouTubeVideoCardProps> = ({
                 onSelectChannel(video.channelId || video.channelTitle);
               }
             }}
-            className="flex items-center gap-1 text-[13px] text-[#AAAAAA] hover:text-white transition-colors mt-1 truncate cursor-pointer"
+            className="flex items-center gap-1 text-[11px] sm:text-[13px] text-[#AAAAAA] hover:text-white transition-colors mt-0.5 truncate cursor-pointer"
           >
             <span className="truncate">{video.channelTitle}</span>
-            <CheckCircle2 className="w-3.5 h-3.5 text-[#AAAAAA] fill-[#AAAAAA]/30 shrink-0" />
+            <CheckCircle2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#AAAAAA] fill-[#AAAAAA]/30 shrink-0" />
           </div>
 
           {/* Views & Time Ago */}
-          <div className="text-[12px] text-[#AAAAAA] flex items-center gap-1 mt-0.5 truncate">
+          <div className="text-[10px] sm:text-[12px] text-[#AAAAAA] flex items-center gap-1 mt-0.5 truncate">
             <span>{typeof video.viewCount === 'number' ? `${video.viewCount.toLocaleString()} lượt xem` : video.viewCount || '100K lượt xem'}</span>
             <span>•</span>
             <span>{video.publishedAt || '2 ngày trước'}</span>
@@ -179,7 +193,7 @@ export const YouTubeVideoCard: React.FC<YouTubeVideoCardProps> = ({
               e.stopPropagation();
               setIsMenuOpen(!isMenuOpen);
             }}
-            className="p-1 rounded-full text-slate-400 opacity-0 group-hover:opacity-100 hover:text-white hover:bg-[#272727] transition-all cursor-pointer"
+            className="p-2 sm:p-1 rounded-full text-slate-400 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 hover:text-white hover:bg-[#272727] transition-all cursor-pointer"
             title="Tùy chọn khác"
           >
             <MoreVertical className="w-4 h-4" />

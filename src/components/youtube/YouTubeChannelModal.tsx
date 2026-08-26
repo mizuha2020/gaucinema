@@ -157,65 +157,75 @@ export const YouTubeChannelModal: React.FC<YouTubeChannelModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in overflow-y-auto">
       <div className="relative w-full max-w-4xl bg-[#120a0d] border border-red-900/60 rounded-3xl shadow-2xl overflow-hidden my-auto max-h-[90vh] flex flex-col">
         {/* Banner / Header */}
-        <div className="relative h-32 sm:h-44 bg-gradient-to-r from-red-950 via-red-900 to-[#180d11] shrink-0">
+        <div className="relative w-full h-28 sm:h-44 bg-gradient-to-r from-red-950 via-red-900 to-[#180d11] shrink-0 overflow-hidden">
           {channelData?.bannerUrl && (
             <img
               src={channelData.bannerUrl}
               alt="Channel Banner"
               className="w-full h-full object-cover opacity-80"
+              referrerPolicy="no-referrer"
             />
           )}
           <button
             onClick={onClose}
-            className="absolute top-3 right-3 z-10 bg-black/60 hover:bg-black/80 text-white p-2 rounded-full backdrop-blur-md transition-all cursor-pointer border border-white/10"
+            className="absolute top-2.5 right-2.5 z-10 bg-black/60 hover:bg-black/80 text-white p-2 rounded-full backdrop-blur-md transition-all cursor-pointer border border-white/10"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
         </div>
 
         {/* Channel Info Section */}
-        <div className="px-4 sm:px-8 pb-4 relative shrink-0 border-b border-red-900/40 bg-[#160d10]">
-          <div className="flex flex-col sm:flex-row items-center sm:items-end justify-between gap-4 -mt-12 sm:-mt-16 mb-3 text-center sm:text-left">
+        <div className="px-3.5 sm:px-8 pb-3.5 relative shrink-0 border-b border-red-900/40 bg-[#160d10]">
+          <div className="flex flex-col sm:flex-row items-center sm:items-end justify-between gap-3 -mt-8 sm:-mt-14 mb-2.5 text-center sm:text-left">
             {/* Avatar */}
             <div className="relative">
               <img
                 src={displayAvatar}
                 alt={displayTitle}
-                className="w-24 h-24 sm:w-28 sm:h-28 rounded-full border-4 border-[#120a0d] shadow-xl object-cover bg-black"
+                className="w-16 h-16 sm:w-24 sm:h-24 rounded-full border-2 sm:border-4 border-[#120a0d] shadow-xl object-cover bg-black"
+                referrerPolicy="no-referrer"
               />
             </div>
 
-            {/* Subscribe Action Button */}
-            <button
-              onClick={toggleSubscribe}
-              className={`px-6 py-2.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 transition-all cursor-pointer shadow-lg shrink-0 ${
-                isSubscribed
-                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600'
-                  : 'bg-red-600 hover:bg-red-700 text-white shadow-red-600/40'
-              }`}
-            >
-              {isSubscribed ? (
-                <>
-                  <UserCheck className="w-4 h-4 text-green-400" />
-                  <span>Đã đăng ký</span>
-                  <Bell className="w-3.5 h-3.5 text-yellow-400 ml-1" />
-                </>
-              ) : (
-                <>
-                  <UserPlus className="w-4 h-4" />
-                  <span>Đăng ký kênh</span>
-                </>
-              )}
-            </button>
+            {/* Action Buttons container matching full width on mobile */}
+            <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2 w-full sm:w-auto">
+              <button
+                onClick={toggleSubscribe}
+                className={`flex-1 sm:flex-initial px-5 py-2 rounded-full text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-lg shrink-0 ${
+                  isSubscribed
+                    ? 'bg-neutral-800 hover:bg-neutral-700 text-slate-200 border border-neutral-700'
+                    : 'bg-red-600 hover:bg-red-700 text-white shadow-red-600/40'
+                }`}
+              >
+                {isSubscribed ? (
+                  <>
+                    <UserCheck className="w-3.5 h-3.5 text-green-400" />
+                    <span>Đã đăng ký</span>
+                    <Bell className="w-3 h-3 text-yellow-400 ml-0.5" />
+                  </>
+                ) : (
+                  <>
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>Đăng ký</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           <div className="space-y-1">
-            <h1 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2 justify-center sm:justify-start">
-              <span>{displayTitle}</span>
-              <span className="inline-block w-4 h-4 rounded-full bg-red-600 text-white text-[10px] font-bold text-center leading-4" title="Đã xác minh">✓</span>
+            <h1 className="text-lg sm:text-2xl font-black text-white flex items-center gap-1.5 justify-center sm:justify-start">
+              <span className="truncate max-w-[85vw] sm:max-w-xl">{displayTitle}</span>
+              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-600 text-white text-[10px] font-bold shrink-0" title="Đã xác minh">✓</span>
             </h1>
-            <div className="flex items-center justify-center sm:justify-start gap-3 text-xs text-slate-400 font-medium">
-              {channelData?.handle && <span>{channelData.handle}</span>}
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 text-xs text-slate-400 font-medium">
+              <span className="text-slate-300 font-semibold truncate max-w-[180px]">
+                {channelData?.handle
+                  ? channelData.handle.startsWith('@')
+                    ? channelData.handle
+                    : `@${channelData.handle}`
+                  : `@${displayTitle.toLowerCase().replace(/[^a-z0-9]/g, '')}`}
+              </span>
               {channelData?.subscribers && (
                 <>
                   <span>•</span>
@@ -230,7 +240,7 @@ export const YouTubeChannelModal: React.FC<YouTubeChannelModalProps> = ({
               )}
             </div>
             {channelData?.description && (
-              <p className="text-xs text-slate-300 line-clamp-2 max-w-2xl pt-1">
+              <p className="text-xs text-slate-300 line-clamp-2 max-w-2xl pt-0.5">
                 {channelData.description}
               </p>
             )}

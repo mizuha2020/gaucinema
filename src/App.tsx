@@ -13,6 +13,7 @@ import {
 import { authService } from './services/authService';
 import { firestoreStorage } from './services/firestoreStorage';
 import { movieApi } from './services/movieApi';
+import { presenceService } from './services/presenceService';
 import { LoginScreen } from './components/LoginScreen';
 import { AdminDashboard } from './components/AdminDashboard';
 import { Navbar } from './components/Navbar';
@@ -21,6 +22,7 @@ import { Top10Carousel } from './components/Top10Carousel';
 import { Theater3DCarousel } from './components/Theater3DCarousel';
 import { CinematicCarousel } from './components/CinematicCarousel';
 import { MovieRow } from './components/MovieRow';
+import { ForYouRow } from './components/ForYouRow';
 import { MovieDetailModal } from './components/MovieDetailModal';
 import { SimplePlayer } from './components/SimplePlayer';
 import { ProfileSelector } from './components/ProfileSelector';
@@ -32,6 +34,7 @@ import { LiveTvAppWrapper } from './apps/LiveTvAppWrapper';
 import { YouTubeAppWrapper } from './apps/YouTubeAppWrapper';
 import { AppSwitcherLoading } from './components/AppSwitcherLoading';
 import { MobileBottomNav } from './components/MobileBottomNav';
+import { NotificationTickerBanner } from './components/NotificationTickerBanner';
 import { App as CapApp } from '@capacitor/app';
 import {
   Sparkles,
@@ -415,6 +418,26 @@ export default function App() {
     };
   }, [playingMovie, selectedMovieForDetail]);
 
+  // Online presence & browsing activity tracking
+  useEffect(() => {
+    if (!currentAccount || playingMovie || showProfileSelector || showAdminDashboard) return;
+
+    presenceService.startHeartbeat({
+      accountId: currentAccount.id || currentAccount.username,
+      accountDisplayName: currentAccount.displayName || currentAccount.username,
+      profileId: activeProfile?.id || 'default',
+      profileName: activeProfile?.name || currentAccount.displayName || 'Người xem',
+      profileAvatar: activeProfile?.avatar || '',
+      type: 'browsing',
+      itemTitle: 'Đang xem danh mục Phim',
+      itemSubtitle: `Mục: ${activeTab.toUpperCase()}`,
+    });
+
+    return () => {
+      // Clean up browsing heartbeat when unmounting
+    };
+  }, [currentAccount, activeProfile, activeTab, playingMovie, showProfileSelector, showAdminDashboard]);
+
   // Unified History/Back Button Manager
   useEffect(() => {
     const handlePopState = (e: PopStateEvent) => {
@@ -425,6 +448,10 @@ export default function App() {
       } else if (selectedMovieForDetail) {
         setSelectedMovieForDetail(null);
       } else if (showAdminDashboard) {
+        if (e.state && (e.state.overlay === 'admin' || e.state.overlay === 'admin_user_detail')) {
+          // Keep admin dashboard open when navigating internal admin subviews
+          return;
+        }
         setShowAdminDashboard(false);
       } else if (showProfileSelector && currentAccount && activeProfile) {
         setShowProfileSelector(false);
@@ -440,17 +467,16 @@ export default function App() {
     let backUnsub: (() => void) | undefined;
     try {
       if (typeof window !== 'undefined' && (window as any)?.Capacitor?.isNativePlatform?.()) {
-        CapApp.addListener('backButton', ({ canGoBack }) => {
+        CapApp.addListener('backButton', () => {
           if (playingMovie || selectedMovieForDetail || showAdminDashboard || (showProfileSelector && currentAccount && activeProfile)) {
             window.history.back();
           } else if (activeTab !== 'home') {
+            setActiveTab('home');
+            window.history.pushState({ tab: 'home' }, '', '');
+          } else if (window.history.state) {
             window.history.back();
           } else {
-            if (canGoBack) {
-              window.history.back();
-            } else {
-              CapApp.exitApp();
-            }
+            CapApp.exitApp();
           }
         }).then((l) => {
           backUnsub = () => l.remove();
@@ -663,7 +689,13 @@ export default function App() {
   // Search Submit Handler
   const handleSearchSubmit = (keyword: string) => {
     setSearchKeyword(keyword);
-    handleTabChange('filter');
+    if (activeTab !== 'filter') {
+      window.history.pushState({ tab: 'filter' }, '', '');
+      setActiveTab('filter');
+    }
+    if (selectedMovieForDetail) {
+      setSelectedMovieForDetail(null);
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -756,6 +788,8 @@ export default function App() {
             setInitialResumeTime(resumeTime ?? 0);
           }}
           onSaveProgress={handleSaveProgress}
+          currentAccount={currentAccount}
+          activeProfile={activeProfile}
         />
       )}
 
@@ -812,9 +846,9 @@ export default function App() {
                     </button>
                   </div>
                   <div className="flex items-center gap-4 overflow-x-auto pb-3 scrollbar-none">
-                    {watchHistory.slice(0, 6).map((item) => (
+                    {watchHistory.slice(0, 6).map((item, idx) => (
                       <div
-                        key={item.movieSlug}
+                        key={`${item.movieSlug}-${idx}`}
                         onClick={() => handleResumeHistoryItem(item)}
                         className="group relative w-64 shrink-0 bg-[#0f172a] rounded-2xl overflow-hidden border border-blue-900/50 hover:border-blue-500/80 transition-all cursor-pointer shadow-md hover:scale-105"
                       >
@@ -850,6 +884,16 @@ export default function App() {
                   </div>
                 </div>
               )}
+
+              {/* "Dành Riêng Cho Bạn" Personalized Recommendation Row */}
+              <ForYouRow
+                watchHistory={watchHistory}
+                activeProfileName={activeProfile?.name}
+                onOpenDetail={(m) => openDetailModal(m)}
+                onPlay={handlePlayMovie}
+                onToggleMyList={handleToggleMyList}
+                isInMyList={isInMyList}
+              />
 
               {/* Categorized Rows */}
               <div className="space-y-4">
@@ -1148,6 +1192,7 @@ export default function App() {
           onToggleMyList={handleToggleMyList}
           isInMyList={isInMyList}
           onSelectRelatedMovie={(m) => openDetailModal(m)}
+          onSearchSubmit={handleSearchSubmit}
         />
       )}
 
@@ -1255,6 +1300,7 @@ export default function App() {
 
   return (
     <>
+      <NotificationTickerBanner currentAccount={currentAccount} />
       {appContent}
       {isSwitchingApp && targetApp && (
         <AppSwitcherLoading

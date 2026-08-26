@@ -1,8 +1,11 @@
 package com.qtbcinema.app;
 
+import android.app.PictureInPictureParams;
+import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Rational;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -22,6 +25,7 @@ import java.util.Map;
 public class MainActivity extends BridgeActivity {
 
     private static final String DEFAULT_STREAM_UA = "Dalvik/2.1.0 (Linux; U; Android 10; Build/QP1A.190711.020)";
+    private boolean isPlayingVideo = false;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -56,6 +60,55 @@ public class MainActivity extends BridgeActivity {
                     return super.shouldInterceptRequest(view, request);
                 }
             });
+        }
+    }
+
+    public void enterPipMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                Rational rational = new Rational(16, 9);
+                PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder()
+                        .setAspectRatio(rational);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    builder.setAutoEnterEnabled(true);
+                }
+                enterPictureInPictureMode(builder.build());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public void setPlayingVideo(boolean playing) {
+        this.isPlayingVideo = playing;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder()
+                        .setAspectRatio(new Rational(16, 9))
+                        .setAutoEnterEnabled(playing);
+                setPictureInPictureParams(builder.build());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (isPlayingVideo) {
+            enterPipMode();
+        }
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        if (this.bridge != null && this.bridge.getWebView() != null) {
+            this.bridge.getWebView().evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('native-pip-change', { detail: { isPip: " + isInPictureInPictureMode + " } }));",
+                null
+            );
         }
     }
 

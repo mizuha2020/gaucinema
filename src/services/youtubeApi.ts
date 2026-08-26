@@ -112,7 +112,7 @@ export function parseYtInitialData(htmlOrData: any): { items: YouTubeVideo[]; ch
       seenIds.add(vr.videoId);
       const title = vr.title?.runs?.[0]?.text || vr.title?.simpleText || 'Video YouTube';
       const channelTitle =
-        vr.ownerText?.runs?.[0]?.text || vr.shortBylineText?.runs?.[0]?.text || 'Kênh YouTube';
+        vr.ownerText?.runs?.[0]?.text || vr.shortBylineText?.runs?.[0]?.text || vr.longBylineText?.runs?.[0]?.text || 'YouTube';
       const channelId =
         vr.ownerText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId ||
         vr.shortBylineText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId ||
@@ -134,9 +134,14 @@ export function parseYtInitialData(htmlOrData: any): { items: YouTubeVideo[]; ch
       const thumbs = vr.thumbnail?.thumbnails || [];
       const thumbnailUrl =
         thumbs[thumbs.length - 1]?.url || `https://i.ytimg.com/vi/${vr.videoId}/hqdefault.jpg`;
-      const chAvatar =
+      let chAvatar =
+        vr.channelThumbnailSupportedRenderers?.channelThumbnailWithRippleRenderer?.thumbnail?.thumbnails?.[0]?.url ||
         vr.channelThumbnailSupportedRenderers?.channelThumbnailWithLinkRenderer?.thumbnail?.thumbnails?.[0]?.url ||
+        vr.channelThumbnail?.thumbnails?.[0]?.url ||
         '';
+      if (chAvatar && chAvatar.startsWith('//')) {
+        chAvatar = 'https:' + chAvatar;
+      }
 
       items.push({
         id: vr.videoId,
@@ -186,6 +191,9 @@ export function parseYtInitialData(htmlOrData: any): { items: YouTubeVideo[]; ch
       let publishedAt = '';
       const avSrcs = metaVm?.image?.avatarViewModel?.avatar?.image?.sources || [];
       if (avSrcs.length > 0) channelAvatar = avSrcs[avSrcs.length - 1]?.url || '';
+      if (channelAvatar && channelAvatar.startsWith('//')) {
+        channelAvatar = 'https:' + channelAvatar;
+      }
 
       const rows = metaVm?.metadata?.contentMetadataViewModel?.metadataRows || [];
       for (const row of rows) {
@@ -206,7 +214,7 @@ export function parseYtInitialData(htmlOrData: any): { items: YouTubeVideo[]; ch
       items.push({
         id: lv.contentId,
         title,
-        channelTitle: channelTitle || 'Kênh YouTube',
+        channelTitle: channelTitle || 'YouTube',
         channelId: '',
         channelAvatar,
         publishedAt: publishedAt || 'Mới đây',
@@ -221,7 +229,7 @@ export function parseYtInitialData(htmlOrData: any): { items: YouTubeVideo[]; ch
     // 3. Channel Renderer
     const cr = node.channelRenderer;
     if (cr && cr.channelId && !channels.some((c) => c.id === cr.channelId)) {
-      const title = cr.title?.simpleText || cr.title?.runs?.[0]?.text || 'Kênh YouTube';
+      const title = cr.title?.simpleText || cr.title?.runs?.[0]?.text || 'YouTube';
       const subscribers =
         cr.subscriberCountText?.simpleText || cr.subscriberCountText?.runs?.[0]?.text || '';
       const thumbs = cr.thumbnail?.thumbnails || [];
@@ -453,7 +461,7 @@ async function fetchPipedTrending(): Promise<YouTubeVideo[]> {
               return {
                 id: vid,
                 title: item.title || 'Video YouTube',
-                channelTitle: item.uploaderName || 'Kênh YouTube',
+                channelTitle: item.uploaderName || 'YouTube',
                 channelId: item.uploaderUrl ? String(item.uploaderUrl).replace('/channel/', '') : '',
                 channelAvatar: item.uploaderAvatar || '',
                 publishedAt: item.uploadedDate || 'Mới đây',
@@ -501,7 +509,7 @@ async function fetchPipedSearch(query: string): Promise<SearchResultsResponse> {
               items.push({
                 id: vid,
                 title: item.title || 'Video YouTube',
-                channelTitle: item.uploaderName || 'Kênh YouTube',
+                channelTitle: item.uploaderName || 'YouTube',
                 channelId: item.uploaderUrl ? String(item.uploaderUrl).replace('/channel/', '') : '',
                 channelAvatar: item.uploaderAvatar || '',
                 publishedAt: item.uploadedDate || 'Mới đây',
@@ -522,7 +530,7 @@ async function fetchPipedSearch(query: string): Promise<SearchResultsResponse> {
               const chId = item.url.replace('/channel/', '');
               channels.push({
                 id: chId,
-                title: item.name || 'Kênh YouTube',
+                title: item.name || 'YouTube',
                 subscribers:
                   typeof item.subscriberCount === 'number' && item.subscriberCount > 0
                     ? `${item.subscriberCount.toLocaleString('vi-VN')} người đăng ký`
@@ -558,7 +566,7 @@ async function fetchInvidiousTrending(category: string = 'all'): Promise<YouTube
             .map((item: any) => ({
               id: item.videoId || item.id,
               title: item.title || 'Video YouTube',
-              channelTitle: item.author || item.uploaderName || 'Kênh YouTube',
+              channelTitle: item.author || item.uploaderName || 'YouTube',
               channelId: item.authorId || '',
               publishedAt: item.publishedText || 'Mới đây',
               viewCount: item.viewCountText || formatViews(item.viewCount),
@@ -785,14 +793,14 @@ export const CURATED_CHANNELS: YouTubeChannel[] = [
     title: 'Sơn Tùng M-TP Official',
     subscribers: '10.5 Tr người đăng ký',
     avatarUrl: 'https://i.ytimg.com/vi/z2X2nSE8BIw/hqdefault.jpg',
-    description: 'Kênh YouTube chính thức của nghệ sĩ Sơn Tùng M-TP.',
+    description: 'YouTube chính thức của nghệ sĩ Sơn Tùng M-TP.',
   },
   {
     id: 'UCG6rBf1u_T8T1bZ6mG0x4eQ',
     title: 'Đen Vâu Official',
     subscribers: '5.2 Tr người đăng ký',
     avatarUrl: 'https://i.ytimg.com/vi/xypzmu5mMPY/hqdefault.jpg',
-    description: 'Kênh YouTube chính thức của Đen Vâu.',
+    description: 'YouTube chính thức của Đen Vâu.',
   },
   {
     id: 'UCpP37hE2D2Wk7S5i7Zf5y_g',
@@ -811,13 +819,32 @@ export const CURATED_CHANNELS: YouTubeChannel[] = [
 ];
 
 export const youtubeApi = {
-  // Get trending page with direct InnerTube API and multi-tier fallback
+  // Get trending page with direct Piped/Invidious and multi-tier fallback
   getTrendingPage: async (category: string = 'all', token?: string | null): Promise<TrendingPageResponse> => {
     const cleanCat = category || 'all';
-    const searchKeyword = CATEGORY_SEARCH_QUERIES[cleanCat] || CATEGORY_SEARCH_QUERIES.all;
 
-    // Tier 1: Direct YouTube InnerTube Search (100% Real Live YouTube Data on APK and Web)
+    // Tier 1: Piped / Invidious Real-Time Live YouTube Data
     try {
+      const pipedItems = await fetchPipedTrending();
+      if (pipedItems && pipedItems.length > 0) {
+        return { items: pipedItems, nextToken: null };
+      }
+    } catch (e) {
+      console.warn('Piped trending error:', e);
+    }
+
+    try {
+      const invidiousItems = await fetchInvidiousTrending(cleanCat);
+      if (invidiousItems && invidiousItems.length > 0) {
+        return { items: invidiousItems, nextToken: null };
+      }
+    } catch (e) {
+      console.warn('Invidious trending error:', e);
+    }
+
+    // Tier 2: Direct YouTube InnerTube Search
+    try {
+      const searchKeyword = CATEGORY_SEARCH_QUERIES[cleanCat] || CATEGORY_SEARCH_QUERIES.all;
       const innerTubeRes = await fetchYouTubeInnerTube(searchKeyword, token);
       if (innerTubeRes.items && innerTubeRes.items.length > 0) {
         return { items: innerTubeRes.items, nextToken: innerTubeRes.nextToken || null };
@@ -826,7 +853,7 @@ export const youtubeApi = {
       console.warn('Direct InnerTube trending error:', e);
     }
 
-    // Tier 2: Backend API (if running on Web)
+    // Tier 3: Backend API (if running on Web)
     const qs = new URLSearchParams({ category: cleanCat });
     if (token) qs.set('token', token);
     try {
@@ -851,7 +878,7 @@ export const youtubeApi = {
 
     if (token) return { items: [], nextToken: null };
 
-    // Tier 3: Curated Vietnamese catalog
+    // Tier 4: Curated Vietnamese catalog
     const fallbackList = CURATED_VIETNAM_VIDEOS[cleanCat] || CURATED_VIETNAM_VIDEOS.all || [];
     return { items: fallbackList, nextToken: null };
   },
@@ -890,17 +917,17 @@ export const youtubeApi = {
       };
     }
 
-    // Tier 1: Direct YouTube InnerTube Search (Works directly on Android APK without localhost issues)
+    // Tier 1: Try Piped Real-Time Search FIRST
     try {
-      const innerTubeRes = await fetchYouTubeInnerTube(trimmed, token);
-      if ((innerTubeRes.items && innerTubeRes.items.length > 0) || (innerTubeRes.channels && innerTubeRes.channels.length > 0)) {
-        return innerTubeRes;
+      const pipedRes = await fetchPipedSearch(trimmed);
+      if ((pipedRes.items && pipedRes.items.length > 0) || (pipedRes.channels && pipedRes.channels.length > 0)) {
+        return pipedRes;
       }
     } catch (e) {
-      console.warn('InnerTube search error:', e);
+      console.warn('Piped search error:', e);
     }
 
-    // Tier 2: Backend API Search (when available)
+    // Tier 2: Try Backend API Search
     try {
       const url = token
         ? getFullApiUrl(`/api/youtube/search?q=${encodeURIComponent(trimmed)}&token=${encodeURIComponent(token)}`)
@@ -927,7 +954,32 @@ export const youtubeApi = {
       console.warn('Backend YouTube search error:', e);
     }
 
-    // Tier 3: Filter curated database by keyword
+    // Tier 3: Direct YouTube InnerTube Search
+    try {
+      const innerTubeRes = await fetchYouTubeInnerTube(trimmed, token);
+      if ((innerTubeRes.items && innerTubeRes.items.length > 0) || (innerTubeRes.channels && innerTubeRes.channels.length > 0)) {
+        const normQ = trimmed.toLowerCase().replace(/\s+/g, '');
+        innerTubeRes.items.sort((a, b) => {
+          const aChanMatch = (a.channelTitle || '').toLowerCase().replace(/\s+/g, '').includes(normQ);
+          const bChanMatch = (b.channelTitle || '').toLowerCase().replace(/\s+/g, '').includes(normQ);
+          if (aChanMatch && !bChanMatch) return -1;
+          if (!aChanMatch && bChanMatch) return 1;
+
+          const aTitleMatch = (a.title || '').toLowerCase().replace(/\s+/g, '').includes(normQ);
+          const bTitleMatch = (b.title || '').toLowerCase().replace(/\s+/g, '').includes(normQ);
+          if (aTitleMatch && !bTitleMatch) return -1;
+          if (!aTitleMatch && bTitleMatch) return 1;
+
+          return 0;
+        });
+
+        return innerTubeRes;
+      }
+    } catch (e) {
+      console.warn('InnerTube search error:', e);
+    }
+
+    // Tier 4: Filter curated database by keyword
     const qLower = trimmed.toLowerCase();
     const matchedVideos = (CURATED_VIETNAM_VIDEOS.all || []).filter(
       (v) => v.title.toLowerCase().includes(qLower) || v.channelTitle.toLowerCase().includes(qLower)
@@ -954,7 +1006,7 @@ export const youtubeApi = {
   ): Promise<{ channel: YouTubeChannel | null; items: YouTubeVideo[] }> => {
     const fallbackChannel: YouTubeChannel = {
       id: channelId || 'channel_default',
-      title: channelName || 'Kênh YouTube',
+      title: channelName || 'YouTube',
       subscribers: '100 N người đăng ký',
       avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(channelName || 'Kênh')}&background=ef4444&color=fff`,
     };
@@ -1000,7 +1052,7 @@ export const youtubeApi = {
       console.warn('Backend channel details error:', e);
     }
 
-    return { channel: fallbackChannel, items: CURATED_VIETNAM_VIDEOS.all || [] };
+    return { channel: fallbackChannel, items: [] };
   },
 
   // Search videos within a specific channel
@@ -1074,5 +1126,21 @@ export const youtubeApi = {
       thumbnailUrl: `https://i.ytimg.com/vi/${extracted}/hqdefault.jpg`,
       description: 'Phát trực tiếp không quảng cáo trên Gấu YouTube.',
     };
+  },
+
+  // Get live autocomplete suggestions
+  getSuggestions: async (query: string): Promise<string[]> => {
+    const qTrim = (query || '').trim();
+    if (!qTrim) return [];
+    try {
+      const res = await fetch(getFullApiUrl(`/api/youtube/suggest?q=${encodeURIComponent(qTrim)}`));
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) return data;
+      }
+    } catch (e) {
+      console.warn('Autocomplete suggest error:', e);
+    }
+    return [];
   },
 };

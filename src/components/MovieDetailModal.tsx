@@ -15,6 +15,8 @@ import {
   Bookmark,
   Info,
   X,
+  Search,
+  User,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -26,6 +28,8 @@ interface MovieDetailModalProps {
   onToggleMyList: (movie: Movie) => void;
   isInMyList: boolean | ((slug: string) => boolean);
   onSelectRelatedMovie?: (movie: Movie) => void;
+  onSearchSubmit?: (query: string) => void;
+  onSelectGenre?: (genreSlug: string) => void;
 }
 
 // Helper to parse Trailer URL (supports YouTube watch, embed, short links, or direct videos)
@@ -64,6 +68,8 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   onToggleMyList,
   isInMyList,
   onSelectRelatedMovie,
+  onSearchSubmit,
+  onSelectGenre,
 }) => {
   const [fullMovieData, setFullMovieData] = useState<Movie | null>(null);
   const [episodes, setEpisodes] = useState<EpisodeServer[]>([]);
@@ -551,17 +557,38 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
 
                 {currentData.actor && currentData.actor.length > 0 && (
                   <div>
-                    <span className="text-slate-400 block mb-1 font-semibold">Diễn viên:</span>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-slate-400 font-semibold flex items-center gap-1.5">
+                        <User className="w-3.5 h-3.5 text-sky-400" />
+                        <span>Diễn viên:</span>
+                      </span>
+                      {onSearchSubmit && (
+                        <span className="text-[10px] text-slate-500 italic">Bấm để tìm phim</span>
+                      )}
+                    </div>
                     <div className="flex flex-wrap gap-1.5">
                       {(Array.isArray(currentData.actor) ? currentData.actor : [String(currentData.actor)]).map(
-                        (act, i) => (
-                          <span
-                            key={i}
-                            className="bg-slate-900 text-slate-200 px-2.5 py-1 rounded-lg border border-slate-800 text-xs"
-                          >
-                            {act}
-                          </span>
-                        )
+                        (act, i) => {
+                          const actorName = typeof act === 'string' ? act.trim() : String(act).trim();
+                          if (!actorName) return null;
+                          return (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={() => {
+                                if (onSearchSubmit) {
+                                  onSearchSubmit(actorName);
+                                  onClose();
+                                }
+                              }}
+                              title={`Tìm tất cả phim của diễn viên ${actorName}`}
+                              className="group/act inline-flex items-center gap-1.5 bg-slate-900/90 hover:bg-sky-600/90 text-slate-200 hover:text-white px-2.5 py-1 rounded-lg border border-slate-800 hover:border-sky-500 text-xs font-medium transition-all active:scale-95 text-left cursor-pointer"
+                            >
+                              <Search className="w-3 h-3 text-slate-400 group-hover/act:text-white transition-colors" />
+                              <span>{actorName}</span>
+                            </button>
+                          );
+                        }
                       )}
                     </div>
                   </div>
@@ -569,17 +596,37 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
 
                 {currentData.director && currentData.director.length > 0 && (
                   <div>
-                    <span className="text-slate-400 block mb-1 font-semibold">Đạo diễn:</span>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-slate-400 font-semibold flex items-center gap-1.5">
+                        <span>Đạo diễn:</span>
+                      </span>
+                      {onSearchSubmit && (
+                        <span className="text-[10px] text-slate-500 italic">Bấm để tìm phim</span>
+                      )}
+                    </div>
                     <div className="flex flex-wrap gap-1.5">
                       {(Array.isArray(currentData.director) ? currentData.director : [String(currentData.director)]).map(
-                        (dir, i) => (
-                          <span
-                            key={i}
-                            className="bg-slate-900 text-slate-200 px-2.5 py-1 rounded-lg border border-slate-800 text-xs"
-                          >
-                            {dir}
-                          </span>
-                        )
+                        (dir, i) => {
+                          const dirName = typeof dir === 'string' ? dir.trim() : String(dir).trim();
+                          if (!dirName) return null;
+                          return (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={() => {
+                                if (onSearchSubmit) {
+                                  onSearchSubmit(dirName);
+                                  onClose();
+                                }
+                              }}
+                              title={`Tìm tất cả phim của đạo diễn ${dirName}`}
+                              className="group/dir inline-flex items-center gap-1.5 bg-slate-900/90 hover:bg-sky-600/90 text-slate-200 hover:text-white px-2.5 py-1 rounded-lg border border-slate-800 hover:border-sky-500 text-xs font-medium transition-all active:scale-95 text-left cursor-pointer"
+                            >
+                              <Search className="w-3 h-3 text-slate-400 group-hover/dir:text-white transition-colors" />
+                              <span>{dirName}</span>
+                            </button>
+                          );
+                        }
                       )}
                     </div>
                   </div>
@@ -587,15 +634,26 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
 
                 {currentData.category && currentData.category.length > 0 && (
                   <div>
-                    <span className="text-slate-400 block mb-1 font-semibold">Thể loại:</span>
+                    <span className="text-slate-400 block mb-1.5 font-semibold">Thể loại:</span>
                     <div className="flex flex-wrap gap-1.5">
                       {currentData.category.map((cat) => (
-                        <span
+                        <button
                           key={cat.slug}
-                          className="bg-blue-950/60 text-sky-300 px-2.5 py-1 rounded-lg border border-blue-900/60 text-xs font-medium"
+                          type="button"
+                          onClick={() => {
+                            if (onSelectGenre) {
+                              onSelectGenre(cat.slug);
+                              onClose();
+                            } else if (onSearchSubmit) {
+                              onSearchSubmit(cat.name);
+                              onClose();
+                            }
+                          }}
+                          title={`Xem phim thể loại ${cat.name}`}
+                          className="bg-blue-950/60 hover:bg-blue-800/80 text-sky-300 hover:text-white px-2.5 py-1 rounded-lg border border-blue-900/60 hover:border-sky-500 text-xs font-medium transition-all active:scale-95 cursor-pointer"
                         >
                           {cat.name}
-                        </span>
+                        </button>
                       ))}
                     </div>
                   </div>

@@ -170,6 +170,10 @@ export interface YouTubeChannel {
   avatarUrl?: string;
   bannerUrl?: string;
   isSubscribed?: boolean;
+  joinedDate?: string;
+  viewsTotal?: string;
+  links?: { title: string; url: string }[];
+  businessEmail?: string;
 }
 
 export interface YouTubeVideo {
@@ -187,6 +191,7 @@ export interface YouTubeVideo {
   likeCount?: number;
   category?: string;
   isShort?: boolean;
+  isLive?: boolean;
 }
 
 export interface YouTubePlaylist {
@@ -194,6 +199,54 @@ export interface YouTubePlaylist {
   title: string;
   thumbnailUrl: string;
   videoCount: number;
+}
+
+export interface YouTubeUserPlaylist {
+  id: string;
+  title: string;
+  privacy: 'public' | 'unlisted' | 'private';
+  videoIds: string[];
+  createdAt: number;
+  updatedAt?: number;
+}
+
+export interface YouTubeHistoryProgress {
+  videoId: string;
+  currentTime: number;
+  duration: number;
+  progressPercent: number;
+  updatedAt: number;
+  video: YouTubeVideo;
+}
+
+export interface YouTubeComment {
+  id: string;
+  user: string;
+  avatar: string;
+  text: string;
+  time: string;
+  likes: number;
+  isLiked?: boolean;
+  isDisliked?: boolean;
+  replies?: YouTubeComment[];
+}
+
+export interface YouTubeCommunityPost {
+  id: string;
+  channelTitle: string;
+  channelAvatar: string;
+  channelId?: string;
+  publishedAt: string;
+  content: string;
+  imageUrl?: string;
+  poll?: {
+    question: string;
+    options: { id: string; text: string; votes: number; userVoted?: boolean }[];
+    totalVotes: number;
+  };
+  likes: number;
+  commentsCount: number;
+  isLiked?: boolean;
 }
 
 export type NavTab = 'home' | 'series' | 'single' | 'cinema' | 'anime' | 'tv-shows' | 'manga' | 'filter' | 'my-list' | 'history' | 'tv-live' | 'youtube';
@@ -239,3 +292,65 @@ export interface ActiveViewerSession {
   lastHeartbeat: number;
   deviceInfo?: string;
 }
+
+export type MediaActivityType = 'movie' | 'manga' | 'livetv' | 'youtube' | 'browsing';
+
+export interface UserActivityItem {
+  id: string; // e.g. act_${accountId}_${profileId}_${mediaType}_${contentKey}
+  accountId: string;
+  accountDisplayName: string;
+  profileId: string;
+  profileName: string;
+  profileAvatar?: string;
+  mediaType: MediaActivityType;
+  contentId: string; // slug, ID, or channel URL
+  title: string;
+  subtitle?: string;
+  coverUrl?: string;
+  apiSource?: string;
+  progressPercent?: number;
+  currentTime?: number; // seconds or page
+  duration?: number; // seconds or total pages
+  watchedDurationSeconds: number; // accumulated time spent
+  firstStartedAt: number;
+  lastWatchedAt: number;
+  deviceInfo?: string;
+  completed?: boolean;
+}
+
+export interface UserStats {
+  accountId: string;
+  accountDisplayName: string;
+  totalOnlineSeconds: number;
+  totalWatchSeconds: number;
+  watchSecondsByMedia: {
+    movie: number;
+    manga: number;
+    livetv: number;
+    youtube: number;
+  };
+  totalSessions: number;
+  firstSeenAt: number;
+  lastActiveAt: number;
+  isOnline?: boolean;
+  lastActiveItem?: {
+    mediaType: MediaActivityType;
+    title: string;
+    subtitle?: string;
+  };
+  totalWatchedItemsCount?: number;
+}
+
+export interface AdminNotification {
+  id: string;
+  message: string;
+  targetType: 'all' | 'specific';
+  targetAccountIds: string[];
+  position: 'top' | 'bottom';
+  repeatCount: number;
+  speedSeconds?: number;
+  active: boolean;
+  createdAt: number;
+  createdBy: string;
+}
+

@@ -1,9 +1,13 @@
 package com.qtbcinema.app;
 
+import android.app.PictureInPictureParams;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Base64;
+import android.util.Rational;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -52,6 +56,7 @@ public class NativePlayerActivity extends AppCompatActivity {
     private PlayerView playerView;
     private ProgressBar progressBar;
     private TextView errorText;
+    private LinearLayout topBar;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -108,8 +113,8 @@ public class NativePlayerActivity extends AppCompatActivity {
         errorText.setVisibility(View.GONE);
         rootLayout.addView(errorText);
 
-        // Top bar overlay with Back button & Title
-        LinearLayout topBar = new LinearLayout(this);
+        // Top bar overlay with Back button, Title & PiP button
+        topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setPadding(32, 32, 32, 32);
         topBar.setBackgroundColor(Color.parseColor("#99000000"));
@@ -123,7 +128,7 @@ public class NativePlayerActivity extends AppCompatActivity {
         TextView backBtn = new TextView(this);
         backBtn.setText(" ✕  Trở về ");
         backBtn.setTextColor(Color.WHITE);
-        backBtn.setTextSize(18);
+        backBtn.setTextSize(16);
         backBtn.setPadding(16, 16, 16, 16);
         backBtn.setOnClickListener(v -> finish());
         topBar.addView(backBtn);
@@ -131,9 +136,24 @@ public class NativePlayerActivity extends AppCompatActivity {
         TextView titleView = new TextView(this);
         titleView.setText(title != null ? title : "Livestream TV");
         titleView.setTextColor(Color.WHITE);
-        titleView.setTextSize(18);
-        titleView.setPadding(32, 16, 16, 16);
+        titleView.setTextSize(16);
+        titleView.setPadding(24, 16, 24, 16);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1.0f
+        );
+        titleView.setLayoutParams(titleParams);
         topBar.addView(titleView);
+
+        TextView pipBtn = new TextView(this);
+        pipBtn.setText(" ⧉ Thu nhỏ (PiP) ");
+        pipBtn.setTextColor(Color.WHITE);
+        pipBtn.setTextSize(15);
+        pipBtn.setPadding(20, 16, 20, 16);
+        pipBtn.setBackgroundColor(Color.parseColor("#44333333"));
+        pipBtn.setOnClickListener(v -> enterPipMode());
+        topBar.addView(pipBtn);
 
         rootLayout.addView(topBar);
 
@@ -220,6 +240,47 @@ public class NativePlayerActivity extends AppCompatActivity {
         errorText.setText(msg);
         errorText.setVisibility(View.VISIBLE);
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+    }
+
+    public void enterPipMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                Rational rational = new Rational(16, 9);
+                if (player != null && player.getVideoSize() != null && player.getVideoSize().width > 0 && player.getVideoSize().height > 0) {
+                    rational = new Rational(player.getVideoSize().width, player.getVideoSize().height);
+                }
+                PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder()
+                        .setAspectRatio(rational);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    builder.setAutoEnterEnabled(true);
+                }
+                enterPictureInPictureMode(builder.build());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (player != null && player.isPlaying()) {
+            enterPipMode();
+        }
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        if (isInPictureInPictureMode) {
+            if (topBar != null) topBar.setVisibility(View.GONE);
+            if (progressBar != null) progressBar.setVisibility(View.GONE);
+            if (errorText != null) errorText.setVisibility(View.GONE);
+            if (playerView != null) playerView.setUseController(false);
+        } else {
+            if (topBar != null) topBar.setVisibility(View.VISIBLE);
+            if (playerView != null) playerView.setUseController(true);
+        }
     }
 
     @Override

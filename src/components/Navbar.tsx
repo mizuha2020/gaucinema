@@ -449,9 +449,9 @@ export const Navbar: React.FC<NavbarProps> = ({
 
                 <div className="max-h-96 overflow-y-auto divide-y divide-slate-800/60">
                   {searchResults.length > 0 ? (
-                    searchResults.map((m) => (
+                    searchResults.map((m, idx) => (
                       <div
-                        key={m.slug || m._id}
+                        key={`${m.slug || m._id || 'search'}-${idx}`}
                         id={`quick-search-item-${m.slug}`}
                         onClick={(e) => {
                           e.preventDefault();
@@ -876,9 +876,9 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Live search results on mobile */}
           <div className="flex-1 overflow-y-auto divide-y divide-slate-800/80 p-2">
             {searchResults.length > 0 ? (
-              searchResults.map((m) => (
+              searchResults.map((m, idx) => (
                 <div
-                  key={m.slug || m._id}
+                  key={`${m.slug || m._id || 'msearch'}-${idx}`}
                   onClick={() => {
                     onSelectMovie(m);
                     handleCloseSearch();

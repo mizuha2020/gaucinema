@@ -183,6 +183,24 @@
         "subscribedAt": { "type": "number" }
       },
       "required": ["channelId", "subscribedAt"]
+    },
+    "AdminNotification": {
+      "title": "AdminNotification",
+      "description": "System ticker broadcast notification created by Admin for users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "targetType": { "type": "string", "enum": ["all", "specific"] },
+        "targetAccountIds": { "type": "array" },
+        "position": { "type": "string", "enum": ["top", "bottom"] },
+        "repeatCount": { "type": "number" },
+        "speedSeconds": { "type": "number" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "number" },
+        "createdBy": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "message", "targetType", "position", "repeatCount", "active", "createdAt"]
     }
   },
   "firestore": {
@@ -225,6 +243,10 @@
     "/activeSessions/{sessionId}": {
       "schema": "ActiveViewerSession",
       "description": "Realtime active viewer presence heartbeat sessions"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "AdminNotification",
+      "description": "System ticker broadcast notifications managed by admin"
     }
   }
 }

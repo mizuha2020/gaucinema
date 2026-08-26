@@ -238,6 +238,267 @@ async function startServer() {
     }
   });
 
+// --- SMART ACTOR & DIRECTOR SEARCH ENGINE ---
+function normalizeSearchText(str: string): string {
+  if (!str) return "";
+  return str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .trim();
+}
+
+// In-Memory Cast Index (Actor/Director -> Movie items)
+const dynamicCastIndex = new Map<string, Array<{
+  slug: string;
+  name: string;
+  origin_name?: string;
+  poster_url?: string;
+  thumb_url?: string;
+  year?: number;
+  quality?: string;
+  lang?: string;
+  source?: string;
+  actor?: string[];
+  director?: string[];
+}>>();
+
+function indexMovieCast(movie: any, defaultSource = 'kkphim') {
+  if (!movie || !movie.slug || !movie.name) return;
+  const item = {
+    slug: movie.slug,
+    name: movie.name,
+    origin_name: movie.origin_name || movie.original_name || '',
+    poster_url: movie.poster_url || movie.thumb_url || '',
+    thumb_url: movie.thumb_url || movie.poster_url || '',
+    year: movie.year || (movie.created?.time ? new Date(movie.created.time).getFullYear() : undefined),
+    quality: movie.quality || 'HD',
+    lang: movie.lang || 'Vietsub',
+    source: movie.source || defaultSource,
+    actor: Array.isArray(movie.actor) ? movie.actor : (typeof movie.actor === 'string' ? [movie.actor] : []),
+    director: Array.isArray(movie.director) ? movie.director : (typeof movie.director === 'string' ? [movie.director] : []),
+  };
+
+  const castNames: string[] = [
+    ...(item.actor || []),
+    ...(item.director || []),
+  ];
+
+  for (const rawName of castNames) {
+    if (!rawName || typeof rawName !== 'string') continue;
+    const clean = rawName.trim();
+    if (!clean || clean.length < 2) continue;
+    const norm = normalizeSearchText(clean);
+    if (!norm) continue;
+
+    let list = dynamicCastIndex.get(norm);
+    if (!list) {
+      list = [];
+      dynamicCastIndex.set(norm, list);
+    }
+    if (!list.some((m) => m.slug === item.slug)) {
+      list.push(item);
+      if (list.length > 50) list.shift();
+    }
+  }
+}
+
+// Curated filmography dictionary mapping normalized actor/director names to verified movie slugs/titles
+const ACTOR_FILMOGRAPHY: Record<string, string[]> = {
+  'chau tinh tri': ['tuyet-dinh-kungfu', 'doi-bong-thieu-lam', 'vua-hai-kich', 'quoc-san-007', 'quan-xam-loc-coc', 'tay-du-ky-moi-tinh-ngoai-truyen', 'my-nhan-ngu', 'truong-hoc-uy-long', 'than-bai-2', 'dai-noi-mat-tham-008', 'duong-ba-ho-diem-thu-huong', 'gia-huu-hy-su', 'vo-trang-nguyen-to-khat-nhi', 'than-an'],
+  'stephen chow': ['tuyet-dinh-kungfu', 'doi-bong-thieu-lam', 'vua-hai-kich', 'quoc-san-007', 'quan-xam-loc-coc', 'tay-du-ky-moi-tinh-ngoai-truyen', 'my-nhan-ngu'],
+  'thanh long': ['gio-cao-diem', 'cau-chuyen-canh-sat', 'ke-ngoai-toc', 'kungfu-yoga', '12-con-giap', 'dai-nao-pho-bronx', 'ke-san-thanh-pho', 'tay-du-ky-lao-ton', 'thanh-long-truyen-ky'],
+  'jackie chan': ['gio-cao-diem', 'cau-chuyen-canh-sat', 'ke-ngoai-toc', 'kungfu-yoga', '12-con-giap', 'ke-san-thanh-pho'],
+  'ly lien kiet': ['hoang-phi-hong', 'tinh-vo-anh-hung', 'nuoc-mat-sat-thu', 'anh-hung', 'thai-cuc-truong-tam-phong', 'biet-doi-danh-thue'],
+  'jet li': ['hoang-phi-hong', 'tinh-vo-anh-hung', 'nuoc-mat-sat-thu', 'anh-hung', 'biet-doi-danh-thue'],
+  'chan tu dan': ['diep-van', 'diep-van-2', 'diep-van-3', 'diep-van-4', 'sat-pha-lang', 'dao-hoa-tuyen', 'trum-huong-cang', 'john-wick-4'],
+  'donnie yen': ['diep-van', 'diep-van-2', 'diep-van-3', 'diep-van-4', 'sat-pha-lang', 'john-wick-4'],
+  'co thien lac': ['co-may-thoi-gian', 'thien-menh-anh-hung', 'cuoc-chien-tuong-lai', 'phong-bao-trang', 'sat-pha-lang-2'],
+  'louis koo': ['co-may-thoi-gian', 'thien-menh-anh-hung', 'cuoc-chien-tuong-lai', 'phong-bao-trang'],
+  'luu diec phi': ['than-dieu-dai-hiep', 'mong-hoa-luc', 'di-den-noi-co-gio', 'cau-chuyen-hoa-hong', 'thien-long-bat-bo', 'hoa-moc-lan'],
+  'crystal liu': ['than-dieu-dai-hiep', 'mong-hoa-luc', 'di-den-noi-co-gio', 'cau-chuyen-hoa-hong'],
+  'duong mich': ['tam-sinh-tam-the-thap-ly-dao-hoa', 'ho-yeu-tieu-hong-nuong-nguyet-hong-thien', 'phu-dao', 'nguoi-dam-phan', 'bao-phong-nhan', 'hoc-chau-phu-nhan'],
+  'yang mi': ['tam-sinh-tam-the-thap-ly-dao-hoa', 'ho-yeu-tieu-hong-nuong-nguyet-hong-thien', 'phu-dao'],
+  'trieu le dinh': ['so-kieu-truyen', 'hoa-thien-cot', 'minh-lan-truyen', 'du-phuong-hanh', 'huu-phi', 'gio-thoi-ban-ha', 'hanh-phuc-den-van-gia'],
+  'zanilia zhao': ['so-kieu-truyen', 'hoa-thien-cot', 'minh-lan-truyen', 'du-phuong-hanh', 'huu-phi'],
+  'trieu lo tu': ['vung-trom-khong-the-giau', 'tinh-han-xan-lan', 'tha-thi-thien-ha', 'tran-thien-thien-trong-loi-don', 'than-an', 'chau-liem-ngoc-mac', 'hau-lang', 'truong-ca-hanh', 'o-o-co-nang-cua-toi'],
+  'zhao lusi': ['vung-trom-khong-the-giau', 'tinh-han-xan-lan', 'tha-thi-thien-ha', 'tran-thien-thien-trong-loi-don', 'than-an'],
+  'rosy zhao': ['vung-trom-khong-the-giau', 'tinh-han-xan-lan', 'tha-thi-thien-ha', 'than-an'],
+  'tran triet vien': ['vung-trom-khong-the-giau', 'bi-mat-noi-goc-toi', 'tien-kiem-ky-hiep-4', 'dem-say', 'tan-tuyet-dai-song-kieu', 'cay-o-liu-mau-trang'],
+  'chen zheyuan': ['vung-trom-khong-the-giau', 'bi-mat-noi-goc-toi', 'tien-kiem-ky-hiep-4', 'dem-say'],
+  'tieu chien': ['tran-tinh-lenh', 'dau-la-dai-luc', 'ngoc-cot-dao', 'vung-bien-trong-mo', 'tru-tien', 'lang-dien-ha', 'du-sinh-xin-chi-giao-nhieu-hon', 'tang-hai-truyen'],
+  'xiao zhan': ['tran-tinh-lenh', 'dau-la-dai-luc', 'ngoc-cot-dao', 'vung-bien-trong-mo', 'tru-tien'],
+  'vuong nhat bac': ['tran-tinh-lenh', 'huu-phi', 'phong-khoi-lac-duong', 'vo-danh', 'nhiet-liet', 'bang-vu-hoa'],
+  'wang yibo': ['tran-tinh-lenh', 'huu-phi', 'phong-khoi-lac-duong', 'vo-danh', 'nhiet-liet'],
+  'duong duong': ['yeu-em-tu-cai-nhin-dau-tien', 'tha-thi-thien-ha', 'khoi-lua-nhan-gian-cua-toi', 'toan-chuc-cao-thu', 'vu-dong-can-khon', 'dac-chien-vinh-quang'],
+  'yang yang': ['yeu-em-tu-cai-nhin-dau-tien', 'tha-thi-thien-ha', 'khoi-lua-nhan-gian-cua-toi', 'toan-chuc-cao-thu'],
+  'dich le nhiet ba': ['em-la-niem-kieu-hanh-cua-anh', 'tam-sinh-tam-the-thap-ly-dao-hoa', 'tam-sinh-tam-the-cham-thuong-thu', 'ngu-giao-ky', 'an-lac-truyen', 'cong-to-tinh-anh'],
+  'dilraba': ['em-la-niem-kieu-hanh-cua-anh', 'tam-sinh-tam-the-thap-ly-dao-hoa', 'tam-sinh-tam-the-cham-thuong-thu', 'ngu-giao-ky'],
+  'bach loc': ['truong-nguyet-tan-minh', 'ninh-an-nhu-mong', 'di-ai-vi-doanh', 'chau-sinh-nhu-co', 'bach-nguyet-phan-tinh', 'nua-la-duong-mat-nua-la-dau-thuong', 'chieu-dieu'],
+  'bai lu': ['truong-nguyet-tan-minh', 'ninh-an-nhu-mong', 'di-ai-vi-doanh', 'chau-sinh-nhu-co'],
+  'duong tu': ['truong-tuong-tu', 'huong-mat-tua-khoi-suong', 'ca-muc-ham-mat', 'tram-vun-huong-phai', 'thua-hoan-ky', 'nu-bac-si-tam-ly'],
+  'yang zi': ['truong-tuong-tu', 'huong-mat-tua-khoi-suong', 'ca-muc-ham-mat', 'tram-vun-huong-phai'],
+  'vuong hac de': ['thuong-lan-quyet', 'di-ai-vi-doanh', 'phu-do-duyen', 'dai-phung-da-canh-nhan'],
+  'dylan wang': ['thuong-lan-quyet', 'di-ai-vi-doanh', 'phu-do-duyen'],
+  'ngo loi': ['tinh-han-xan-lan', 'truong-ca-hanh', 'giua-con-bao-tuyet', 'lang-nha-bang'],
+  'leo wu': ['tinh-han-xan-lan', 'truong-ca-hanh', 'giua-con-bao-tuyet'],
+  'la van hi': ['truong-nguyet-tan-minh', 'nua-la-duong-mat-nua-la-dau-thuong', 'thuy-long-ngam', 'huong-mat-tua-khoi-suong'],
+  'luo yunxi': ['truong-nguyet-tan-minh', 'nua-la-duong-mat-nua-la-dau-thuong', 'huong-mat-tua-khoi-suong'],
+  'truong lang hach': ['thuong-lan-quyet', 'ninh-an-nhu-mong', 'van-chi-vu', 'do-hoa-nien'],
+  'zhang linghe': ['thuong-lan-quyet', 'ninh-an-nhu-mong', 'van-chi-vu', 'do-hoa-nien'],
+  'ngu thu han': ['thuong-lan-quyet', 'van-chi-vu', 'vinh-da-tinh-ha', 'khu-rung-nho-cua-hai-nguoi'],
+  'esther yu': ['thuong-lan-quyet', 'van-chi-vu', 'vinh-da-tinh-ha'],
+  'cuc tinh y': ['van-tich-truyen', 'hoa-nhung', 'hoa-gian-lenh', 'tan-bach-nuong-tu-truyen'],
+  'ju jingyi': ['van-tich-truyen', 'hoa-nhung', 'hoa-gian-lenh'],
+  'cung tuan': ['son-ha-lenh', 'an-lac-truyen', 'ho-yeu-tieu-hong-nuong-nguyet-hong-thien'],
+  'gong jun': ['son-ha-lenh', 'an-lac-truyen'],
+  'nham gia luan': ['chau-sinh-nhu-co', 'cam-y-chi-ha', 'ngu-giao-ky', 'vu-canh-ky'],
+  'ren jialun': ['chau-sinh-nhu-co', 'cam-y-chi-ha', 'ngu-giao-ky'],
+  'hua khai': ['dien-hi-cong-luoc', 'chieu-dieu', 'em-dep-hon-ca-anh-sao', 'thua-hoan-ky', 'dinh-luat-80-20-cua-tinh-yeu'],
+  'xu kai': ['dien-hi-cong-luoc', 'chieu-dieu', 'em-dep-hon-ca-anh-sao'],
+  'dang vi': ['truong-tuong-tu', 'ngo-tien', 'trung-tu'],
+  'deng wei': ['truong-tuong-tu', 'ngo-tien', 'trung-tu'],
+  'song joong ki': ['hau-due-mat-troi', 'vincenzo', 'cau-ut-nha-tai-phiet', 'space-sweepers', 'dao-dia-nguc'],
+  'lee min ho': ['vuon-sao-bang', 'huyen-thoai-bien-xanh', 'quan-vuong-bat-diet', 'city-hunter', 'nguoi-thua-ke'],
+  'hyun bin': ['ha-canh-noi-anh', 'khu-vuon-bi-mat', 'hoi-uc-alhambra', 'dac-vu-xuyen-quoc-gia'],
+  'son ye jin': ['ha-canh-noi-anh', 'chi-dep-mua-com-ngon-cho-toi', 'tuoi-39', 'co-dien'],
+  'song hye kyo': ['the-glory', 'hau-due-mat-troi', 'gio-mua-dong-nam-ay', 'ngoi-nha-hanh-phuc'],
+  'park seo joon': ['tang-lop-itaewon', 'thu-ky-kim-sao-the', 'sinh-vat-gyeongseong', 'thanh-xuan-vat-va'],
+  'kim soo hyun': ['nu-hoang-nuoc-mat', 'vi-sao-dua-anh-toi', 'dien-thi-co-sao', 'mat-trang-om-mat-troi'],
+  'iu': ['khach-san-anh-trang', 'nguoi-chu-cua-toi', 'nguoi-tinh-anh-trang'],
+  'lee ji eun': ['khach-san-anh-trang', 'nguoi-chu-cua-toi', 'nguoi-tinh-anh-trang'],
+  'park shin hye': ['nguoi-thua-ke', 'pinocchio', 'bac-si-tram-cam', 'co-nang-dep-trai'],
+  'lee jong suk': ['big-mouth', 'khi-nang-say-giac', 'hai-the-gioi', 'pinocchio', 'toi-lang-nghe-tieng-em'],
+  'ji chang wook': ['the-k2', 'hoang-hau-ki', 'chao-mung-den-samdalri'],
+  'gong yoo': ['yeu-tinh', 'chuyen-tau-sinh-tu', 'squid-game', 'tiem-ca-phe-hoang-tu'],
+  'ma dong seok': ['chuyen-tau-sinh-tu', 'trum-cho-dien-va-ke-sat-nhan', 'vay-bat-ke-ac', 'vinh-hang-eternals'],
+  'han so hee': ['sinh-vat-gyeongseong', 'the-gioi-hon-nhan', 'my-name'],
+  'tom cruise': ['phi-cong-sieu-dang-maverick', 'nhiem-vu-bat-kha-thi-nghiep-bao-phan-1', 'nhiem-vu-bat-kha-thi-sup-do', 'cuoc-chien-luan-hoi', 'ke-doc-hanh', 'nguoi-hung-jack-reacher'],
+  'keanu reeves': ['john-wick', 'john-wick-2', 'john-wick-3', 'john-wick-4', 'ma-tran', 'ma-tran-hoi-sinh', 'constantine'],
+  'leonardo dicaprio': ['titanic', 'inception', 'ke-trom-giac-mo', 'soi-gia-pho-wall', 'nguoi-ve-tu-coi-chet', 'dao-kinh-hoang'],
+  'brad pitt': ['bullet-train', 'cau-lac-bo-danh-nhau', 'ong-ba-smith', 'the-chien-z', 'chuyen-ngay-xua-o-hollywood'],
+  'scarlett johansson': ['avengers-hoi-ket', 'black-widow', 'lucy', 'vo-dien', 'chuyen-hon-nhan'],
+  'robert downey jr': ['iron-man', 'avengers-hoi-ket', 'oppenheimer', 'sherlock-holmes'],
+  'robert downey jr.': ['iron-man', 'avengers-hoi-ket', 'oppenheimer', 'sherlock-holmes'],
+  'chris evans': ['captain-america-ke-bao-thu-dau-tien', 'avengers-hoi-ket', 'ke-dam-len-nhau', 'snowpiercer'],
+  'chris hemsworth': ['thor-tan-the-ragnarok', 'thor-tinh-yeu-va-sam-set', 'extraction-nhiem-vu-giai-cuu', 'avengers-hoi-ket'],
+  'jason statham': ['the-meg', 'nguoi-van-chuyen', 'fast-furious-hobbs-shaw', 'mat-vu-ong-beekeeper', 'biet-doi-danh-thue'],
+  'vin diesel': ['fast-furious', 'fast-x', 've-binh-dai-ngan-ha', 'bloodshot', 'riddick'],
+  'dwayne johnson': ['black-adam', 'jumanji-tro-choi-ky-ao', 'san-andreas', 'thong-bao-do', 'fast-furious'],
+  'the rock': ['black-adam', 'jumanji-tro-choi-ky-ao', 'san-andreas', 'thong-bao-do'],
+  'cillian murphy': ['oppenheimer', 'peaky-blinders', 'ky-si-bong-dem', 'inception'],
+  'ryan reynolds': ['deadpool', 'deadpool-wolverine', 'free-guy', 'thong-bao-do'],
+  'christopher nolan': ['oppenheimer', 'tenet', 'huyen-thoai-interstellar', 'inception', 'ky-si-bong-dem', 'dunkirk'],
+  'tran thanh': ['mai', 'nha-ba-nu', 'bo-gia', 'cua-lai-vo-bau', 'trang-quynh'],
+  'thu trang': ['chi-muoi-ba', 'con-nhot-mot-chong', 'tiec-trang-mau', 'nghe-sieu-de'],
+  'kieu minh tuan': ['em-chua-18', 'tiec-trang-mau', 'ke-an-hon', 'chi-muoi-ba', 'nghe-sieu-de'],
+  'ninh duong lan ngoc': ['cua-lai-vo-bau', 'gai-gia-lam-chieu-3', 'co-ba-sai-gon', 'tam-cam-chuyen-chua-ke'],
+  'kaity nguyen': ['em-chua-18', 'tiec-trang-mau', 'co-gai-tu-qua-khu', 'nguoi-vo-cuoi-cung'],
+  'victor vu': ['mat-biec', 'toi-thay-hoa-vang-tren-co-xanh', 'nguoi-vo-cuoi-cung', 'thien-menh-anh-hung', 'qua-tim-mau']
+};
+
+// Resolve a movie slug to full item info (with cache)
+async function resolveMovieSlug(slug: string): Promise<any | null> {
+  const cacheKey = `resolved-slug:${slug}`;
+  const cached = proxyCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < 10 * 60 * 1000) {
+    return cached.data;
+  }
+  try {
+    const raw = await fetchWithTimeout(`https://phimapi.com/phim/${slug}`, 3000);
+    if (raw?.movie?.name) {
+      const m = raw.movie;
+      const item = {
+        slug: m.slug || slug,
+        name: m.name,
+        origin_name: m.origin_name || '',
+        poster_url: m.poster_url || '',
+        thumb_url: m.thumb_url || '',
+        year: m.year || undefined,
+        quality: m.quality || 'HD',
+        lang: m.lang || 'Vietsub',
+        source: 'kkphim',
+        sourceLabel: 'KKPhim',
+        actor: m.actor || [],
+        director: m.director || [],
+      };
+      indexMovieCast(m, 'kkphim');
+      proxyCache.set(cacheKey, { data: item, timestamp: Date.now() });
+      return item;
+    }
+  } catch {}
+  return null;
+}
+
+// Find movies for an actor/director by searching the cast index and filmography dictionary
+async function searchActorDirectorMovies(keyword: string): Promise<any[]> {
+  const normKey = normalizeSearchText(keyword);
+  if (!normKey || normKey.length < 2) return [];
+
+  const foundMovies = new Map<string, any>();
+
+  // 1. Check in dynamicCastIndex
+  for (const [normCastName, movieList] of dynamicCastIndex.entries()) {
+    if (normCastName.includes(normKey) || normKey.includes(normCastName)) {
+      for (const m of movieList) {
+        if (!foundMovies.has(m.slug)) {
+          foundMovies.set(m.slug, m);
+        }
+      }
+    }
+  }
+
+  // 2. Check in ACTOR_FILMOGRAPHY dictionary
+  const matchedSlugs = new Set<string>();
+  for (const [normActor, slugs] of Object.entries(ACTOR_FILMOGRAPHY)) {
+    if (normActor.includes(normKey) || normKey.includes(normActor)) {
+      for (const slug of slugs) {
+        matchedSlugs.add(slug);
+      }
+    }
+  }
+
+  if (matchedSlugs.size > 0) {
+    const slugPromises = Array.from(matchedSlugs).slice(0, 16).map((slug) => resolveMovieSlug(slug));
+    const resolvedItems = await Promise.allSettled(slugPromises);
+    for (const res of resolvedItems) {
+      if (res.status === 'fulfilled' && res.value && !foundMovies.has(res.value.slug)) {
+        foundMovies.set(res.value.slug, res.value);
+      }
+    }
+  }
+
+  return Array.from(foundMovies.values());
+}
+
+// Seed initial popular cast index in background on startup
+async function seedInitialCastIndex() {
+  try {
+    const seedUrls = [
+      'https://phimapi.com/danh-sach/phim-moi-cap-nhat?page=1',
+      'https://phimapi.com/v1/api/danh-sach/phim-bo?page=1&limit=24',
+      'https://phimapi.com/v1/api/danh-sach/phim-le?page=1&limit=24',
+    ];
+    for (const url of seedUrls) {
+      try {
+        const data = await fetchWithTimeout(url, 4000);
+        const items = data?.items || data?.data?.items || [];
+        // Resolve first 10 items in background to seed cast
+        for (const item of items.slice(0, 8)) {
+          if (item?.slug) {
+            resolveMovieSlug(item.slug).catch(() => {});
+          }
+        }
+      } catch {}
+    }
+  } catch {}
+}
+setTimeout(seedInitialCastIndex, 2000);
+
+// --- END SMART ACTOR & DIRECTOR SEARCH ENGINE ---
+
   // 1. KKPhim Dedicated Proxy (https://phimapi.com)
   app.get("/api/proxy/kkphim/*", async (req, res) => {
     const endpoint = req.params[0];
@@ -252,6 +513,9 @@ async function startServer() {
     try {
       const url = `https://phimapi.com/${endpoint}${query ? `?${query}` : ""}`;
       const data = await fetchWithTimeout(url, 4500);
+      if (data?.movie) {
+        indexMovieCast(data.movie, 'kkphim');
+      }
       proxyCache.set(cacheKey, { data, timestamp: Date.now() });
       return res.json(data);
     } catch (err: any) {
@@ -281,6 +545,9 @@ async function startServer() {
       try {
         const data = await fetchWithTimeout(url, 4000);
         if (data && (data.status === true || data.status === "success" || data.items || data.data?.items || data.movie)) {
+          if (data?.movie) {
+            indexMovieCast(data.movie, 'ophim');
+          }
           proxyCache.set(cacheKey, { data, timestamp: Date.now() });
           return res.json(data);
         }
@@ -309,6 +576,9 @@ async function startServer() {
       const normalizedEndpoint = endpoint.startsWith("api/") ? endpoint : `api/${endpoint}`;
       const url = `https://phim.nguonc.com/${normalizedEndpoint}${query ? `?${query}` : ""}`;
       const data = await fetchWithTimeout(url, 5000);
+      if (data?.movie) {
+        indexMovieCast(data.movie, 'nguonc');
+      }
       proxyCache.set(cacheKey, { data, timestamp: Date.now() });
       return res.json(data);
     } catch (err: any) {
@@ -317,7 +587,7 @@ async function startServer() {
     }
   });
 
-  // 4. Multi-Source Search Aggregator
+  // 4. Multi-Source Search Aggregator with Smart Cast & Actor Matching
   app.get("/api/proxy/search-all", async (req, res) => {
     const keyword = String(req.query.keyword || "").trim();
     if (!keyword) {
@@ -332,22 +602,40 @@ async function startServer() {
     }
 
     const tasks = [
-      fetchWithTimeout(`https://phimapi.com/v1/api/tim-kiem?keyword=${encoded}&limit=16`, 4000)
+      fetchWithTimeout(`https://phimapi.com/v1/api/tim-kiem?keyword=${encoded}&limit=20`, 4000)
         .then((d) => ({ source: 'kkphim', data: d }))
         .catch(() => null),
-      fetchWithTimeout(`https://ophim1.com/v1/api/tim-kiem?keyword=${encoded}&limit=16`, 4000)
+      fetchWithTimeout(`https://ophim1.com/v1/api/tim-kiem?keyword=${encoded}&limit=20`, 4000)
         .then((d) => ({ source: 'ophim', data: d }))
         .catch(() => null),
       fetchWithTimeout(`https://phim.nguonc.com/api/films/search?keyword=${encoded}`, 4500)
         .then((d) => ({ source: 'nguonc', data: d }))
         .catch(() => null),
+      searchActorDirectorMovies(keyword)
+        .then((items) => ({ source: 'actor_cast_index', items }))
+        .catch(() => ({ source: 'actor_cast_index', items: [] })),
     ];
 
     const results = await Promise.all(tasks);
     const combinedMap = new Map<string, any>();
 
+    // 1. Add Actor / Cast matched movies first so they are front and center
+    const actorResult = results.find((r) => r && 'items' in r && r.source === 'actor_cast_index');
+    if (actorResult && Array.isArray((actorResult as any).items)) {
+      for (const item of (actorResult as any).items) {
+        if (item?.slug && !combinedMap.has(item.slug)) {
+          combinedMap.set(item.slug, {
+            ...item,
+            isActorMatch: true,
+            sourceLabel: item.source === 'nguonc' ? 'NguonC' : item.source === 'ophim' ? 'OPhim' : 'KKPhim',
+          });
+        }
+      }
+    }
+
+    // 2. Add Upstream Title Search Results
     for (const r of results) {
-      if (!r || !r.data) continue;
+      if (!r || !('data' in r) || !r.data) continue;
       const src = r.source;
       const raw = r.data;
 
@@ -382,6 +670,7 @@ async function startServer() {
       status: true,
       items: Array.from(combinedMap.values()),
       total: combinedMap.size,
+      keyword,
     };
 
     proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
@@ -1108,11 +1397,96 @@ async function startServer() {
     }
   });
 
+  // Direct InnerTube POST Client for Node.js backend
+  async function fetchYouTubeInnerTubeBackend(
+    query: string,
+    token?: string | null
+  ): Promise<{ channels: any[]; items: any[]; nextToken: string | null }> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 7000);
+      const body: any = {
+        context: {
+          client: {
+            clientName: "WEB",
+            clientVersion: "2.20240801.00.00",
+            hl: "vi",
+            gl: "VN",
+          },
+        },
+      };
+      if (token) {
+        body.continuation = token;
+      } else {
+        body.query = query;
+      }
+
+      const res = await fetch("https://www.youtube.com/youtubei/v1/search?prettyPrint=false", {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8",
+          "Origin": "https://www.youtube.com",
+          "Referer": "https://www.youtube.com/",
+          "X-YouTube-Client-Name": "1",
+          "X-YouTube-Client-Version": "2.20240801.00.00",
+        },
+        body: JSON.stringify(body),
+      }).finally(() => clearTimeout(timer));
+
+      if (!res.ok) return { channels: [], items: [], nextToken: null };
+      const data = await res.json();
+      if (!data) return { channels: [], items: [], nextToken: null };
+
+      const items: any[] = extractAllVideos(data);
+      const channels: any[] = [];
+      const walkChannels = (obj: any) => {
+        if (!obj || typeof obj !== "object") return;
+        const c = (obj as any).channelRenderer;
+        if (c && c.channelId && !channels.some((x) => x.id === c.channelId)) {
+          const title = c.title?.simpleText || c.title?.runs?.[0]?.text || "Kênh YouTube";
+          const subscribers = c.subscriberCountText?.simpleText || c.subscriberCountText?.runs?.[0]?.text || "";
+          let avatarUrl = c.thumbnail?.thumbnails?.[c.thumbnail.thumbnails.length - 1]?.url || "";
+          if (avatarUrl && avatarUrl.startsWith("//")) avatarUrl = "https:" + avatarUrl;
+          if (avatarUrl && c.channelId) {
+            channelAvatarCache.set(c.channelId, avatarUrl);
+          }
+          channels.push({
+            id: c.channelId,
+            title,
+            subscribers,
+            avatarUrl,
+            description: c.descriptionSnippet?.runs?.[0]?.text || "",
+          });
+        }
+        for (const k of Object.keys(obj)) {
+          if (obj[k] && typeof obj[k] === "object") walkChannels(obj[k]);
+        }
+      };
+      walkChannels(data);
+
+      return { channels, items, nextToken: findNextContinuationToken(data) };
+    } catch (e) {
+      console.error("InnerTube backend search error:", e);
+      return { channels: [], items: [], nextToken: null };
+    }
+  }
+
   // Helper function to scrape real-time live search results directly from YouTube
   async function scrapeYouTubeSearch(
     query: string,
     opts?: { liveOnly?: boolean }
   ): Promise<{ channels: any[]; items: any[]; nextToken: string | null }> {
+    // 1. Try Direct InnerTube API first
+    if (!opts?.liveOnly) {
+      const innerRes = await fetchYouTubeInnerTubeBackend(query);
+      if (innerRes.items.length > 0 || innerRes.channels.length > 0) {
+        return innerRes;
+      }
+    }
+
     try {
       // sp=EgJAAQ%3D%3D là filter "Trực tiếp" của YouTube Search
       const url =
@@ -1125,9 +1499,7 @@ async function startServer() {
       cachedInnertubeVer = clientVersion || cachedInnertubeVer;
       if (!data) return { channels: [], items: [], nextToken: null };
 
-      // Walk the ENTIRE payload recursively. YouTube wraps search results in many
-      // different containers (itemSectionRenderer, shelves, featured racks...) so
-      // following one fixed path misses items like currently-live broadcasts.
+      // Walk the ENTIRE payload recursively
       const items: any[] = extractAllVideos(data);
 
       const channels: any[] = [];
@@ -1142,6 +1514,9 @@ async function startServer() {
           const description = c.descriptionSnippet?.runs?.[0]?.text || "";
           let avatarUrl = c.thumbnail?.thumbnails?.[c.thumbnail.thumbnails.length - 1]?.url || "";
           if (avatarUrl && avatarUrl.startsWith("//")) avatarUrl = "https:" + avatarUrl;
+          if (avatarUrl && channelId) {
+            channelAvatarCache.set(channelId, avatarUrl);
+          }
 
           channels.push({
             id: channelId,
@@ -1160,8 +1535,6 @@ async function startServer() {
       };
       walkChannels(data);
 
-      // Keep YouTube's native relevance order (live streams already rank high
-      // for live topics and carry the LIVE badge in the UI)
       return { channels, items, nextToken: findNextContinuationToken(data) };
     } catch (err) {
       console.error("Scrape YouTube Search error:", err);
@@ -1191,7 +1564,11 @@ async function startServer() {
 
       if (!res.ok) return { data: null };
       const html = await res.text();
-      const match = html.match(/var ytInitialData = ({.*?});<\/script>/s) || html.match(/ytInitialData = ({.*?});/s);
+      const match =
+        html.match(/window\["ytInitialData"\]\s*=\s*({.*?});/s) ||
+        html.match(/var ytInitialData\s*=\s*({.*?});/s) ||
+        html.match(/ytInitialData\s*=\s*({.*?});/s) ||
+        html.match(/ytInitialData\s*=\s*({[\s\S]*?});<\/script>/);
       if (!match) return { data: null };
       return {
         data: JSON.parse(match[1]),
@@ -1337,11 +1714,54 @@ async function startServer() {
 
     // Channel name / avatar / views / published date from metadata rows
     let channelTitle = "";
+    let channelId = "";
     let channelAvatar = "";
     let viewCount = "";
     let publishedAt = "";
+
     const avSrcs = metaVm?.image?.avatarViewModel?.avatar?.image?.sources || [];
     if (avSrcs.length > 0) channelAvatar = avSrcs[avSrcs.length - 1]?.url || "";
+    if (channelAvatar && channelAvatar.startsWith("//")) {
+      channelAvatar = "https:" + channelAvatar;
+    }
+
+    // Try multiple possible paths to extract channel title & ID
+    const possibleChannelTitles = [
+      metaVm?.ownerText?.runs?.[0]?.text,
+      metaVm?.ownerText?.simpleText,
+      lockup.shortBylineText?.runs?.[0]?.text,
+      lockup.longBylineText?.runs?.[0]?.text,
+      metaVm?.image?.avatarViewModel?.avatar?.image?.accessibility?.accessibilityData?.label,
+    ];
+    for (const titleCandidate of possibleChannelTitles) {
+      if (titleCandidate && typeof titleCandidate === "string" && titleCandidate.trim().length > 0) {
+        let cleanName = titleCandidate.trim();
+        // Clean potential prefix like "Ảnh đại diện cho " or "Avatar for "
+        if (cleanName.startsWith("Ảnh đại diện cho ")) {
+          cleanName = cleanName.replace("Ảnh đại diện cho ", "");
+        } else if (cleanName.startsWith("Avatar for ")) {
+          cleanName = cleanName.replace("Avatar for ", "");
+        }
+        if (cleanName) {
+          channelTitle = cleanName;
+          break;
+        }
+      }
+    }
+
+    const possibleChannelIds = [
+      metaVm?.ownerText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId,
+      metaVm?.image?.avatarViewModel?.onTap?.innertubeCommand?.browseEndpoint?.browseId,
+      lockup.shortBylineText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId,
+      lockup.longBylineText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId,
+      lockup.rendererContext?.commandContext?.onTap?.innertubeCommand?.watchEndpoint?.ownerChannelId,
+    ];
+    for (const idCandidate of possibleChannelIds) {
+      if (idCandidate && typeof idCandidate === "string" && idCandidate.startsWith("UC")) {
+        channelId = idCandidate;
+        break;
+      }
+    }
 
     const rows = metaVm?.metadata?.contentMetadataViewModel?.metadataRows || [];
     for (const row of rows) {
@@ -1359,11 +1779,15 @@ async function startServer() {
       }
     }
 
+    if (!channelAvatar && channelId && channelAvatarCache.has(channelId)) {
+      channelAvatar = channelAvatarCache.get(channelId) || "";
+    }
+
     return {
       id: vid,
       title,
       channelTitle: channelTitle || "Kênh YouTube",
-      channelId: "",
+      channelId: channelId || "",
       channelAvatar,
       publishedAt: publishedAt || "Mới đây",
       viewCount,
@@ -1466,6 +1890,7 @@ async function startServer() {
   }
 
   // Innertube config cache (captured from scraped pages, reused for continuations)
+  const channelAvatarCache = new Map<string, string>();
   let cachedInnertubeKey: string | undefined;
   let cachedInnertubeVer: string | undefined;
 
@@ -1582,8 +2007,64 @@ async function startServer() {
   const buildTrendingFallbackToken = (pageIndex: number, category: string): string =>
     `trendsearch:${pageIndex}:${encodeURIComponent(category || "all")}`;
 
+  // Direct InnerTube Browse Client for Trending
+  async function fetchYouTubeInnerTubeTrendingBackend(region = "VN"): Promise<{ items: any[]; nextToken: string | null }> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 7000);
+      const body = {
+        context: {
+          client: {
+            clientName: "WEB",
+            clientVersion: "2.20240801.00.00",
+            hl: "vi",
+            gl: region,
+          },
+        },
+        browseId: "FEtrending",
+      };
+
+      const res = await fetch("https://www.youtube.com/youtubei/v1/browse?prettyPrint=false", {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8",
+          "Origin": "https://www.youtube.com",
+          "Referer": "https://www.youtube.com/",
+          "X-YouTube-Client-Name": "1",
+          "X-YouTube-Client-Version": "2.20240801.00.00",
+        },
+        body: JSON.stringify(body),
+      }).finally(() => clearTimeout(timer));
+
+      if (!res.ok) return { items: [], nextToken: null };
+      const data = await res.json();
+      if (!data) return { items: [], nextToken: null };
+
+      const seen = new Set<string>();
+      const items = extractAllVideos(data).filter((v: any) => {
+        if (!v?.id || seen.has(v.id)) return false;
+        seen.add(v.id);
+        return true;
+      });
+
+      return { items, nextToken: findNextContinuationToken(data) };
+    } catch (e) {
+      console.error("InnerTube backend trending error:", e);
+      return { items: [], nextToken: null };
+    }
+  }
+
   // Scrape YouTube's REAL Trending feed (https://www.youtube.com/feed/trending?gl=VN)
-  async function scrapeYouTubeTrending(region = "VN"): Promise<{ items: any[]; nextToken: string | null }> {    const { data, apiKey, clientVersion } = await fetchYouTubePageDataFull(
+  async function scrapeYouTubeTrending(region = "VN"): Promise<{ items: any[]; nextToken: string | null }> {
+    const innerRes = await fetchYouTubeInnerTubeTrendingBackend(region);
+    if (innerRes.items.length > 0) {
+      return innerRes;
+    }
+
+    const { data, apiKey, clientVersion } = await fetchYouTubePageDataFull(
       `https://www.youtube.com/feed/trending?gl=${encodeURIComponent(region)}&hl=vi`
     );
     if (!data) return { items: [], nextToken: null };
@@ -1606,9 +2087,27 @@ async function startServer() {
     if (!videoId) return null;
 
     const title = video.title?.runs?.[0]?.text || video.title?.simpleText || "Video YouTube";
-    const channelTitle = video.ownerText?.runs?.[0]?.text || fallbackChannelTitle;
-    const channelId = video.ownerText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId || "";
-    let channelAvatar = video.channelThumbnailSupportedRenderers?.channelThumbnailWithRippleRenderer?.thumbnail?.thumbnails?.[0]?.url || "";
+    const channelTitle = video.ownerText?.runs?.[0]?.text
+      || video.shortBylineText?.runs?.[0]?.text
+      || video.longBylineText?.runs?.[0]?.text
+      || fallbackChannelTitle;
+    const channelId = video.ownerText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId
+      || video.shortBylineText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId
+      || video.longBylineText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId
+      || "";
+    let channelAvatar = video.channelThumbnailSupportedRenderers?.channelThumbnailWithRippleRenderer?.thumbnail?.thumbnails?.[0]?.url
+      || video.channelThumbnailSupportedRenderers?.channelThumbnailWithLinkRenderer?.thumbnail?.thumbnails?.[0]?.url
+      || video.channelThumbnailSupportedRenderers?.channelThumbnailRenderer?.thumbnail?.thumbnails?.[0]?.url
+      || video.channelThumbnail?.thumbnails?.[0]?.url
+      || video.channelThumbnail?.thumbnail?.thumbnails?.[0]?.url
+      || video.channelThumbnailWithRippleRenderer?.thumbnail?.thumbnails?.[0]?.url
+      || video.channelThumbnailWithLinkRenderer?.thumbnail?.thumbnails?.[0]?.url
+      || "";
+
+    if (!channelAvatar && channelId && channelAvatarCache.has(channelId)) {
+      channelAvatar = channelAvatarCache.get(channelId) || "";
+    }
+
     if (channelAvatar && channelAvatar.startsWith("//")) channelAvatar = "https:" + channelAvatar;
 
     const publishedAt = video.publishedTimeText?.simpleText || video.publishedTimeText?.runs?.map((r: any) => r.text).join("") || "Mới đây";
@@ -1711,6 +2210,10 @@ async function startServer() {
         if (!meta.avatarUrl && header.avatar?.thumbnails?.length > 0) {
           meta.avatarUrl = header.avatar.thumbnails[header.avatar.thumbnails.length - 1].url;
         }
+      }
+
+      if (meta.id && meta.avatarUrl) {
+        channelAvatarCache.set(meta.id, meta.avatarUrl);
       }
 
       let videos = extractAllVideos(data);
@@ -1932,10 +2435,92 @@ async function startServer() {
       mergedItems.unshift(...freshLives);
     }
 
-    if (mergedItems.length > 0 || liveData.channels.length > 0) {
+    // Nếu kết quả tìm kiếm có kênh liên quan phù hợp (ví dụ: ttg, levi, mixigaming, vtv...)
+    // tự động lấy các video mới nhất của kênh đó đưa lên đầu kết quả
+    const normQ = normChannelKey(query);
+    const isShortQuery = normQ.length <= 6;
+    let matchedChanId: string | null = null;
+
+    if (liveData.channels && liveData.channels.length > 0) {
+      const matchedChan = liveData.channels.find((c: any) => {
+        const cKey = normChannelKey(c.title || "");
+        if (isShortQuery) {
+          // Khớp chính xác từ nguyên bản hoặc cụm từ đầu kênh (ví dụ "TTG", "TTG Esports", "Levi", "GAM Levi")
+          const words = (c.title || "").toLowerCase().split(/\s+/);
+          return words.includes(query.toLowerCase()) || cKey === normQ || cKey.startsWith(normQ);
+        }
+        return normQ.length >= 2 && (cKey.includes(normQ) || normQ.includes(cKey));
+      }) || liveData.channels[0];
+
+      if (matchedChan && matchedChan.id) {
+        matchedChanId = matchedChan.id;
+        try {
+          const chanData = await scrapeYouTubeChannelVideos(matchedChan.id, matchedChan.title);
+          if (chanData && chanData.items && chanData.items.length > 0) {
+            const seenIds = new Set(mergedItems.map((i: any) => i.id));
+            const chanVideos = chanData.items.filter((i: any) => i?.id && !seenIds.has(i.id));
+            mergedItems.unshift(...chanVideos);
+          }
+        } catch (e) {
+          console.warn("Channel video fetch error for search:", e);
+        }
+      }
+    }
+
+    // Đối với các từ khóa tìm kiếm ngắn (như 'ttg', 'levi', 'mixi'), chủ động tìm kiếm thêm ngữ cảnh Việt Nam
+    if (isShortQuery) {
+      try {
+        const vnQueryRes = await scrapeYouTubeSearch(`${query} việt nam`);
+        if (vnQueryRes.items && vnQueryRes.items.length > 0) {
+          const seenIds = new Set(mergedItems.map((i: any) => i.id));
+          const freshVn = vnQueryRes.items.filter((i: any) => i?.id && !seenIds.has(i.id));
+          // Đưa các video chuẩn Việt Nam lên đầu
+          mergedItems.unshift(...freshVn.slice(0, 10));
+          if (liveData.channels.length === 0 && vnQueryRes.channels.length > 0) {
+            liveData.channels = vnQueryRes.channels;
+          }
+        }
+      } catch (e) {}
+    }
+
+    // Loại bỏ bớt các video hoạt hình/phim quốc tế không liên quan (như Teen Titans Go khi gõ ttg)
+    // nếu kênh chính thức của Việt Nam đã được xác định
+    let filteredItems = mergedItems;
+    if (normQ === "ttg") {
+      filteredItems = mergedItems.filter((item: any) => {
+        const titleLower = (item.title || "").toLowerCase();
+        // Giữ lại video Việt Nam hoặc từ kênh chính chủ TTG, lọc bỏ Teen Titans Go
+        return !titleLower.includes("teen titans") && !titleLower.includes("titan go");
+      });
+    } else if (normQ === "levi") {
+      filteredItems = mergedItems.filter((item: any) => {
+        const titleLower = (item.title || "").toLowerCase();
+        // Giữ lại video GAM Levi / LOL Levi / Vlogs, lọc bỏ phim Levi's quảng cáo quần jeans hoặc Attack on Titan Levi
+        return !titleLower.includes("jeans") && !titleLower.includes("attack on titan") && !titleLower.includes("ackerman");
+      });
+    }
+
+    // Sắp xếp ưu tiên:
+    // 1. Video từ kênh chính khớp từ khóa
+    // 2. Video có tiêu đề chứa từ khóa chính chủ
+    filteredItems.sort((a: any, b: any) => {
+      const aChanMatch = normChannelKey(a.channelTitle || "").includes(normQ);
+      const bChanMatch = normChannelKey(b.channelTitle || "").includes(normQ);
+      if (aChanMatch && !bChanMatch) return -1;
+      if (!aChanMatch && bChanMatch) return 1;
+
+      const aTitleMatch = (a.title || "").toLowerCase().includes(query.toLowerCase());
+      const bTitleMatch = (b.title || "").toLowerCase().includes(query.toLowerCase());
+      if (aTitleMatch && !bTitleMatch) return -1;
+      if (!aTitleMatch && bTitleMatch) return 1;
+
+      return 0;
+    });
+
+    if (filteredItems.length > 0 || liveData.channels.length > 0) {
       return res.json({
         channels: liveData.channels,
-        items: mergedItems,
+        items: filteredItems,
         nextToken: liveData.nextToken,
       });
     }
@@ -2089,6 +2674,27 @@ async function startServer() {
       items: liveData.items,
       nextToken: liveData.items.length > 0 ? buildTrendingFallbackToken(1, category) : null,
     });
+  });
+
+  // Autocomplete suggestions for YouTube search
+  app.get("/api/youtube/suggest", async (req, res) => {
+    try {
+      const query = String(req.query.q || "").trim();
+      if (!query) {
+        return res.json([]);
+      }
+      const response = await fetch(
+        `https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=${encodeURIComponent(query)}`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        return res.json(data[1] || []);
+      }
+      return res.json([]);
+    } catch (err: any) {
+      console.error("Suggestions fetch error:", err);
+      return res.json([]);
+    }
   });
 
   // Vite middleware for development or fallback to production static files

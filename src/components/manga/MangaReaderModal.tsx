@@ -3,6 +3,7 @@ import { MangaChapter, MangaItem, getProxyImageUrl } from '../../services/mangaA
 import { mangaApi } from '../../services/mangaApi';
 import { systemApiService } from '../../services/systemApiService';
 import { presenceService } from '../../services/presenceService';
+import { Account, UserProfile } from '../../types';
 import {
   X,
   ChevronLeft,
@@ -36,6 +37,8 @@ interface MangaReaderModalProps {
   onClose: () => void;
   onSelectChapter: (chapter: MangaChapter) => void;
   onChapterRead?: (chapter: MangaChapter, pageIndex: number) => void;
+  currentAccount?: Account | null;
+  activeProfile?: UserProfile | null;
 }
 
 export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
@@ -45,6 +48,8 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
   onClose,
   onSelectChapter,
   onChapterRead,
+  currentAccount,
+  activeProfile,
 }) => {
   const [currentChapter, setCurrentChapter] = useState<MangaChapter>(initialChapter);
   const [pages, setPages] = useState<string[]>([]);
@@ -286,10 +291,11 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
   // Presence heartbeat for real-time admin monitoring
   useEffect(() => {
     presenceService.startHeartbeat({
-      accountId: 'user',
-      accountDisplayName: 'Độc Giả Manga',
-      profileId: 'manga_profile',
-      profileName: 'Độc Giả',
+      accountId: currentAccount?.id || currentAccount?.username || 'user',
+      accountDisplayName: currentAccount?.displayName || currentAccount?.username || 'Độc Giả Manga',
+      profileId: activeProfile?.id || 'manga_profile',
+      profileName: activeProfile?.name || 'Độc Giả',
+      profileAvatar: activeProfile?.avatar || '',
       type: 'reading_manga',
       itemTitle: manga.title || 'Truyện tranh',
       itemSubtitle: currentChapter.title ? `Chương ${currentChapter.chapterNumber}: ${currentChapter.title}` : `Chương ${currentChapter.chapterNumber}`,
@@ -303,7 +309,7 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
     return () => {
       presenceService.stopHeartbeat();
     };
-  }, [manga.title, currentChapter.chapterNumber, currentChapter.title, currentChapter.source]);
+  }, [manga.title, currentChapter.chapterNumber, currentChapter.title, currentChapter.source, currentAccount, activeProfile]);
 
   // Reset zoom on page change in single mode & record read
   useEffect(() => {
@@ -1143,11 +1149,11 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
-              {manga.chapters.map((ch) => {
+              {manga.chapters.map((ch, idx) => {
                 const isSelected = ch.id === currentChapter.id;
                 return (
                   <button
-                    key={ch.id}
+                    key={`${ch.id || ch.chapterNumber || 'ch'}-${idx}`}
                     onClick={() => {
                       setCurrentChapter(ch);
                       onSelectChapter(ch);

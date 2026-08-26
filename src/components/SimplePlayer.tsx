@@ -16,14 +16,18 @@ import {
   Maximize,
   Minimize,
   Settings,
-  SkipForward,
   List,
   X,
   AlertCircle,
   Server,
+  Zap,
+  SkipForward,
+  PictureInPicture2,
 } from 'lucide-react';
-import { EpisodeServer, Movie, MovieEpisode } from '../types';
+import { EpisodeServer, Movie, MovieEpisode, Account, UserProfile } from '../types';
 import { presenceService } from '../services/presenceService';
+import { enterNativePip, setNativeVideoPlaying, checkNativePipSupported } from '../utils/nativeVideoPlayer';
+import { Capacitor } from '@capacitor/core';
 
 interface SimplePlayerProps {
   movie: Movie;
@@ -35,6 +39,8 @@ interface SimplePlayerProps {
   onSaveProgress: (currentTime: number, duration: number) => void;
   initialTime?: number;
   autoFullscreen?: boolean; // 👈 Thêm prop này, mặc định true
+  currentAccount?: Account | null;
+  activeProfile?: UserProfile | null;
 }
 
 function getMirrorUrls(originalUrl: string): string[] {
@@ -72,6 +78,8 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
   onSaveProgress,
   initialTime = 0,
   autoFullscreen = false, // 👈 Mặc định bật
+  currentAccount,
+  activeProfile,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -111,6 +119,20 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isServerMenuOpen, setIsServerMenuOpen] = useState(false);
   const [isEpisodesOpen, setIsEpisodesOpen] = useState(false);
+  const [isPip, setIsPip] = useState(false);
+  const [pipSupported, setPipSupported] = useState(true);
+
+  // Auto skip 30s ad at 15:00 - 15:30
+  const [autoSkipAd, setAutoSkipAd] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('player_auto_skip_ad');
+      return saved !== null ? saved === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+  const [skippedAdToast, setSkippedAdToast] = useState<boolean>(false);
+  const hasSkippedAdRef = useRef<boolean>(false);
 
   const [hud, setHud] = useState<{ type: 'volume' | 'brightness'; value: number } | null>(null);
   const hudTimer = useRef<NodeJS.Timeout | null>(null);
@@ -282,6 +304,132 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     }
   }, []);
 
+  const togglePip = useCallback(async () => {
+    if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+      const res = await enterNativePip();
+      if (res) return;
+    }
+
+    const video = videoRef.current;
+    if (!video) return;
+
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else if (document.pictureInPictureEnabled) {
+        await video.requestPictureInPicture();
+      }
+    } catch (err) {
+      console.warn('[SimplePlayer] Lỗi chuyển đổi PiP:', err);
+    }
+  }, []);
+
+  // Check PiP support on mount
+  useEffect(() => {
+    const isWebPip = typeof document !== 'undefined' && 'pictureInPictureEnabled' in document && document.pictureInPictureEnabled;
+    if (Capacitor.isNativePlatform()) {
+      checkNativePipSupported().then((sup) => setPipSupported(sup || isWebPip));
+    } else {
+      setPipSupported(isWebPip);
+    }
+  }, []);
+
+  // PiP Event Listeners
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    try {
+      (video as any).autoPictureInPicture = true;
+    } catch (e) {}
+
+    const onEnterPip = () => setIsPip(true);
+    const onLeavePip = () => setIsPip(false);
+
+    video.addEventListener('enterpictureinpicture', onEnterPip);
+    video.addEventListener('leavepictureinpicture', onLeavePip);
+
+    const onNativePipChange = (e: any) => {
+      setIsPip(!!e.detail?.isPip);
+    };
+    window.addEventListener('native-pip-change', onNativePipChange);
+
+    return () => {
+      video.removeEventListener('enterpictureinpicture', onEnterPip);
+      video.removeEventListener('leavepictureinpicture', onLeavePip);
+      window.removeEventListener('native-pip-change', onNativePipChange);
+    };
+  }, []);
+
+  // Auto PiP when exiting/leaving app or switching tabs while video is playing
+  useEffect(() => {
+    setNativeVideoPlaying(isPlaying);
+
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'hidden') {
+        const video = videoRef.current;
+        if (video && !video.paused && !video.ended) {
+          if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+            await enterNativePip();
+          } else if (document.pictureInPictureEnabled && !document.pictureInPictureElement) {
+            try {
+              await video.requestPictureInPicture();
+            } catch (e) {
+              console.warn('[Auto-PiP] Notice:', e);
+            }
+          }
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handleVisibilityChange);
+      setNativeVideoPlaying(false);
+    };
+  }, [isPlaying]);
+
+  // MediaSession API setup
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: `${movie.name} - ${currentEpisode.name}`,
+        artist: 'Gấu Cinema',
+        album: currentServer.server_name || 'Stream HLS',
+        artwork: [
+          {
+            src: movie.poster_url || movie.thumb_url || '/app_logo.jpg',
+            sizes: '512x512',
+            type: 'image/jpeg',
+          },
+        ],
+      });
+
+      try {
+        navigator.mediaSession.setActionHandler('play', () => {
+          videoRef.current?.play();
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+          videoRef.current?.pause();
+        });
+        navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+          skip(-(details.seekOffset || 10));
+        });
+        navigator.mediaSession.setActionHandler('seekforward', (details) => {
+          skip(details.seekOffset || 10);
+        });
+        (navigator.mediaSession.setActionHandler as any)('enterpictureinpicture', () => {
+          togglePip();
+        });
+      } catch (e) {
+        console.warn('[MediaSession] Warning:', e);
+      }
+    }
+  }, [movie, currentEpisode, currentServer, skip, togglePip]);
+
   const nextEpisode = useMemo(() => {
     const idx = currentServer.server_data.findIndex((e) => e.slug === currentEpisode.slug);
     return idx !== -1 && idx < currentServer.server_data.length - 1
@@ -376,6 +524,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     setErrorMsg(null);
     setQualityLevels([]);
     setCurrentQuality(-1);
+    hasSkippedAdRef.current = false;
 
     if (hlsRef.current) {
       hlsRef.current.destroy();
@@ -482,13 +631,14 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
 
   useEffect(() => {
     presenceService.startHeartbeat({
-      accountId: 'user',
-      accountDisplayName: 'Khán Giả Phim',
-      profileId: 'movie_profile',
-      profileName: 'Người xem',
+      accountId: currentAccount?.id || currentAccount?.username || 'user',
+      accountDisplayName: currentAccount?.displayName || currentAccount?.username || 'Khán Giả Phim',
+      profileId: activeProfile?.id || 'movie_profile',
+      profileName: activeProfile?.name || 'Người xem',
+      profileAvatar: activeProfile?.avatar || '',
       type: 'watching_movie',
       itemTitle: movie.name,
-      itemSubtitle: currentEpisode.name,
+      itemSubtitle: currentEpisode.name ? `Tập ${currentEpisode.name}` : undefined,
       itemCover: movie.poster_url || movie.thumb_url,
       apiSourceUsed: currentServer.server_name || 'movie',
       duration: duration || 0,
@@ -498,7 +648,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     return () => {
       presenceService.stopHeartbeat();
     };
-  }, [movie.name, currentEpisode.name, currentServer.server_name]);
+  }, [movie.name, currentEpisode.name, currentServer.server_name, currentAccount, activeProfile]);
 
   useEffect(() => {
     saveInterval.current = setInterval(() => {
@@ -530,6 +680,10 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
         case 'f':
           e.preventDefault();
           toggleFullscreen();
+          break;
+        case 'p':
+          e.preventDefault();
+          togglePip();
           break;
         case 'm':
           e.preventDefault();
@@ -571,6 +725,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
   }, [
     togglePlay,
     toggleFullscreen,
+    togglePip,
     toggleMute,
     skip,
     changeVolume,
@@ -675,9 +830,23 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
   const handleTimeUpdate = () => {
     const video = videoRef.current;
     if (!video) return;
-    setCurrentTime(video.currentTime);
+    const cur = video.currentTime;
+    setCurrentTime(cur);
     if (video.buffered.length > 0) {
       setBuffered(video.buffered.end(video.buffered.length - 1));
+    }
+
+    if (cur < 890 && hasSkippedAdRef.current) {
+      hasSkippedAdRef.current = false;
+    }
+
+    // Tự động nhảy 30s quảng cáo từ phút 15:00 (899.5s -> 930.5s) khi ON
+    if (autoSkipAd && !hasSkippedAdRef.current && cur >= 899.5 && cur <= 901.5) {
+      hasSkippedAdRef.current = true;
+      video.currentTime = 930.5;
+      setCurrentTime(930.5);
+      setSkippedAdToast(true);
+      setTimeout(() => setSkippedAdToast(false), 3500);
     }
   };
 
@@ -737,6 +906,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
               if (nextEpisode) goToNextEpisode();
             }}
             playsInline
+            {...({ autopictureinpicture: 'true' } as any)}
             onClick={handleVideoClick}
           />
 
@@ -762,7 +932,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
           )}
 
           {hud && (
-            <div className="absolute top-1/4 left-1/2 -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-lg flex items-center gap-3 pointer-events-none">
+            <div className="absolute top-1/4 left-1/2 -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-lg flex items-center gap-3 pointer-events-none z-40">
               <span className="text-sm">
                 {hud.type === 'brightness' ? '☀️' : hud.value === 0 ? '🔇' : '🔊'}
               </span>
@@ -782,43 +952,98 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
             </div>
           )}
 
+          {skippedAdToast && (
+            <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-amber-500 text-slate-950 font-extrabold px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2 text-xs sm:text-sm z-50 animate-bounce border border-amber-300">
+              <Zap className="w-4 h-4 fill-current" />
+              <span>Đã tự động bỏ qua 30s quảng cáo (15:00 - 15:30)!</span>
+            </div>
+          )}
+
           <div
-            className={`absolute inset-0 flex flex-col justify-between p-4 transition-opacity duration-300 pointer-events-none ${
+            className={`absolute inset-0 flex flex-col justify-between pt-[max(2.75rem,env(safe-area-inset-top,0px))] pb-[max(1rem,env(safe-area-inset-bottom,0px))] px-3 sm:px-6 transition-opacity duration-300 pointer-events-none ${
               showControls ? 'opacity-100' : 'opacity-0'
             }`}
-            style={{ background: 'linear-gradient(transparent 60%, rgba(0,0,0,0.8) 100%)' }}
+            style={{
+              background:
+                'linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.3) 25%, transparent 45%, transparent 65%, rgba(0,0,0,0.4) 80%, rgba(0,0,0,0.9) 100%)',
+            }}
           >
-            <div className="flex items-start justify-between pointer-events-auto">
-              <div className="flex flex-col">
-                <h2 className="text-white text-lg font-bold drop-shadow-lg">{movie.name}</h2>
-                <span className="text-gray-300 text-sm">
+            {/* Top Bar Header */}
+            <div className="flex items-center justify-between gap-3 pointer-events-auto shrink-0">
+              <div className="flex flex-col min-w-0 pr-2">
+                <h2 className="text-white text-base sm:text-lg font-bold drop-shadow-md truncate">
+                  {movie.name}
+                </h2>
+                <span className="text-gray-300 text-xs sm:text-sm font-medium drop-shadow-md truncate">
                   {currentEpisode.name.startsWith('Tập')
                     ? currentEpisode.name
                     : `Tập ${currentEpisode.name}`}
                 </span>
               </div>
               <button
+                id="simple-player-close-btn"
                 onClick={onBack}
-                className="bg-black/50 hover:bg-black/70 text-white p-2 rounded-full"
+                className="bg-black/60 hover:bg-black/80 text-white min-w-[42px] min-h-[42px] p-2.5 rounded-full border border-white/20 shadow-xl cursor-pointer active:scale-95 shrink-0 flex items-center justify-center transition-all"
+                title="Đóng trình phát"
               >
-                <X className="w-6 h-6" />
+                <X className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
               </button>
             </div>
 
-            <div className="pointer-events-auto space-y-3">
-              <div className="relative w-full h-1.5 bg-gray-600 rounded-full cursor-pointer">
-                <div
-                  className="absolute top-0 left-0 h-full bg-gray-400 rounded-full"
-                  style={{
-                    width: `${duration > 0 ? (buffered / duration) * 100 : 0}%`,
-                  }}
-                />
-                <div
-                  className="absolute top-0 left-0 h-full bg-blue-500 rounded-full"
-                  style={{
-                    width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
-                  }}
-                />
+            {/* Center Controls (Play/Pause & Seek 10s) for Mobile & Tablet */}
+            <div className="flex items-center justify-center gap-6 sm:gap-10 my-auto pointer-events-auto">
+              {/* Skip Back 10s */}
+              <button
+                onClick={() => skip(-10)}
+                className="p-3.5 sm:p-4 rounded-full bg-black/60 hover:bg-black/80 text-white border border-white/20 shadow-2xl backdrop-blur-md active:scale-90 transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 group/center-skip"
+                title="Lùi 10 giây"
+              >
+                <RotateCcw className="w-6 h-6 sm:w-7 sm:h-7 group-active/center-skip:-rotate-45 transition-transform" />
+                <span className="text-[10px] sm:text-xs font-bold font-mono text-gray-200">-10s</span>
+              </button>
+
+              {/* Play / Pause Big Button */}
+              <button
+                onClick={togglePlay}
+                className="p-5 sm:p-6 rounded-full bg-blue-600/90 hover:bg-blue-600 text-white border-2 border-white/40 shadow-2xl backdrop-blur-md active:scale-90 transition-all cursor-pointer flex items-center justify-center group/center-play"
+                title={isPlaying ? 'Tạm dừng' : 'Phát'}
+              >
+                {isPlaying ? (
+                  <Pause className="w-8 h-8 sm:w-10 sm:h-10 text-white fill-white" />
+                ) : (
+                  <Play className="w-8 h-8 sm:w-10 sm:h-10 text-white fill-white ml-1" />
+                )}
+              </button>
+
+              {/* Skip Forward 10s */}
+              <button
+                onClick={() => skip(10)}
+                className="p-3.5 sm:p-4 rounded-full bg-black/60 hover:bg-black/80 text-white border border-white/20 shadow-2xl backdrop-blur-md active:scale-90 transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 group/center-skip"
+                title="Tới 10 giây"
+              >
+                <RotateCw className="w-6 h-6 sm:w-7 sm:h-7 group-active/center-skip:rotate-45 transition-transform" />
+                <span className="text-[10px] sm:text-xs font-bold font-mono text-gray-200">+10s</span>
+              </button>
+            </div>
+
+            {/* Bottom Controls Area */}
+            <div className="pointer-events-auto space-y-2 sm:space-y-3 shrink-0">
+              {/* Progress Slider */}
+              <div className="relative w-full h-2 group/seek cursor-pointer flex items-center">
+                <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-1.5 bg-gray-700/80 rounded-full overflow-hidden">
+                  <div
+                    className="absolute top-0 left-0 h-full bg-gray-500/80 rounded-full transition-all"
+                    style={{
+                      width: `${duration > 0 ? (buffered / duration) * 100 : 0}%`,
+                    }}
+                  />
+                  <div
+                    className="absolute top-0 left-0 h-full bg-blue-500 rounded-full transition-all"
+                    style={{
+                      width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
                 <input
                   type="range"
                   min={0}
@@ -826,41 +1051,25 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                   step={0.1}
                   value={currentTime}
                   onChange={handleSeek}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                 />
               </div>
 
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={togglePlay}
-                    className="text-white hover:text-blue-400 p-1"
-                  >
-                    {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
-                  </button>
-                  <button
-                    onClick={() => skip(-10)}
-                    className="text-white hover:text-blue-400 p-1"
-                  >
-                    <RotateCcw className="w-5 h-5" />
-                  </button>
-                  <button
-                    onClick={() => skip(10)}
-                    className="text-white hover:text-blue-400 p-1"
-                  >
-                    <RotateCw className="w-5 h-5" />
-                  </button>
+              {/* Controls Bar */}
+              <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-1.5 sm:gap-2">
+                {/* Left controls: Volume, Time */}
+                <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                   <div className="relative flex items-center group/vol">
                     <button
                       type="button"
                       onClick={toggleMute}
-                      className="text-white hover:text-blue-400 p-1 cursor-pointer transition-colors"
+                      className="text-white hover:text-blue-400 p-1.5 rounded-lg cursor-pointer transition-colors"
                       title={isMuted || volume === 0 ? 'Bật âm thanh (M)' : 'Tắt âm thanh (M)'}
                     >
                       {isMuted || volume === 0 ? (
-                        <VolumeX className="w-5 h-5 text-red-400" />
+                        <VolumeX className="w-4 h-4 sm:w-5 sm:h-5 text-red-400" />
                       ) : (
-                        <Volume2 className="w-5 h-5" />
+                        <Volume2 className="w-4 h-4 sm:w-5 sm:h-5" />
                       )}
                     </button>
 
@@ -880,19 +1089,21 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                       />
                     </div>
                   </div>
-                  <span className="text-white text-sm font-mono ml-1">
+                  <span className="text-white text-[11px] sm:text-xs font-mono whitespace-nowrap shrink-0 ml-0.5 sm:ml-1 tracking-tight">
                     {formatTime(currentTime)} / {formatTime(duration)}
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2">
+                {/* Right controls: Next, Settings, Server, Episode List, Fullscreen */}
+                <div className="flex items-center gap-1 sm:gap-2 ml-auto shrink-0">
                   {nextEpisode && (
                     <button
                       onClick={goToNextEpisode}
-                      className="text-white hover:text-blue-400 p-1 flex items-center gap-1"
+                      className="text-white hover:text-blue-400 p-1.5 rounded-lg flex items-center gap-1 cursor-pointer"
+                      title="Tập tiếp theo"
                     >
-                      <SkipForward className="w-5 h-5" />
-                      <span className="text-xs hidden sm:inline">Tập tiếp</span>
+                      <SkipForward className="w-4 h-4 sm:w-5 sm:h-5" />
+                      <span className="text-xs hidden md:inline">Tập tiếp</span>
                     </button>
                   )}
 
@@ -903,14 +1114,15 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                         setIsServerMenuOpen(false);
                         setIsEpisodesOpen(false);
                       }}
-                      className="text-white hover:text-blue-400 p-1 player-menu-btn"
+                      className="text-white hover:text-blue-400 p-1.5 rounded-lg player-menu-btn cursor-pointer"
+                      title="Cài đặt"
                     >
-                      <Settings className="w-5 h-5" />
+                      <Settings className="w-4 h-4 sm:w-5 sm:h-5" />
                     </button>
                     {isSettingsOpen && (
-                      <div className="absolute right-0 bottom-10 bg-gray-900 rounded-lg shadow-xl p-3 w-48 z-50 player-menu-content">
+                      <div className="absolute right-0 bottom-10 bg-gray-900/95 backdrop-blur-md rounded-xl shadow-2xl p-3 w-48 z-50 player-menu-content border border-white/10">
                         <div className="mb-3">
-                          <p className="text-gray-400 text-xs uppercase font-bold mb-1">Tốc độ</p>
+                          <p className="text-gray-400 text-[10px] uppercase font-bold mb-1">Tốc độ phát</p>
                           <div className="grid grid-cols-3 gap-1">
                             {[0.5, 0.75, 1, 1.25, 1.5, 2].map((spd) => (
                               <button
@@ -920,9 +1132,9 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                                   if (videoRef.current) videoRef.current.playbackRate = spd;
                                   setIsSettingsOpen(false);
                                 }}
-                                className={`text-xs py-1 rounded ${
+                                className={`text-xs py-1 rounded transition-colors ${
                                   playbackRate === spd
-                                    ? 'bg-blue-600 text-white'
+                                    ? 'bg-blue-600 text-white font-bold'
                                     : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
                                 }`}
                               >
@@ -932,8 +1144,8 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                           </div>
                         </div>
                         {qualityLevels.length > 0 && (
-                          <div>
-                            <p className="text-gray-400 text-xs uppercase font-bold mb-1">Chất lượng</p>
+                          <div className="mb-3">
+                            <p className="text-gray-400 text-[10px] uppercase font-bold mb-1">Chất lượng</p>
                             <div className="space-y-1">
                               <button
                                 onClick={() => {
@@ -941,9 +1153,9 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                                   setCurrentQuality(-1);
                                   setIsSettingsOpen(false);
                                 }}
-                                className={`w-full text-left text-xs px-2 py-1 rounded ${
+                                className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${
                                   currentQuality === -1
-                                    ? 'bg-blue-600 text-white'
+                                    ? 'bg-blue-600 text-white font-bold'
                                     : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
                                 }`}
                               >
@@ -957,9 +1169,9 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                                     setCurrentQuality(lvl.level);
                                     setIsSettingsOpen(false);
                                   }}
-                                  className={`w-full text-left text-xs px-2 py-1 rounded ${
+                                  className={`w-full text-left text-xs px-2 py-1 rounded transition-colors ${
                                     currentQuality === lvl.level
-                                      ? 'bg-blue-600 text-white'
+                                      ? 'bg-blue-600 text-white font-bold'
                                       : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
                                   }`}
                                 >
@@ -969,6 +1181,25 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                             </div>
                           </div>
                         )}
+
+                        <div className="pt-2 border-t border-white/10">
+                          <label className="flex items-center justify-between text-xs text-gray-300 cursor-pointer hover:text-white py-1">
+                            <span className="flex items-center gap-1.5 font-medium">
+                              <Zap className="w-3.5 h-3.5 text-amber-400" />
+                              <span>skip QC</span>
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={autoSkipAd}
+                              onChange={(e) => {
+                                const val = e.target.checked;
+                                setAutoSkipAd(val);
+                                localStorage.setItem('player_auto_skip_ad', String(val));
+                              }}
+                              className="w-4 h-4 accent-blue-600 rounded cursor-pointer"
+                            />
+                          </label>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -981,13 +1212,14 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                           setIsSettingsOpen(false);
                           setIsEpisodesOpen(false);
                         }}
-                        className="text-white hover:text-blue-400 p-1 flex items-center gap-1 player-menu-btn"
+                        className="text-white hover:text-blue-400 p-1.5 rounded-lg flex items-center gap-1 player-menu-btn cursor-pointer"
+                        title="Đổi server"
                       >
-                        <Server className="w-5 h-5" />
-                        <span className="text-xs hidden sm:inline">{currentServer.server_name}</span>
+                        <Server className="w-4 h-4 sm:w-5 sm:h-5" />
+                        <span className="text-xs hidden md:inline">{currentServer.server_name}</span>
                       </button>
                       {isServerMenuOpen && (
-                        <div className="absolute right-0 bottom-10 bg-gray-900/95 backdrop-blur-md rounded-lg shadow-2xl p-2 w-56 z-50 player-menu-content overflow-y-auto max-h-60 border border-white/10">
+                        <div className="absolute right-0 bottom-10 bg-gray-900/95 backdrop-blur-md rounded-xl shadow-2xl p-2 w-56 z-50 player-menu-content overflow-y-auto max-h-60 border border-white/10">
                           {allServers.map((srv) => (
                             <button
                               key={srv.server_name}
@@ -1014,14 +1246,14 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                         setIsSettingsOpen(false);
                         setIsServerMenuOpen(false);
                       }}
-                      className="text-white hover:text-blue-400 p-1 flex items-center gap-1 player-menu-btn"
+                      className="text-white hover:text-blue-400 p-1.5 rounded-lg flex items-center gap-1 player-menu-btn cursor-pointer"
                       title="Danh sách tập"
                     >
-                      <List className="w-5 h-5" />
-                      <span className="text-xs hidden sm:inline">Tập phim</span>
+                      <List className="w-4 h-4 sm:w-5 sm:h-5" />
+                      <span className="text-xs hidden md:inline">Tập phim</span>
                     </button>
                     {isEpisodesOpen && (
-                      <div className="absolute right-0 bottom-10 bg-gray-900/95 backdrop-blur-md rounded-lg shadow-2xl p-3 w-64 z-50 player-menu-content overflow-y-auto max-h-64 custom-scrollbar border border-white/10">
+                      <div className="absolute right-0 bottom-10 bg-gray-900/95 backdrop-blur-md rounded-xl shadow-2xl p-3 w-64 z-50 player-menu-content overflow-y-auto max-h-64 custom-scrollbar border border-white/10">
                         <p className="text-gray-400 text-[10px] uppercase font-bold mb-3 px-1 tracking-wider">Danh sách tập</p>
                         <div className="grid grid-cols-4 gap-1.5">
                           {currentServer.server_data.map((ep) => (
@@ -1045,11 +1277,29 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
                     )}
                   </div>
 
+                  {pipSupported && (
+                    <button
+                      onClick={togglePip}
+                      className={`text-white hover:text-blue-400 p-1.5 rounded-lg active:scale-90 transition-transform cursor-pointer ${
+                        isPip ? 'text-blue-400 bg-blue-500/20' : ''
+                      }`}
+                      title={isPip ? 'Thoát Picture-in-Picture (P)' : 'Hình trong hình / Thu nhỏ (P)'}
+                      aria-label="Picture-in-Picture"
+                    >
+                      <PictureInPicture2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                  )}
+
                   <button
                     onClick={toggleFullscreen}
-                    className="text-white hover:text-blue-400 p-1"
+                    className="text-white hover:text-blue-400 p-1.5 rounded-lg active:scale-90 transition-transform cursor-pointer"
+                    title={isFullscreen ? 'Thoát toàn màn hình' : 'Toàn màn hình'}
                   >
-                    {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
+                    {isFullscreen ? (
+                      <Minimize className="w-4 h-4 sm:w-5 sm:h-5" />
+                    ) : (
+                      <Maximize className="w-4 h-4 sm:w-5 sm:h-5" />
+                    )}
                   </button>
                 </div>
               </div>
