@@ -290,24 +290,21 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
 
   // Presence heartbeat for real-time admin monitoring
   useEffect(() => {
-    presenceService.startHeartbeat({
+    presenceService.startSession({
       accountId: currentAccount?.id || currentAccount?.username || 'user',
       accountDisplayName: currentAccount?.displayName || currentAccount?.username || 'Độc Giả Manga',
       profileId: activeProfile?.id || 'manga_profile',
       profileName: activeProfile?.name || 'Độc Giả',
       profileAvatar: activeProfile?.avatar || '',
-      type: 'reading_manga',
+      type: 'manga',
       itemTitle: manga.title || 'Truyện tranh',
       itemSubtitle: currentChapter.title ? `Chương ${currentChapter.chapterNumber}: ${currentChapter.title}` : `Chương ${currentChapter.chapterNumber}`,
       itemCover: manga.coverUrl,
       apiSourceUsed: currentChapter.source || 'otruyen',
-      currentTime: currentPageIndex + 1,
-      duration: pages.length || 1,
-      progressPercent: Math.round(((currentPageIndex + 1) / (pages.length || 1)) * 100),
     });
 
     return () => {
-      presenceService.stopHeartbeat();
+      presenceService.stopSession();
     };
   }, [manga.title, currentChapter.chapterNumber, currentChapter.title, currentChapter.source, currentAccount, activeProfile]);
 
@@ -316,7 +313,14 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
     handleResetZoom();
     if (!isLoading && onChapterRead) {
       onChapterRead(currentChapter, currentPageIndex);
-      presenceService.updateProgress(currentPageIndex + 1, pages.length || 1);
+      // Update presence content
+      presenceService.updateContent({
+        type: 'manga',
+        itemTitle: manga.title || 'Truyện tranh',
+        itemSubtitle: currentChapter.title ? `Chương ${currentChapter.chapterNumber}: ${currentChapter.title}` : `Chương ${currentChapter.chapterNumber}`,
+        itemCover: manga.coverUrl,
+        apiSourceUsed: currentChapter.source || 'otruyen',
+      });
       // Persist current page index
       try {
         const scrollKey = `manga_reader_scroll_${manga.id}_${currentChapter.id}`;

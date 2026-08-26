@@ -12,7 +12,8 @@ import {
   increment,
   writeBatch,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, OperationType, sanitizeData } from './firebase';
+import { get, ref } from 'firebase/database';
+import { db, rtdb, handleFirestoreError, isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, OperationType, sanitizeData } from './firebase';
 import { UserActivityItem, UserStats, MediaActivityType, ActiveViewerSession, Account } from '../types';
 import { authService } from './authService';
 
@@ -307,14 +308,14 @@ class UserAnalyticsService {
       const [statsSnap, accounts, activeSessionsSnap] = await Promise.all([
         getDocs(query(collection(db, 'userStats'), limit(100))),
         authService.getAllAccounts(),
-        getDocs(query(collection(db, 'activeSessions'), limit(50))),
+        get(ref(rtdb, 'activeSessions')),
       ]);
 
       const now = Date.now();
       const onlineAccountIds = new Set<string>();
 
-      activeSessionsSnap.docs.forEach((d) => {
-        const data = d.data() as ActiveViewerSession;
+      activeSessionsSnap.forEach((child) => {
+        const data = child.val() as ActiveViewerSession;
         if (data && data.lastHeartbeat && now - data.lastHeartbeat < HEARTBEAT_EXPIRATION_MS) {
           onlineAccountIds.add(data.accountId);
         }

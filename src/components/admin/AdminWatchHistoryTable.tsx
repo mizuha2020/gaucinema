@@ -1,11 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { UserActivityItem, UserStats, MediaActivityType } from '../../types';
-import {
-  userAnalyticsService,
-  formatDurationText,
-  formatDateTimeExact,
-  formatRelativeTime,
-} from '../../services/userAnalyticsService';
+import { watchHistoryService } from '../../services/watchHistoryService';
+import { formatDurationText, formatDateTimeExact, formatRelativeTime } from '../../services/userAnalyticsService';
 import {
   Film,
   BookOpen,
@@ -51,8 +47,8 @@ export const AdminWatchHistoryTable: React.FC<AdminWatchHistoryTableProps> = ({
   const loadHistory = async () => {
     setIsLoading(true);
     try {
-      const items = await userAnalyticsService.getAllActivityHistory();
-      setHistoryItems(items);
+      const result = await watchHistoryService.getHistoryPaginated({ pageSize: 100 });
+      setHistoryItems(result.items);
     } catch (e) {
       console.warn('Failed to fetch history:', e);
     } finally {
@@ -62,10 +58,6 @@ export const AdminWatchHistoryTable: React.FC<AdminWatchHistoryTableProps> = ({
 
   useEffect(() => {
     loadHistory();
-    const unsubscribe = userAnalyticsService.subscribeActivityHistory((items) => {
-      setHistoryItems(items);
-    });
-    return () => unsubscribe();
   }, []);
 
   // Filter & Sort
@@ -127,7 +119,7 @@ export const AdminWatchHistoryTable: React.FC<AdminWatchHistoryTableProps> = ({
   const handleDeleteRecord = async (item: UserActivityItem) => {
     if (!window.confirm(`Xóa lịch sử "${item.title}" của ${item.accountDisplayName || item.accountId}?`)) return;
     try {
-      await userAnalyticsService.deleteActivityRecord(item.id);
+      await watchHistoryService.deleteRecord(item.id);
       onShowToast?.('Đã xóa bản ghi lịch sử');
       setHistoryItems((prev) => prev.filter((i) => i.id !== item.id));
     } catch (e: any) {

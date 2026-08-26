@@ -121,7 +121,7 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
 
   // Real-time presence heartbeat & watch history logging
   useEffect(() => {
-    presenceService.startHeartbeat({
+    presenceService.startSession({
       accountId: currentAccount?.id || currentAccount?.username || 'user',
       accountDisplayName: currentAccount?.displayName || currentAccount?.username || 'Khán Giả YouTube',
       profileId: activeProfile?.id || 'youtube_profile',
@@ -132,11 +132,10 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
       itemSubtitle: video.channelTitle ? `Kênh: ${video.channelTitle}` : undefined,
       itemCover: video.thumbnailUrl,
       apiSourceUsed: 'youtube',
-      progressPercent: 100,
     });
 
     return () => {
-      presenceService.stopHeartbeat();
+      presenceService.stopSession();
     };
   }, [video.id, video.title, video.channelTitle, currentAccount, activeProfile]);
 

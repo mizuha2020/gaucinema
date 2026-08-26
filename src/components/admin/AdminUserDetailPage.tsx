@@ -1,11 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { UserStats, UserActivityItem, MediaActivityType } from '../../types';
-import {
-  userAnalyticsService,
-  formatDurationText,
-  formatDateTimeExact,
-  formatRelativeTime,
-} from '../../services/userAnalyticsService';
+import { watchHistoryService } from '../../services/watchHistoryService';
+import { formatDurationText, formatDateTimeExact, formatRelativeTime } from '../../services/userAnalyticsService';
 import {
   ArrowLeft,
   Clock,
@@ -102,9 +98,9 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
   const fetchUserActivities = async () => {
     setIsLoading(true);
     try {
-      const items = await userAnalyticsService.getAllActivityHistory({
-        accountId: userStat.accountId,
-      });
+      console.log(`[AdminUserDetail] Fetching activities for: ${userStat.accountId}`);
+      const items = await watchHistoryService.getUserHistory(userStat.accountId, 100);
+      console.log(`[AdminUserDetail] Got ${items.length} activities`);
       setActivities(items);
     } catch (e) {
       console.warn('Failed to load user activities:', e);
@@ -122,7 +118,7 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
     if (!window.confirm(`Xóa mục lịch sử "${item.title}" của người dùng này?`)) return;
     setIsDeleting(item.id);
     try {
-      await userAnalyticsService.deleteActivityRecord(item.id);
+      await watchHistoryService.deleteRecord(item.id);
       onShowToast?.(`Đã xóa mục lịch sử "${item.title}"`);
       setActivities((prev) => prev.filter((a) => a.id !== item.id));
     } catch (e: any) {
@@ -252,12 +248,27 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
     return activities.slice(0, 5);
   }, [activities]);
 
-  // Filtered stats for summary
-  const movieSec = userStat.watchSecondsByMedia?.movie || 0;
-  const mangaSec = userStat.watchSecondsByMedia?.manga || 0;
-  const tvSec = userStat.watchSecondsByMedia?.livetv || 0;
-  const ytSec = userStat.watchSecondsByMedia?.youtube || 0;
-  const totalWatchSec = userStat.totalWatchSeconds || (movieSec + mangaSec + tvSec + ytSec) || 0;
+  // Helper: get effective duration from activity item
+  const getEffectiveDuration = (item: UserActivityItem): number => {
+    let sec = item.watchedDurationSeconds || 0;
+    if (sec === 0) {
+      if (item.currentTime && item.currentTime > 0) {
+        sec = item.currentTime;
+      } else if (item.progressPercent && item.duration && item.duration > 0) {
+        sec = Math.round((item.progressPercent / 100) * item.duration);
+      } else {
+        sec = 60;
+      }
+    }
+    return sec;
+  };
+
+  // Filtered stats for summary - calculated from activities, not from prop
+  const movieSec = useMemo(() => activities.filter(a => a.mediaType === 'movie').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
+  const mangaSec = useMemo(() => activities.filter(a => a.mediaType === 'manga').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
+  const tvSec = useMemo(() => activities.filter(a => a.mediaType === 'livetv').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
+  const ytSec = useMemo(() => activities.filter(a => a.mediaType === 'youtube').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
+  const totalWatchSec = movieSec + mangaSec + tvSec + ytSec;
 
   const moviePct = totalWatchSec > 0 ? Math.round((movieSec / totalWatchSec) * 100) : 0;
   const mangaPct = totalWatchSec > 0 ? Math.round((mangaSec / totalWatchSec) * 100) : 0;
@@ -298,7 +309,7 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
       const dd = String(d.getDate()).padStart(2, '0');
       const key = `${yyyy}-${mm}-${dd}`;
 
-      const durSec = item.watchedDurationSeconds || 60;
+      const durSec = getEffectiveDuration(item);
       const cur = daysMap.get(key);
       if (cur) {
         cur.watchMinutes += Math.round(durSec / 60);
@@ -345,7 +356,7 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
         const m = d.getMonth();
         const cur = monthsMap.get(m);
         if (cur) {
-          cur.watchHours += Number(((item.watchedDurationSeconds || 60) / 3600).toFixed(2));
+          cur.watchHours += Number(((getEffectiveDuration(item)) / 3600).toFixed(2));
           cur.itemsCount += 1;
         }
       }

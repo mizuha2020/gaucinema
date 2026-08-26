@@ -795,12 +795,12 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     }
 
     if (activeChannel) {
-      presenceService.startHeartbeat({
+      presenceService.startSession({
         accountId: currentAccount?.id || currentAccount?.username || 'user',
         accountDisplayName: currentAccount?.displayName || 'Khách LiveTV',
         profileId: 'tv_profile',
         profileName: currentAccount?.displayName || 'Người xem TV',
-        type: 'watching_tv',
+        type: 'livetv',
         itemTitle: activeChannel.name,
         itemSubtitle: activeChannel.group || 'Kênh LiveTV',
         itemCover: activeChannel.logo,
@@ -809,7 +809,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     }
 
     return () => {
-      presenceService.stopHeartbeat();
+      presenceService.stopSession();
       if (video) {
         try {
           video.pause();

@@ -1,12 +1,10 @@
 {
-  "projectId": "calm-gravity-31ttq",
-  "appId": "1:533113334886:web:053029e6ae36b02d57d1a7",
-  "apiKey": "AIzaSyD9xPIxrY5rmQo9o8F1BQGUYAcoQg8NYh0",
-  "authDomain": "calm-gravity-31ttq.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-qtbrpphimcnhn-e228ee20-957f-4edc-8547-1a92e9df2d7f",
-  "storageBucket": "calm-gravity-31ttq.firebasestorage.app",
-  "messagingSenderId": "533113334886",
-  "measurementId": "",
-  "oAuthClientId": "533113334886-tu5lr1b410unleuctpdllhqq7o58etuq.apps.googleusercontent.com",
-  "recaptchaSiteKey": ""
+  "projectId": "gaucinema",
+  "appId": "1:198260052869:web:2902a613bfdfd253dbeaec",
+  "apiKey": "AIzaSyCOyglmE8dXUwGwLQMFe9PSnyrxXudEM-Q",
+  "authDomain": "gaucinema.firebaseapp.com",
+  "databaseURL": "https://gaucinema-default-rtdb.asia-southeast1.firebasedatabase.app",
+  "storageBucket": "gaucinema.firebasestorage.app",
+  "messagingSenderId": "198260052869",
+  "measurementId": "G-E77DCGGNKV"
 }

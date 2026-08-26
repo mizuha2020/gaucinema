@@ -1,11 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserStats, UserActivityItem } from '../../types';
-import {
-  userAnalyticsService,
-  formatDurationText,
-  formatDateTimeExact,
-  formatRelativeTime,
-} from '../../services/userAnalyticsService';
+import { watchHistoryService } from '../../services/watchHistoryService';
+import { formatDurationText, formatDateTimeExact, formatRelativeTime } from '../../services/userAnalyticsService';
 import {
   X,
   User,
@@ -44,11 +40,7 @@ export const AdminUserDetailModal: React.FC<AdminUserDetailModalProps> = ({
   const fetchUserActivities = async () => {
     setIsLoading(true);
     try {
-      const items = await userAnalyticsService.getAllActivityHistory({
-        accountId: userStat.accountId,
-        mediaType: filterType,
-        search: searchKeyword,
-      });
+      const items = await watchHistoryService.getUserHistory(userStat.accountId, 100);
       setActivities(items);
     } catch (e) {
       console.warn('Failed to load user activities:', e);
@@ -65,7 +57,7 @@ export const AdminUserDetailModal: React.FC<AdminUserDetailModalProps> = ({
     if (!window.confirm(`Xóa lịch sử "${item.title}" của người dùng này?`)) return;
     setIsDeleting(item.id);
     try {
-      await userAnalyticsService.deleteActivityRecord(item.id);
+      await watchHistoryService.deleteRecord(item.id);
       onShowToast?.(`Đã xóa mục lịch sử "${item.title}"`);
       setActivities((prev) => prev.filter((a) => a.id !== item.id));
     } catch (e: any) {

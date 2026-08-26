@@ -1,283 +1,215 @@
 import {
-  collection,
-  doc,
-  getDocs,
-  setDoc,
-  deleteDoc,
-  onSnapshot,
-} from 'firebase/firestore';
-import { db, handleFirestoreError, isFirestoreQuotaExhausted, markFirestoreQuotaExhausted, OperationType, sanitizeData } from './firebase';
+  get,
+  onValue,
+  ref,
+  remove,
+  set,
+  update,
+} from 'firebase/database';
+import { rtdb, sanitizeData } from './firebase';
 import { ActiveViewerSession, MediaActivityType } from '../types';
-import { userAnalyticsService } from './userAnalyticsService';
 
-const HEARTBEAT_EXPIRATION_MS = 90 * 1000; // 90 seconds timeout for active viewers
+const HEARTBEAT_EXPIRATION_MS = 90 * 1000;
+const SESSIONS_PATH = 'activeSessions';
+const HEARTBEAT_INTERVAL_MS = 30 * 1000; // 30 giây
+
+// Map MediaActivityType to ActiveViewerSession type
+function mapToSessionType(mediaType: MediaActivityType): ActiveViewerSession['type'] {
+  switch (mediaType) {
+    case 'movie': return 'watching_movie';
+    case 'manga': return 'reading_manga';
+    case 'livetv': return 'watching_tv';
+    case 'youtube': return 'browsing';
+    case 'browsing': return 'browsing';
+    default: return 'browsing';
+  }
+}
+
+interface PresenceSession {
+  sessionId: string;
+  accountId: string;
+  accountDisplayName: string;
+  profileId: string;
+  profileName: string;
+  profileAvatar: string;
+  type: MediaActivityType;
+  itemTitle: string;
+  itemSubtitle: string;
+  itemCover: string;
+  apiSourceUsed: string;
+  lastHeartbeat: number;
+  deviceInfo: string;
+}
 
 class PresenceService {
   private currentSessionId: string | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
-  private lastSentData: Partial<ActiveViewerSession> | null = null;
-  private lastPingTimestamp: number = 0;
+  private lastSentData: Partial<PresenceSession> | null = null;
 
   /**
-   * Start or update real-time viewing/reading heartbeat
+   * Bắt đầu presence session
    */
-  startHeartbeat(session: Omit<ActiveViewerSession, 'sessionId' | 'lastHeartbeat'>): void {
-    if (isFirestoreQuotaExhausted()) {
-      return;
-    }
-    const sessionId = `${session.accountId}_${session.profileId}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+  startSession(data: {
+    accountId: string;
+    accountDisplayName: string;
+    profileId: string;
+    profileName: string;
+    profileAvatar?: string;
+    type: MediaActivityType;
+    itemTitle: string;
+    itemSubtitle?: string;
+    itemCover?: string;
+    apiSourceUsed?: string;
+  }): void {
+    const sessionId = `${data.accountId}_${data.profileId}`.replace(/[^a-zA-Z0-9_-]/g, '_');
     this.currentSessionId = sessionId;
-    this.lastSentData = session;
-    this.lastPingTimestamp = Date.now();
+    this.lastSentData = {
+      sessionId,
+      accountId: data.accountId,
+      accountDisplayName: data.accountDisplayName,
+      profileId: data.profileId,
+      profileName: data.profileName,
+      profileAvatar: data.profileAvatar || '',
+      type: data.type,
+      itemTitle: data.itemTitle,
+      itemSubtitle: data.itemSubtitle || '',
+      itemCover: data.itemCover || '',
+      apiSourceUsed: data.apiSourceUsed || '',
+      lastHeartbeat: Date.now(),
+      deviceInfo: typeof window !== 'undefined' && window.innerWidth < 768 ? 'Mobile' : 'Desktop / Web',
+    };
 
-    // Send initial ping immediately
-    this.sendPing(sessionId, session, 5);
-
-    // Clear existing timer if any
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-    }
-
-    // Schedule regular heartbeat every 45 seconds (optimized for Firestore quota preservation)
-    this.heartbeatTimer = setInterval(() => {
-      if (isFirestoreQuotaExhausted()) {
-        if (this.heartbeatTimer) {
-          clearInterval(this.heartbeatTimer);
-          this.heartbeatTimer = null;
-        }
-        return;
-      }
-      if (this.currentSessionId && this.lastSentData) {
-        const now = Date.now();
-        const elapsedSeconds = this.lastPingTimestamp > 0 ? Math.round((now - this.lastPingTimestamp) / 1000) : 45;
-        this.lastPingTimestamp = now;
-        this.sendPing(this.currentSessionId, this.lastSentData, elapsedSeconds);
-      }
-    }, 45000);
+    this.sendPing();
+    this.startHeartbeatTimer();
   }
 
   /**
-   * Update current playback/progress without resetting heartbeat timer
+   * Cập nhật nội dung đang xem (khi switch tập, thay đổi)
    */
-  updateProgress(currentTime?: number, duration?: number, progressPercent?: number): void {
-    if (this.currentSessionId && this.lastSentData) {
-      this.lastSentData = {
-        ...this.lastSentData,
-        currentTime,
-        duration,
-        progressPercent,
-      };
-      this.sendPing(this.currentSessionId, this.lastSentData, 0);
-    }
+  updateContent(data: {
+    type: MediaActivityType;
+    itemTitle: string;
+    itemSubtitle?: string;
+    itemCover?: string;
+    apiSourceUsed?: string;
+  }): void {
+    if (!this.currentSessionId) return;
+
+    this.lastSentData = {
+      ...this.lastSentData,
+      type: data.type,
+      itemTitle: data.itemTitle,
+      itemSubtitle: data.itemSubtitle || '',
+      itemCover: data.itemCover || '',
+      apiSourceUsed: data.apiSourceUsed || '',
+      lastHeartbeat: Date.now(),
+    };
+
+    this.sendPing();
   }
 
   /**
-   * Stop heartbeat and remove session from active list
+   * Dừng session và xóa khỏi RTDB
    */
-  stopHeartbeat(): void {
+  stopSession(): void {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
 
     if (this.currentSessionId) {
-      const docRef = doc(db, 'activeSessions', this.currentSessionId);
-      deleteDoc(docRef).catch(() => {});
+      remove(ref(rtdb, `${SESSIONS_PATH}/${this.currentSessionId}`)).catch(() => {});
       this.currentSessionId = null;
       this.lastSentData = null;
-      this.lastPingTimestamp = 0;
-    }
-  }
-
-  private async sendPing(sessionId: string, sessionData: Partial<ActiveViewerSession>, secondsElapsed: number = 20): Promise<void> {
-    if (isFirestoreQuotaExhausted()) {
-      if (this.heartbeatTimer) {
-        clearInterval(this.heartbeatTimer);
-        this.heartbeatTimer = null;
-      }
-      return;
-    }
-
-    try {
-      const fullSession: ActiveViewerSession = {
-        sessionId,
-        accountId: sessionData.accountId || 'anonymous',
-        accountDisplayName: sessionData.accountDisplayName || 'Khách',
-        profileId: sessionData.profileId || 'default',
-        profileName: sessionData.profileName || 'Người xem',
-        profileAvatar: sessionData.profileAvatar || '',
-        type: sessionData.type || 'browsing',
-        itemTitle: sessionData.itemTitle || 'Đang duyệt ứng dụng',
-        itemSubtitle: sessionData.itemSubtitle || '',
-        itemCover: sessionData.itemCover || '',
-        apiSourceUsed: sessionData.apiSourceUsed || '',
-        progressPercent: sessionData.progressPercent ?? 0,
-        currentTime: sessionData.currentTime,
-        duration: sessionData.duration,
-        deviceInfo: typeof window !== 'undefined' && window.innerWidth < 768 ? 'Mobile' : 'Desktop / Web',
-        lastHeartbeat: Date.now(),
-      };
-
-      const docRef = doc(db, 'activeSessions', sessionId);
-      await setDoc(docRef, sanitizeData(fullSession), { merge: true });
-
-      // Record to persistent Analytics & History
-      if (secondsElapsed > 0 && sessionData.accountId) {
-        let mediaType: MediaActivityType = 'browsing';
-        let isActivelyPlaying = false;
-
-        if (sessionData.type === 'watching_movie') {
-          mediaType = 'movie';
-          isActivelyPlaying = true;
-        } else if (sessionData.type === 'reading_manga') {
-          mediaType = 'manga';
-          isActivelyPlaying = true;
-        } else if (sessionData.type === 'watching_tv') {
-          mediaType = 'livetv';
-          isActivelyPlaying = true;
-        }
-
-        userAnalyticsService.recordActivityHeartbeat({
-          accountId: sessionData.accountId,
-          accountDisplayName: sessionData.accountDisplayName,
-          profileId: sessionData.profileId,
-          profileName: sessionData.profileName,
-          profileAvatar: sessionData.profileAvatar,
-          mediaType,
-          contentId: sessionData.itemTitle,
-          title: sessionData.itemTitle,
-          subtitle: sessionData.itemSubtitle,
-          coverUrl: sessionData.itemCover,
-          apiSource: sessionData.apiSourceUsed,
-          currentTime: sessionData.currentTime,
-          duration: sessionData.duration,
-          progressPercent: sessionData.progressPercent,
-          isActivelyPlaying,
-          secondsElapsed,
-        }).catch((err) => console.warn('Analytics heartbeat recording warning:', err));
-      }
-    } catch (e: any) {
-      if (e?.code === 'resource-exhausted' || String(e).includes('Quota limit exceeded')) {
-        markFirestoreQuotaExhausted();
-        if (this.heartbeatTimer) {
-          clearInterval(this.heartbeatTimer);
-          this.heartbeatTimer = null;
-        }
-      }
-      console.warn('Presence heartbeat ping warning:', e);
     }
   }
 
   /**
-   * Fetch currently active sessions from Firestore (filtered by expiration)
+   * Gửi heartbeat ping
    */
-  async getActiveSessions(): Promise<{
-    sessions: ActiveViewerSession[];
-    stats: {
-      total: number;
-      movies: number;
-      manga: number;
-      tv: number;
-      browsing: number;
+  private sendPing(): void {
+    if (!this.currentSessionId || !this.lastSentData) return;
+
+    const sessionData: PresenceSession = {
+      sessionId: this.lastSentData.sessionId || this.currentSessionId,
+      accountId: this.lastSentData.accountId || 'anonymous',
+      accountDisplayName: this.lastSentData.accountDisplayName || 'Khách',
+      profileId: this.lastSentData.profileId || 'default',
+      profileName: this.lastSentData.profileName || 'Người xem',
+      profileAvatar: this.lastSentData.profileAvatar || '',
+      type: this.lastSentData.type || 'browsing',
+      itemTitle: this.lastSentData.itemTitle || 'Đang duyệt',
+      itemSubtitle: this.lastSentData.itemSubtitle || '',
+      itemCover: this.lastSentData.itemCover || '',
+      apiSourceUsed: this.lastSentData.apiSourceUsed || '',
+      lastHeartbeat: Date.now(),
+      deviceInfo: this.lastSentData.deviceInfo || 'Desktop / Web',
     };
-  }> {
-    if (isFirestoreQuotaExhausted()) {
-      return {
-        sessions: [],
-        stats: { total: 0, movies: 0, manga: 0, tv: 0, browsing: 0 },
-      };
-    }
-    try {
-      const colRef = collection(db, 'activeSessions');
-      const snap = await getDocs(colRef);
-      const now = Date.now();
 
-      const activeList: ActiveViewerSession[] = [];
-      snap.docs.forEach((d) => {
-        const data = d.data() as ActiveViewerSession;
-        if (data && data.lastHeartbeat && now - data.lastHeartbeat < HEARTBEAT_EXPIRATION_MS) {
-          activeList.push(data);
-        }
-      });
-
-      // Sort by newest activity first
-      activeList.sort((a, b) => b.lastHeartbeat - a.lastHeartbeat);
-
-      return {
-        sessions: activeList,
-        stats: {
-          total: activeList.length,
-          movies: activeList.filter((s) => s.type === 'watching_movie').length,
-          manga: activeList.filter((s) => s.type === 'reading_manga').length,
-          tv: activeList.filter((s) => s.type === 'watching_tv').length,
-          browsing: activeList.filter((s) => s.type === 'browsing').length,
-        },
-      };
-    } catch (e) {
-      console.warn('Failed to fetch active viewer sessions:', e);
-      return {
-        sessions: [],
-        stats: { total: 0, movies: 0, manga: 0, tv: 0, browsing: 0 },
-      };
-    }
+    set(ref(rtdb, `${SESSIONS_PATH}/${this.currentSessionId}`), sanitizeData(sessionData)).catch(() => {});
   }
 
   /**
-   * Subscribe to real-time viewer presence updates via Firestore onSnapshot
+   * Bắt đầu heartbeat timer
    */
-  subscribeActiveSessions(
-    callback: (data: {
-      sessions: ActiveViewerSession[];
-      stats: {
-        total: number;
-        movies: number;
-        manga: number;
-        tv: number;
-        browsing: number;
-      };
-    }) => void
-  ): () => void {
-    if (isFirestoreQuotaExhausted()) {
-      callback({
-        sessions: [],
-        stats: { total: 0, movies: 0, manga: 0, tv: 0, browsing: 0 },
-      });
-      return () => {};
+  private startHeartbeatTimer(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
     }
-    const colRef = collection(db, 'activeSessions');
-    
-    const unsubscribe = onSnapshot(
-      colRef,
+
+    this.heartbeatTimer = setInterval(() => {
+      this.sendPing();
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  /**
+   * Subscribe to real-time active sessions
+   */
+  subscribeSessions(callback: (sessions: ActiveViewerSession[]) => void): () => void {
+    const sessionsRef = ref(rtdb, SESSIONS_PATH);
+
+    const unsubscribe = onValue(
+      sessionsRef,
       (snapshot) => {
         const now = Date.now();
-        const activeList: ActiveViewerSession[] = [];
+        const activeSessions: ActiveViewerSession[] = [];
 
-        snapshot.docs.forEach((d) => {
-          const data = d.data() as ActiveViewerSession;
-          if (data && data.lastHeartbeat && now - data.lastHeartbeat < HEARTBEAT_EXPIRATION_MS) {
-            activeList.push(data);
+        snapshot.forEach((child) => {
+          const data = child.val() as PresenceSession;
+          if (data && data.lastHeartbeat && (now - data.lastHeartbeat) < HEARTBEAT_EXPIRATION_MS) {
+            activeSessions.push({
+              sessionId: data.sessionId,
+              accountId: data.accountId,
+              accountDisplayName: data.accountDisplayName,
+              profileId: data.profileId,
+              profileName: data.profileName,
+              profileAvatar: data.profileAvatar,
+              type: mapToSessionType(data.type),
+              itemTitle: data.itemTitle,
+              itemSubtitle: data.itemSubtitle,
+              itemCover: data.itemCover,
+              apiSourceUsed: data.apiSourceUsed,
+              lastHeartbeat: data.lastHeartbeat,
+              deviceInfo: data.deviceInfo,
+            });
           }
         });
 
-        activeList.sort((a, b) => b.lastHeartbeat - a.lastHeartbeat);
-
-        callback({
-          sessions: activeList,
-          stats: {
-            total: activeList.length,
-            movies: activeList.filter((s) => s.type === 'watching_movie').length,
-            manga: activeList.filter((s) => s.type === 'reading_manga').length,
-            tv: activeList.filter((s) => s.type === 'watching_tv').length,
-            browsing: activeList.filter((s) => s.type === 'browsing').length,
-          },
-        });
+        callback(activeSessions.sort((a, b) => b.lastHeartbeat - a.lastHeartbeat));
       },
       (error) => {
-        handleFirestoreError(error, OperationType.GET, 'activeSessions');
+        console.warn('Failed to subscribe to sessions:', error);
       }
     );
 
     return unsubscribe;
+  }
+
+  /**
+   * Get current session ID
+   */
+  getCurrentSessionId(): string | null {
+    return this.currentSessionId;
   }
 }
 

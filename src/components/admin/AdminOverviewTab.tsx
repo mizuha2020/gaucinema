@@ -2,12 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { ActiveViewerSession, SystemApiEndpoint, UserStats } from '../../types';
 import { presenceService } from '../../services/presenceService';
 import { systemApiService } from '../../services/systemApiService';
-import {
-  userAnalyticsService,
-  formatDurationText,
-  formatDateTimeExact,
-  formatRelativeTime,
-} from '../../services/userAnalyticsService';
+import { watchHistoryService } from '../../services/watchHistoryService';
+import { formatDurationText, formatDateTimeExact, formatRelativeTime } from '../../services/userAnalyticsService';
 import { AdminUserStatsTab } from './AdminUserStatsTab';
 import { AdminWatchHistoryTable } from './AdminWatchHistoryTable';
 import { AdminUserDetailPage } from './AdminUserDetailPage';
@@ -94,11 +90,75 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
     };
   }, [selectedUserForDetail]);
 
-  const fetchUserStats = async () => {
+  const fetchUserStats = async (currentSessions?: ActiveViewerSession[]) => {
     setIsLoadingStats(true);
     try {
-      const stats = await userAnalyticsService.getAllUserStats();
-      setUserStats(stats);
+      // Use provided sessions or current state
+      const sessions = currentSessions || activeSessions;
+      const activeSessionIds = new Set(sessions.map(s => s.accountId));
+
+      const historyResult = await watchHistoryService.getHistoryPaginated({ pageSize: 100 });
+      // Group by account and calculate stats
+      const statsMap = new Map<string, UserStats>();
+      historyResult.items.forEach(item => {
+        // Fallback: calculate duration from currentTime if watchedDurationSeconds is 0
+        let watchSec = item.watchedDurationSeconds || 0;
+        if (watchSec === 0) {
+          // Estimate from currentTime or progressPercent * duration
+          if (item.currentTime && item.currentTime > 0) {
+            watchSec = item.currentTime;
+          } else if (item.progressPercent && item.duration && item.duration > 0) {
+            watchSec = Math.round((item.progressPercent / 100) * item.duration);
+          } else {
+            watchSec = 60; // Default 1 minute if no data
+          }
+        }
+
+        const existing = statsMap.get(item.accountId) || {
+          accountId: item.accountId,
+          accountDisplayName: item.accountDisplayName,
+          totalOnlineSeconds: 0,
+          totalWatchSeconds: 0,
+          watchSecondsByMedia: { movie: 0, manga: 0, livetv: 0, youtube: 0 },
+          totalSessions: 1,
+          firstSeenAt: item.firstStartedAt,
+          lastActiveAt: item.lastWatchedAt,
+          isOnline: false,
+        };
+        existing.totalWatchSeconds += watchSec;
+        existing.watchSecondsByMedia[item.mediaType] += watchSec;
+        existing.lastActiveAt = Math.max(existing.lastActiveAt, item.lastWatchedAt);
+        existing.totalOnlineSeconds = existing.totalWatchSeconds;
+        statsMap.set(item.accountId, existing);
+      });
+
+      // Mark online status from active sessions
+      const result = Array.from(statsMap.values());
+      result.forEach(stat => {
+        stat.isOnline = activeSessionIds.has(stat.accountId);
+        if (stat.isOnline && stat.totalOnlineSeconds === 0) {
+          stat.totalOnlineSeconds = 30;
+        }
+      });
+
+      // Add users who are online but have no history yet
+      sessions.forEach(session => {
+        if (!statsMap.has(session.accountId)) {
+          result.push({
+            accountId: session.accountId,
+            accountDisplayName: session.accountDisplayName || session.accountId,
+            totalOnlineSeconds: 30,
+            totalWatchSeconds: 0,
+            watchSecondsByMedia: { movie: 0, manga: 0, livetv: 0, youtube: 0 },
+            totalSessions: 1,
+            firstSeenAt: Date.now(),
+            lastActiveAt: session.lastHeartbeat,
+            isOnline: true,
+          });
+        }
+      });
+
+      setUserStats(result);
     } catch (e) {
       console.warn('Failed to load user stats:', e);
     } finally {
@@ -108,8 +168,10 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
 
   useEffect(() => {
     // 1. Subscribe to real-time active sessions
-    const unsubscribeSessions = presenceService.subscribeActiveSessions((data) => {
-      setActiveSessions(data.sessions);
+    const unsubscribeSessions = presenceService.subscribeSessions((sessions) => {
+      setActiveSessions(sessions);
+      // Refresh stats when sessions change (user online/offline)
+      fetchUserStats(sessions);
     });
 
     // 2. Subscribe to dynamic API endpoints
@@ -117,18 +179,12 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
       setApis(apiList);
     });
 
-    // 3. Subscribe to user stats
-    const unsubscribeStats = userAnalyticsService.subscribeUserStats((stats) => {
-      setUserStats(stats);
-      setIsLoadingStats(false);
-    });
-
+    // Initial load
     fetchUserStats();
 
     return () => {
       unsubscribeSessions();
       unsubscribeApis();
-      unsubscribeStats();
     };
   }, []);
 

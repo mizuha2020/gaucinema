@@ -422,7 +422,7 @@ export default function App() {
   useEffect(() => {
     if (!currentAccount || playingMovie || showProfileSelector || showAdminDashboard) return;
 
-    presenceService.startHeartbeat({
+    presenceService.startSession({
       accountId: currentAccount.id || currentAccount.username,
       accountDisplayName: currentAccount.displayName || currentAccount.username,
       profileId: activeProfile?.id || 'default',
@@ -434,7 +434,7 @@ export default function App() {
     });
 
     return () => {
-      // Clean up browsing heartbeat when unmounting
+      presenceService.stopSession();
     };
   }, [currentAccount, activeProfile, activeTab, playingMovie, showProfileSelector, showAdminDashboard]);
 

@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { EpisodeServer, Movie, MovieEpisode, Account, UserProfile } from '../types';
 import { presenceService } from '../services/presenceService';
+import { watchHistoryService } from '../services/watchHistoryService';
 import { enterNativePip, setNativeVideoPlaying, checkNativePipSupported } from '../utils/nativeVideoPlayer';
 import { Capacitor } from '@capacitor/core';
 
@@ -86,6 +87,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
   const hlsRef = useRef<Hls | null>(null);
   const controlsTimeout = useRef<NodeJS.Timeout | null>(null);
   const saveInterval = useRef<NodeJS.Timeout | null>(null);
+  const lastSavedTimeRef = useRef<number>(0);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -630,34 +632,52 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
   }, [currentEpisode.link_m3u8, useEmbed, allServers, currentServer, initialTime, onSelectEpisode]);
 
   useEffect(() => {
-    presenceService.startHeartbeat({
+    presenceService.startSession({
       accountId: currentAccount?.id || currentAccount?.username || 'user',
       accountDisplayName: currentAccount?.displayName || currentAccount?.username || 'Khán Giả Phim',
       profileId: activeProfile?.id || 'movie_profile',
       profileName: activeProfile?.name || 'Người xem',
       profileAvatar: activeProfile?.avatar || '',
-      type: 'watching_movie',
+      type: 'movie',
       itemTitle: movie.name,
       itemSubtitle: currentEpisode.name ? `Tập ${currentEpisode.name}` : undefined,
       itemCover: movie.poster_url || movie.thumb_url,
       apiSourceUsed: currentServer.server_name || 'movie',
-      duration: duration || 0,
-      currentTime: initialTime || 0,
     });
 
     return () => {
-      presenceService.stopHeartbeat();
+      presenceService.stopSession();
     };
   }, [movie.name, currentEpisode.name, currentServer.server_name, currentAccount, activeProfile]);
 
   useEffect(() => {
+    lastSavedTimeRef.current = 0;
     saveInterval.current = setInterval(() => {
-      if (videoRef.current && duration > 0) {
-        const cur = videoRef.current.currentTime;
-        onSaveProgress(cur, duration);
-        presenceService.updateProgress(cur, duration);
-      }
-    }, 5000);
+      const video = videoRef.current;
+      if (!video || duration <= 0) return;
+      if (video.paused) return;
+      const cur = video.currentTime;
+      if (lastSavedTimeRef.current > 0 && cur - lastSavedTimeRef.current < 15) return;
+      lastSavedTimeRef.current = cur;
+      onSaveProgress(cur, duration);
+      watchHistoryService.recordWatch({
+        accountId: currentAccount?.id || currentAccount?.username || 'user',
+        accountDisplayName: currentAccount?.displayName || currentAccount?.username || 'Khán Giả Phim',
+        profileId: activeProfile?.id || 'movie_profile',
+        profileName: activeProfile?.name || 'Người xem',
+        profileAvatar: activeProfile?.avatar || '',
+        mediaType: 'movie',
+        contentId: movie.slug || movie._id || movie.id || '',
+        title: movie.name,
+        subtitle: currentEpisode.name ? `Tập ${currentEpisode.name}` : undefined,
+        coverUrl: movie.poster_url || movie.thumb_url,
+        apiSource: currentServer.server_name || 'movie',
+        currentTime: cur,
+        duration: duration,
+        progressPercent: Math.round((cur / duration) * 100),
+        watchedDurationSeconds: 30,
+      });
+    }, 30000);
     return () => {
       if (saveInterval.current) clearInterval(saveInterval.current);
     };

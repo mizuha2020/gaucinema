@@ -1,22 +1,26 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { getDatabase } from 'firebase/database';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 let app: any;
 let dbInstance: any;
 let authInstance: any;
+let rtdbInstance: any;
 
 try {
   app = initializeApp(firebaseConfig);
-  dbInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)');
+  dbInstance = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId || '(default)');
   authInstance = getAuth(app);
+  rtdbInstance = getDatabase(app);
 } catch (e) {
   console.error('Firebase initialization error, falling back:', e);
   try {
     app = initializeApp(firebaseConfig);
     dbInstance = getFirestore(app);
     authInstance = getAuth(app);
+    rtdbInstance = getDatabase(app);
   } catch (e2) {
     console.error('Firebase fallback initialization failed:', e2);
   }
@@ -24,6 +28,7 @@ try {
 
 export const db = dbInstance;
 export const auth = authInstance;
+export const rtdb = rtdbInstance;
 
 export enum OperationType {
   CREATE = 'create',
