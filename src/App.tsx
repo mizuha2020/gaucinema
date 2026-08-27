@@ -9,11 +9,13 @@ import {
   UserProfile,
   WatchHistoryItem,
   ActiveApp,
+  RoomListItem,
 } from './types';
 import { authService } from './services/authService';
 import { firestoreStorage } from './services/firestoreStorage';
 import { movieApi } from './services/movieApi';
 import { presenceService } from './services/presenceService';
+import { appConfigService } from './services/appConfigService';
 import { LoginScreen } from './components/LoginScreen';
 import { AdminDashboard } from './components/AdminDashboard';
 import { Navbar } from './components/Navbar';
@@ -35,6 +37,9 @@ import { YouTubeAppWrapper } from './apps/YouTubeAppWrapper';
 import { AppSwitcherLoading } from './components/AppSwitcherLoading';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { NotificationTickerBanner } from './components/NotificationTickerBanner';
+import { WatchTogetherRoom } from './components/watch-together/WatchTogetherRoom';
+import { JoinRoomModal } from './components/watch-together/JoinRoomModal';
+import { watchTogetherService } from './services/watchTogetherService';
 import { App as CapApp } from '@capacitor/app';
 import {
   Sparkles,
@@ -49,6 +54,9 @@ import {
   CheckCircle2,
   Info,
   Lock,
+  AlertTriangle,
+  Users,
+  Loader2,
 } from 'lucide-react';
 
 export default function App() {
@@ -97,6 +105,69 @@ export default function App() {
     setIsSwitchingApp(false);
   };
 
+  // App Config State (real-time from RTDB)
+  const [appConfig, setAppConfig] = useState<Record<string, { enabled: boolean }>>({});
+
+  useEffect(() => {
+    const unsub = appConfigService.subscribe((cfg) => {
+      setAppConfig(cfg);
+    });
+    return unsub;
+  }, []);
+
+  // Auto-redirect when active app is disabled by admin
+  const maintenanceTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [maintenanceMessage, setMaintenanceMessage] = useState<string | null>(null);
+  const [maintenanceCountdown, setMaintenanceCountdown] = useState<number>(0);
+
+  useEffect(() => {
+    if (!appConfig || activeApp === 'cinema' || showAdminDashboard) {
+      setMaintenanceMessage(null);
+      setMaintenanceCountdown(0);
+      if (maintenanceTimerRef.current) {
+        clearTimeout(maintenanceTimerRef.current);
+        maintenanceTimerRef.current = null;
+      }
+      return;
+    }
+
+    const appState = appConfig[activeApp];
+    if (appState && !appState.enabled) {
+      const label = activeApp === 'manga' ? 'Gấu Manga' : activeApp === 'livetv' ? 'Gấu LiveTV' : activeApp === 'youtube' ? 'Gấu YouTube' : activeApp;
+      setMaintenanceMessage(`${label} đang được bảo trì. Bạn sẽ được chuyển về Cinema sau 5 phút.`);
+      setMaintenanceCountdown(300);
+
+      const startTime = Date.now();
+      maintenanceTimerRef.current = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const remaining = 300 - elapsed;
+        if (remaining <= 0) {
+          if (maintenanceTimerRef.current) clearInterval(maintenanceTimerRef.current);
+          maintenanceTimerRef.current = null;
+          setMaintenanceMessage(null);
+          setMaintenanceCountdown(0);
+          handleSwitchApp('cinema');
+        } else {
+          setMaintenanceCountdown(remaining);
+        }
+      }, 1000);
+
+      return () => {
+        if (maintenanceTimerRef.current) {
+          clearInterval(maintenanceTimerRef.current);
+          maintenanceTimerRef.current = null;
+        }
+      };
+    } else {
+      setMaintenanceMessage(null);
+      setMaintenanceCountdown(0);
+      if (maintenanceTimerRef.current) {
+        clearTimeout(maintenanceTimerRef.current);
+        maintenanceTimerRef.current = null;
+      }
+    }
+  }, [appConfig, activeApp, showAdminDashboard]);
+
 
   // Profiles State per logged-in account
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
@@ -110,7 +181,7 @@ export default function App() {
       const savedTab = localStorage.getItem('gau_active_tab');
       const validTabs: NavTab[] = [
         'home', 'series', 'single', 'cinema', 'anime',
-        'tv-shows', 'manga', 'filter', 'my-list', 'history', 'tv-live'
+        'tv-shows', 'manga', 'filter', 'my-list', 'history', 'tv-live', 'xem-chung'
       ];
       if (savedTab && validTabs.includes(savedTab as NavTab)) {
         return savedTab as NavTab;
@@ -156,6 +227,13 @@ export default function App() {
   const [playingServer, setPlayingServer] = useState<EpisodeServer | null>(null);
   const [allServers, setAllServers] = useState<EpisodeServer[]>([]);
   const [initialResumeTime, setInitialResumeTime] = useState<number>(0);
+
+  // Watch Together State
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
+  const [activeRoomData, setActiveRoomData] = useState<any>(null);
+  const [activeRoomsForFilm, setActiveRoomsForFilm] = useState<RoomListItem[]>([]);
+  const [allActiveRooms, setAllActiveRooms] = useState<RoomListItem[]>([]);
+  const [joinRoomTarget, setJoinRoomTarget] = useState<RoomListItem | null>(null);
 
   // User Profile Data (My List & History scoped to activeProfile)
   const [myList, setMyList] = useState<MyListItem[]>([]);
@@ -239,6 +317,112 @@ export default function App() {
   useEffect(() => {
     refreshProfileData();
   }, [refreshProfileData]);
+
+  // Watch Together - Subscribe to active room data
+  useEffect(() => {
+    if (!activeRoomId) {
+      setActiveRoomData(null);
+      return;
+    }
+    const unsub = watchTogetherService.subscribeRoom(activeRoomId, (room) => {
+      if (!room || room.status === 'closed') {
+        setActiveRoomId(null);
+        setActiveRoomData(null);
+        watchTogetherService.leaveRoom(currentAccount?.id || '').catch(() => {});
+      } else {
+        setActiveRoomData(room);
+      }
+    });
+    return () => unsub();
+  }, [activeRoomId, currentAccount?.id]);
+
+  // Watch Together - Subscribe to rooms for current film in detail
+  useEffect(() => {
+    if (!selectedMovieForDetail) {
+      setActiveRoomsForFilm([]);
+      return;
+    }
+    const unsub = watchTogetherService.subscribeActiveRooms(selectedMovieForDetail.slug, setActiveRoomsForFilm);
+    return () => unsub();
+  }, [selectedMovieForDetail]);
+
+  // Watch Together - Subscribe to ALL active rooms (for tab)
+  useEffect(() => {
+    const unsub = watchTogetherService.subscribeAllActiveRooms(setAllActiveRooms);
+    return () => unsub();
+  }, []);
+
+  // Watch Together - Create room handler
+  const handleCreateRoom = useCallback(async (
+    filmId: string,
+    filmName: string,
+    filmThumb: string,
+    episode: string,
+    episodeSlug: string,
+    serverName: string,
+    linkM3u8: string,
+    password: string,
+    visibility: any,
+  ) => {
+    if (!currentAccount || !activeProfile) return;
+    try {
+      const roomId = await watchTogetherService.createRoom({
+        filmId,
+        filmName,
+        filmThumb,
+        episode,
+        episodeSlug,
+        serverName,
+        linkM3u8,
+        hostId: currentAccount.id,
+        hostName: activeProfile.name || currentAccount.displayName,
+        password,
+        visibility,
+      });
+      setSelectedMovieForDetail(null);
+      setActiveRoomId(roomId);
+      showToast('Đã tạo phòng xem chung thành công!');
+    } catch (err: any) {
+      alert(err.message);
+    }
+  }, [currentAccount, activeProfile]);
+
+  // Watch Together - Join room handler
+  const handleJoinRoom = useCallback(async (roomId: string, password: string) => {
+    if (!currentAccount || !activeProfile) return;
+    try {
+      await watchTogetherService.joinRoom({
+        roomId,
+        userId: currentAccount.id,
+        userName: activeProfile.name || currentAccount.displayName,
+        userAvatar: activeProfile.avatar,
+        password,
+      });
+      setSelectedMovieForDetail(null);
+      setActiveRoomId(roomId);
+      showToast('Đã tham gia phòng xem chung!');
+    } catch (err: any) {
+      alert(err.message);
+    }
+  }, [currentAccount, activeProfile]);
+
+  // Watch Together - Leave room handler
+  const handleLeaveRoom = useCallback(async () => {
+    if (currentAccount) {
+      await watchTogetherService.leaveRoom(currentAccount.id).catch(() => {});
+    }
+    setActiveRoomId(null);
+    setActiveRoomData(null);
+  }, [currentAccount]);
+
+  // Watch Together - End room handler
+  const handleEndRoom = useCallback(async () => {
+    if (currentAccount) {
+      await watchTogetherService.endRoom(currentAccount.id).catch(() => {});
+    }
+    setActiveRoomId(null);
+    setActiveRoomData(null);
+  }, [currentAccount]);
 
   // Fetch Home collections
   const fetchHomeData = useCallback(async () => {
@@ -1115,6 +1299,81 @@ export default function App() {
             </div>
           )}
 
+          {/* WATCH TOGETHER TAB */}
+          {activeTab === 'xem-chung' && (
+            <div className="pt-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
+              <div className="flex items-center gap-3 mb-6">
+                <Users className="w-6 h-6 text-emerald-400" />
+                <h1 className="text-2xl font-bold text-white">Phòng đang xem chung</h1>
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 text-xs font-bold">
+                  {allActiveRooms.length}
+                </span>
+              </div>
+
+              {allActiveRooms.length === 0 ? (
+                <div className="text-center py-20">
+                  <Users className="w-12 h-12 text-slate-600 mx-auto mb-4" />
+                  <p className="text-slate-400 text-sm">Chưa có phòng xem chung nào đang hoạt động.</p>
+                  <p className="text-slate-500 text-xs mt-1">Hãy tạo phòng từ trang chi tiết phim!</p>
+                </div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {allActiveRooms.map((room) => (
+                    <div
+                      key={room.roomId}
+                      className="p-4 rounded-2xl bg-[#0f172a] border border-slate-700/40 hover:border-emerald-500/30 transition-all cursor-pointer group"
+                      onClick={() => {
+                        if (activeRoomId) {
+                          alert('Bạn đang ở trong một phòng khác. Vui lòng rời phòng trước.');
+                          return;
+                        }
+                        if (room.visibility === 'public') {
+                          handleJoinRoom(room.roomId, '');
+                        } else {
+                          setJoinRoomTarget(room);
+                        }
+                      }}
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="min-w-0 flex-1">
+                          <h3 className="text-sm font-bold text-white truncate group-hover:text-emerald-300 transition-colors">
+                            {room.filmName}
+                          </h3>
+                          <p className="text-xs text-sky-400 mt-0.5">{room.episode}</p>
+                        </div>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-700/50 text-slate-400 shrink-0 ml-2">
+                          {room.visibility === 'private' ? '🔒 Private' : '🌐 Public'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs text-slate-400">
+                        <span className="flex items-center gap-1">
+                          <Users className="w-3 h-3" />
+                          {room.viewersCount} đang xem
+                        </span>
+                        <span>Host: {room.hostName}</span>
+                      </div>
+                      <div className="mt-3 flex items-center justify-between">
+                        <span className="text-[10px] text-slate-500">
+                          {new Date(room.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        <button
+                          disabled={!!activeRoomId}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                            activeRoomId
+                              ? 'bg-slate-700/30 text-slate-500 cursor-not-allowed'
+                              : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                          }`}
+                        >
+                          Vào phòng
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* MY LIST TAB */}
           {activeTab === 'my-list' && (
             <div className="pt-20">
@@ -1183,7 +1442,7 @@ export default function App() {
       )}
 
       {/* 5. Movie Detail Modal */}
-      {selectedMovieForDetail && (
+      {selectedMovieForDetail && !activeRoomId && (
         <MovieDetailModal
           movie={selectedMovieForDetail}
           onClose={closeDetailModal}
@@ -1193,6 +1452,48 @@ export default function App() {
           isInMyList={isInMyList}
           onSelectRelatedMovie={(m) => openDetailModal(m)}
           onSearchSubmit={handleSearchSubmit}
+          currentAccount={currentAccount}
+          activeProfile={activeProfile}
+          activeRooms={activeRoomsForFilm}
+          userActiveRoomId={activeRoomId}
+          onCreateRoom={handleCreateRoom}
+          onJoinRoom={handleJoinRoom}
+        />
+      )}
+
+      {/* 5b. Watch Together Room */}
+      {activeRoomId && !activeRoomData && currentAccount && (
+        <div className="fixed inset-0 z-[80] bg-[#060a14] flex items-center justify-center">
+          <div className="text-center space-y-3">
+            <Loader2 className="w-8 h-8 text-sky-400 animate-spin mx-auto" />
+            <p className="text-sm text-slate-300">Đang vào phòng...</p>
+          </div>
+        </div>
+      )}
+      {activeRoomId && activeRoomData && currentAccount && activeProfile && (
+        <WatchTogetherRoom
+          room={activeRoomData}
+          currentUserId={currentAccount.id}
+          currentUserName={activeProfile.name || currentAccount.displayName}
+          currentUserAvatar={activeProfile.avatar}
+          onLeave={handleLeaveRoom}
+          onEndRoom={handleEndRoom}
+        />
+      )}
+
+      {/* Join Room Modal (from Xem Chung tab) */}
+      {joinRoomTarget && (
+        <JoinRoomModal
+          isOpen={!!joinRoomTarget}
+          roomId={joinRoomTarget.roomId}
+          hostName={joinRoomTarget.hostName}
+          episode={joinRoomTarget.episode}
+          viewersCount={joinRoomTarget.viewersCount}
+          onClose={() => setJoinRoomTarget(null)}
+          onSubmit={async (password) => {
+            await handleJoinRoom(joinRoomTarget.roomId, password);
+            setJoinRoomTarget(null);
+          }}
         />
       )}
 
@@ -1301,6 +1602,26 @@ export default function App() {
   return (
     <>
       <NotificationTickerBanner currentAccount={currentAccount} />
+      {/* Maintenance Warning Banner */}
+      {maintenanceMessage && (
+        <div className="fixed top-0 left-0 right-0 z-[9999] bg-gradient-to-r from-red-600 via-orange-500 to-red-600 text-white px-4 py-2.5 flex items-center justify-between shadow-lg animate-pulse">
+          <div className="flex items-center gap-2 text-xs sm:text-sm font-bold">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>{maintenanceMessage}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-mono bg-white/20 px-2 py-0.5 rounded">
+              {Math.floor(maintenanceCountdown / 60)}:{String(maintenanceCountdown % 60).padStart(2, '0')}
+            </span>
+            <button
+              onClick={() => handleSwitchApp('cinema')}
+              className="text-xs font-bold bg-white/20 hover:bg-white/30 px-3 py-1 rounded-lg transition-colors cursor-pointer"
+            >
+              Về Cinema ngay
+            </button>
+          </div>
+        </div>
+      )}
       {appContent}
       {isSwitchingApp && targetApp && (
         <AppSwitcherLoading

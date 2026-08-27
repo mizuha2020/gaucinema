@@ -1,8 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Movie } from '../types';
-import { Play, Plus, Check, Info, Star, ChevronDown, ThumbsUp } from 'lucide-react';
+import { Play, Plus, Check, ChevronDown, ThumbsUp } from 'lucide-react';
 import { getImageUrl } from '../services/movieApi';
-import { motion } from 'motion/react';
 
 interface MovieCardProps {
   movie: Movie;
@@ -25,6 +24,8 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [liked, setLiked] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [hoverPos, setHoverPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const inList = typeof isInMyList === 'function' ? isInMyList(movie.slug) : Boolean(isInMyList);
 
@@ -42,19 +43,48 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
 
   const imgUrl = getImageUrl(movie.thumb_url || movie.poster_url);
 
-  // Generate a realistic match percentage
   const matchPercentage = Math.floor(92 + (((movie.year || 2024) * 7 + (movie.name.length * 3)) % 8));
+
+  const updatePosition = useCallback(() => {
+    if (cardRef.current) {
+      const rect = cardRef.current.getBoundingClientRect();
+      setHoverPos({
+        top: rect.top - 48,
+        left: rect.left - 16,
+        width: rect.width + 32,
+      });
+    }
+  }, []);
+
+  const handleMouseEnter = useCallback(() => {
+    updatePosition();
+    setIsHovered(true);
+  }, [updatePosition]);
+
+  useEffect(() => {
+    if (isHovered) {
+      const onScroll = () => updatePosition();
+      const onResize = () => updatePosition();
+      window.addEventListener('scroll', onScroll, true);
+      window.addEventListener('resize', onResize);
+      return () => {
+        window.removeEventListener('scroll', onScroll, true);
+        window.removeEventListener('resize', onResize);
+      };
+    }
+  }, [isHovered, updatePosition]);
 
   return (
     <div
+      ref={cardRef}
       id={`movie-card-${movie.slug || movie._id}`}
       tabIndex={0}
       className={`relative group shrink-0 select-none transition-all duration-300 focus:outline-none focus:ring-4 focus:ring-blue-500 focus:z-10 focus:scale-105 ${
         isTop10 ? 'w-44 sm:w-56 h-64 sm:h-80' : 'w-36 sm:w-48 md:w-52'
       }`}
-      onMouseEnter={() => setIsHovered(true)}
+      onMouseEnter={handleMouseEnter}
       onMouseLeave={() => setIsHovered(false)}
-      onFocus={() => setIsHovered(true)}
+      onFocus={() => { updatePosition(); setIsHovered(true); }}
       onBlur={() => setIsHovered(false)}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
@@ -63,7 +93,6 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
         }
       }}
     >
-      {/* Top 10 Layout with Giant SVG / Stylized Numbers */}
       {isTop10 && rank !== undefined && (
         <div className="absolute left-0 bottom-0 top-0 w-20 sm:w-28 flex items-center justify-start pointer-events-none z-10">
           <span
@@ -78,7 +107,6 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
         </div>
       )}
 
-      {/* Main Card Image */}
       <div
         className={`relative w-full h-full rounded-xl overflow-hidden bg-[#0f172a] border border-slate-800/90 shadow-md transition-all duration-300 group-hover:shadow-[0_0_25px_rgba(37,99,235,0.3)] group-hover:border-blue-500/60 ${
           isTop10 ? 'ml-16 sm:ml-20 w-[calc(100%-4rem)] sm:w-[calc(100%-5rem)]' : 'aspect-[2/3]'
@@ -97,7 +125,6 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
           }}
         />
 
-        {/* Top Badges */}
         <div className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none gap-1">
           <div className="flex items-center gap-1">
             {movie.episode_current && (
@@ -126,10 +153,8 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
           )}
         </div>
 
-        {/* Gradient shadow at bottom for text readability */}
         <div className="absolute inset-0 bg-gradient-to-t from-[#0b1329] via-[#0b1329]/30 to-transparent opacity-95 group-hover:opacity-70 transition-opacity" />
 
-        {/* Basic Title Label (default visible) */}
         <div className="absolute bottom-0 left-0 right-0 p-2.5">
           <h3 className="text-xs sm:text-sm font-bold text-white line-clamp-1 group-hover:text-sky-300 transition-colors">
             {movie.name}
@@ -141,14 +166,18 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
         </div>
       </div>
 
-      {/* Floating Hover Action Overlay (Gấu Navy Style) */}
-      {isHovered && (
+      {isHovered && hoverPos && (
         <div
-          className="hidden md:block absolute -top-12 -left-4 -right-4 bg-[#0f172a] rounded-xl shadow-2xl border border-blue-900/80 p-3 z-40 animate-in fade-in zoom-in-95 duration-200"
-          style={{ width: 'calc(100% + 2rem)' }}
+          className="hidden md:block fixed bg-[#0f172a] rounded-xl shadow-2xl border border-blue-900/80 p-3 z-50 animate-in fade-in zoom-in-95 duration-200"
+          style={{
+            top: hoverPos.top,
+            left: hoverPos.left,
+            width: hoverPos.width,
+          }}
           onClick={(e) => e.stopPropagation()}
+          onMouseEnter={() => setIsHovered(true)}
+          onMouseLeave={() => setIsHovered(false)}
         >
-          {/* Action Row */}
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5">
               <button
@@ -195,7 +224,6 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
             </button>
           </div>
 
-          {/* Quick Details */}
           <div className="space-y-1">
             <div className="flex items-center gap-2 text-xs">
               <span className="text-cyan-400 font-bold">{matchPercentage}% Phù hợp</span>
@@ -211,7 +239,6 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
               <p className="text-[11px] text-sky-400 font-medium">{movie.episode_current}</p>
             )}
 
-            {/* Genres preview */}
             {movie.category && movie.category.length > 0 && (
               <div className="flex items-center gap-1.5 text-[10px] text-slate-400 overflow-hidden text-ellipsis whitespace-nowrap pt-1">
                 {movie.category.slice(0, 3).map((c, i) => (

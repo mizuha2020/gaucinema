@@ -5,6 +5,8 @@ import {
   formatDurationText,
   formatDateTimeExact,
   formatRelativeTime,
+  getEffectiveTotalOnline,
+  getEffectiveTotalWatch,
 } from '../../services/userAnalyticsService';
 import {
   Users,
@@ -15,13 +17,11 @@ import {
   Youtube,
   Search,
   RefreshCw,
-  Sparkles,
   Layers,
   Activity,
   ArrowRight,
   Database,
   CheckCircle2,
-  Filter,
 } from 'lucide-react';
 
 interface AdminUserStatsTabProps {
@@ -44,11 +44,11 @@ export const AdminUserStatsTab: React.FC<AdminUserStatsTabProps> = ({
 
   // Aggregates
   const totalOnlineSecAll = useMemo(() => {
-    return userStats.reduce((sum, u) => sum + (u.totalOnlineSeconds || 0), 0);
+    return userStats.reduce((sum, u) => sum + getEffectiveTotalOnline(u), 0);
   }, [userStats]);
 
   const totalWatchSecAll = useMemo(() => {
-    return userStats.reduce((sum, u) => sum + (u.totalWatchSeconds || 0), 0);
+    return userStats.reduce((sum, u) => sum + getEffectiveTotalWatch(u), 0);
   }, [userStats]);
 
   const onlineUsersCount = useMemo(() => {
@@ -251,7 +251,7 @@ export const AdminUserStatsTab: React.FC<AdminUserStatsTabProps> = ({
             const mangaSec = user.watchSecondsByMedia?.manga || 0;
             const tvSec = user.watchSecondsByMedia?.livetv || 0;
             const ytSec = user.watchSecondsByMedia?.youtube || 0;
-            const totalWatchSec = user.totalWatchSeconds || (movieSec + mangaSec + tvSec + ytSec) || 0;
+            const totalWatchSec = getEffectiveTotalWatch(user);
 
             return (
               <div
@@ -298,7 +298,7 @@ export const AdminUserStatsTab: React.FC<AdminUserStatsTabProps> = ({
                     <div>
                       <p className="text-[10px] uppercase font-bold text-slate-400">Tổng Online</p>
                       <p className="text-xs font-black text-sky-400 mt-0.5">
-                        {formatDurationText(user.totalOnlineSeconds)}
+                        {formatDurationText(getEffectiveTotalOnline(user))}
                       </p>
                     </div>
                     <div>

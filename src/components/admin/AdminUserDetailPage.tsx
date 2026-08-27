@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { UserStats, UserActivityItem, MediaActivityType } from '../../types';
 import { watchHistoryService } from '../../services/watchHistoryService';
-import { formatDurationText, formatDateTimeExact, formatRelativeTime } from '../../services/userAnalyticsService';
+import { formatDurationText, formatDateTimeExact, formatRelativeTime, getEffectiveTotalOnline, getEffectiveTotalWatch } from '../../services/userAnalyticsService';
 import {
   ArrowLeft,
   Clock,
@@ -18,21 +18,16 @@ import {
   Search,
   RefreshCw,
   Download,
-  Filter,
   BarChart3,
   PieChart as PieChartIcon,
   ChevronLeft,
   ChevronRight,
-  TrendingUp,
   SlidersHorizontal,
-  X,
   PlayCircle,
   CalendarRange,
   LayoutDashboard,
   History,
   ArrowUpRight,
-  UserCheck,
-  ShieldAlert,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -98,9 +93,7 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
   const fetchUserActivities = async () => {
     setIsLoading(true);
     try {
-      console.log(`[AdminUserDetail] Fetching activities for: ${userStat.accountId}`);
       const items = await watchHistoryService.getUserHistory(userStat.accountId, 100);
-      console.log(`[AdminUserDetail] Got ${items.length} activities`);
       setActivities(items);
     } catch (e) {
       console.warn('Failed to load user activities:', e);
@@ -263,12 +256,18 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
     return sec;
   };
 
-  // Filtered stats for summary - calculated from activities, not from prop
-  const movieSec = useMemo(() => activities.filter(a => a.mediaType === 'movie').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
-  const mangaSec = useMemo(() => activities.filter(a => a.mediaType === 'manga').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
-  const tvSec = useMemo(() => activities.filter(a => a.mediaType === 'livetv').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
-  const ytSec = useMemo(() => activities.filter(a => a.mediaType === 'youtube').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
-  const totalWatchSec = movieSec + mangaSec + tvSec + ytSec;
+  // Activity-based stats (fallback)
+  const activityMovieSec = useMemo(() => activities.filter(a => a.mediaType === 'movie').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
+  const activityMangaSec = useMemo(() => activities.filter(a => a.mediaType === 'manga').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
+  const activityTvSec = useMemo(() => activities.filter(a => a.mediaType === 'livetv').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
+  const activityYtSec = useMemo(() => activities.filter(a => a.mediaType === 'youtube').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
+
+  // Final stats: userStat (Firestore) as primary, activity-based as fallback
+  const movieSec = userStat.watchSecondsByMedia?.movie || activityMovieSec;
+  const mangaSec = userStat.watchSecondsByMedia?.manga || activityMangaSec;
+  const tvSec = userStat.watchSecondsByMedia?.livetv || activityTvSec;
+  const ytSec = userStat.watchSecondsByMedia?.youtube || activityYtSec;
+  const totalWatchSec = getEffectiveTotalWatch(userStat) || (movieSec + mangaSec + tvSec + ytSec);
 
   const moviePct = totalWatchSec > 0 ? Math.round((movieSec / totalWatchSec) * 100) : 0;
   const mangaPct = totalWatchSec > 0 ? Math.round((mangaSec / totalWatchSec) * 100) : 0;
@@ -569,7 +568,7 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
               </div>
               <div>
                 <p className="text-xl sm:text-2xl lg:text-3xl font-black text-sky-400">
-                  {formatDurationText(userStat.totalOnlineSeconds)}
+                  {formatDurationText(getEffectiveTotalOnline(userStat))}
                 </p>
                 <p className="text-xs text-slate-400 mt-1.5 flex items-center justify-between">
                   <span>Số phiên kết nối:</span>
@@ -591,7 +590,7 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
                 <p className="text-xs text-slate-400 mt-1.5 flex items-center justify-between">
                   <span>Tỷ lệ xem / online:</span>
                   <strong className="text-sky-300">
-                    {userStat.totalOnlineSeconds > 0 ? Math.round((totalWatchSec / userStat.totalOnlineSeconds) * 100) : 100}%
+                    {getEffectiveTotalOnline(userStat) > 0 ? Math.round((totalWatchSec / getEffectiveTotalOnline(userStat)) * 100) : 100}%
                   </strong>
                 </p>
               </div>

@@ -1,13 +1,12 @@
 import {
-  get,
   onValue,
   ref,
   remove,
   set,
-  update,
 } from 'firebase/database';
 import { rtdb, sanitizeData } from './firebase';
 import { ActiveViewerSession, MediaActivityType } from '../types';
+import { userAnalyticsService } from './userAnalyticsService';
 
 const HEARTBEAT_EXPIRATION_MS = 90 * 1000;
 const SESSIONS_PATH = 'activeSessions';
@@ -33,6 +32,7 @@ interface PresenceSession {
   profileName: string;
   profileAvatar: string;
   type: MediaActivityType;
+  contentId: string;
   itemTitle: string;
   itemSubtitle: string;
   itemCover: string;
@@ -45,6 +45,7 @@ class PresenceService {
   private currentSessionId: string | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private lastSentData: Partial<PresenceSession> | null = null;
+  private lastHeartbeatTime: number = 0;
 
   /**
    * Bắt đầu presence session
@@ -56,6 +57,7 @@ class PresenceService {
     profileName: string;
     profileAvatar?: string;
     type: MediaActivityType;
+    contentId?: string;
     itemTitle: string;
     itemSubtitle?: string;
     itemCover?: string;
@@ -71,6 +73,7 @@ class PresenceService {
       profileName: data.profileName,
       profileAvatar: data.profileAvatar || '',
       type: data.type,
+      contentId: data.contentId || data.itemTitle,
       itemTitle: data.itemTitle,
       itemSubtitle: data.itemSubtitle || '',
       itemCover: data.itemCover || '',
@@ -79,8 +82,25 @@ class PresenceService {
       deviceInfo: typeof window !== 'undefined' && window.innerWidth < 768 ? 'Mobile' : 'Desktop / Web',
     };
 
+    this.lastHeartbeatTime = Date.now();
     this.sendPing();
     this.startHeartbeatTimer();
+
+    userAnalyticsService.recordActivityHeartbeat({
+      accountId: data.accountId,
+      accountDisplayName: data.accountDisplayName,
+      profileId: data.profileId,
+      profileName: data.profileName,
+      profileAvatar: data.profileAvatar,
+      mediaType: data.type,
+      contentId: data.contentId || data.itemTitle,
+      title: data.itemTitle,
+      subtitle: data.itemSubtitle,
+      coverUrl: data.itemCover,
+      apiSource: data.apiSourceUsed,
+      secondsElapsed: 5,
+      isActivelyPlaying: data.type !== 'browsing',
+    });
   }
 
   /**
@@ -88,6 +108,7 @@ class PresenceService {
    */
   updateContent(data: {
     type: MediaActivityType;
+    contentId?: string;
     itemTitle: string;
     itemSubtitle?: string;
     itemCover?: string;
@@ -98,6 +119,7 @@ class PresenceService {
     this.lastSentData = {
       ...this.lastSentData,
       type: data.type,
+      contentId: data.contentId || data.itemTitle,
       itemTitle: data.itemTitle,
       itemSubtitle: data.itemSubtitle || '',
       itemCover: data.itemCover || '',
@@ -118,9 +140,11 @@ class PresenceService {
     }
 
     if (this.currentSessionId) {
+      userAnalyticsService.flushPendingAnalytics().catch(() => {});
       remove(ref(rtdb, `${SESSIONS_PATH}/${this.currentSessionId}`)).catch(() => {});
       this.currentSessionId = null;
       this.lastSentData = null;
+      this.lastHeartbeatTime = 0;
     }
   }
 
@@ -138,6 +162,7 @@ class PresenceService {
       profileName: this.lastSentData.profileName || 'Người xem',
       profileAvatar: this.lastSentData.profileAvatar || '',
       type: this.lastSentData.type || 'browsing',
+      contentId: this.lastSentData.contentId || '',
       itemTitle: this.lastSentData.itemTitle || 'Đang duyệt',
       itemSubtitle: this.lastSentData.itemSubtitle || '',
       itemCover: this.lastSentData.itemCover || '',
@@ -147,6 +172,28 @@ class PresenceService {
     };
 
     set(ref(rtdb, `${SESSIONS_PATH}/${this.currentSessionId}`), sanitizeData(sessionData)).catch(() => {});
+
+    const now = Date.now();
+    const secondsElapsed = this.lastHeartbeatTime > 0
+      ? Math.round((now - this.lastHeartbeatTime) / 1000)
+      : 30;
+    this.lastHeartbeatTime = now;
+
+    userAnalyticsService.recordActivityHeartbeat({
+      accountId: this.lastSentData.accountId || 'anonymous',
+      accountDisplayName: this.lastSentData.accountDisplayName,
+      profileId: this.lastSentData.profileId || 'default',
+      profileName: this.lastSentData.profileName,
+      profileAvatar: this.lastSentData.profileAvatar,
+      mediaType: this.lastSentData.type || 'browsing',
+      contentId: this.lastSentData.contentId || '',
+      title: this.lastSentData.itemTitle,
+      subtitle: this.lastSentData.itemSubtitle,
+      coverUrl: this.lastSentData.itemCover,
+      apiSource: this.lastSentData.apiSourceUsed,
+      secondsElapsed,
+      isActivelyPlaying: (this.lastSentData.type || 'browsing') !== 'browsing',
+    });
   }
 
   /**

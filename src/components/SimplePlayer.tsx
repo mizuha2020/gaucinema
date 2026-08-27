@@ -639,6 +639,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
       profileName: activeProfile?.name || 'Người xem',
       profileAvatar: activeProfile?.avatar || '',
       type: 'movie',
+      contentId: movie.slug,
       itemTitle: movie.name,
       itemSubtitle: currentEpisode.name ? `Tập ${currentEpisode.name}` : undefined,
       itemCover: movie.poster_url || movie.thumb_url,

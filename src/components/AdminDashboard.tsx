@@ -6,6 +6,7 @@ import { AdminConfirmModal } from './AdminConfirmModal';
 import { AdminOverviewTab } from './admin/AdminOverviewTab';
 import { AdminApisTab } from './admin/AdminApisTab';
 import { AdminNotificationsTab } from './admin/AdminNotificationsTab';
+import { AdminEcoSystemTab } from './admin/AdminEcoSystemTab';
 import {
   Users,
   Image as ImageIcon,
@@ -29,6 +30,7 @@ import {
   Server,
   Activity,
   Bell,
+  Power,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -43,11 +45,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onBackToCinema,
   onShowToast,
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'apis' | 'notifications' | 'accounts' | 'avatars'>(() => {
+  const [activeTab, setActiveTab] = useState<'overview' | 'apis' | 'notifications' | 'accounts' | 'avatars' | 'ecosystem'>(() => {
     try {
       const saved = localStorage.getItem('gau_admin_active_tab');
-      if (saved && ['overview', 'apis', 'notifications', 'accounts', 'avatars'].includes(saved)) {
-        return saved as 'overview' | 'apis' | 'notifications' | 'accounts' | 'avatars';
+      if (saved && ['overview', 'apis', 'notifications', 'accounts', 'avatars', 'ecosystem'].includes(saved)) {
+        return saved as 'overview' | 'apis' | 'notifications' | 'accounts' | 'avatars' | 'ecosystem';
       }
     } catch (e) {
       console.error('Failed to read admin active tab from localStorage:', e);
@@ -477,6 +479,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {customAvatars.length}
               </span>
             </button>
+
+            {/* Item 6: Eco System */}
+            <button
+              id="sidebar-nav-ecosystem-btn"
+              onClick={() => setActiveTab('ecosystem')}
+              className={`w-full flex items-center justify-between p-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'ecosystem'
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-600/30'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Power className="w-4 h-4" />
+                <span>Hệ Sinh Thái</span>
+              </div>
+            </button>
           </nav>
         </div>
 
@@ -572,6 +590,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {activeTab === 'notifications' && (
           <div className="animate-in fade-in duration-200">
             <AdminNotificationsTab
+              currentAccount={currentAccount}
+              onShowToast={onShowToast}
+            />
+          </div>
+        )}
+
+        {/* --- TAB 5: ECOSYSTEM MANAGEMENT --- */}
+        {activeTab === 'ecosystem' && (
+          <div className="animate-in fade-in duration-200">
+            <AdminEcoSystemTab
               currentAccount={currentAccount}
               onShowToast={onShowToast}
             />

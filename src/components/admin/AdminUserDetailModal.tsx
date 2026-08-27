@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserStats, UserActivityItem } from '../../types';
 import { watchHistoryService } from '../../services/watchHistoryService';
-import { formatDurationText, formatDateTimeExact, formatRelativeTime } from '../../services/userAnalyticsService';
+import { formatDurationText, formatDateTimeExact, formatRelativeTime, getEffectiveTotalOnline, getEffectiveTotalWatch } from '../../services/userAnalyticsService';
 import {
   X,
   User,
@@ -71,7 +71,7 @@ export const AdminUserDetailModal: React.FC<AdminUserDetailModalProps> = ({
   const mangaSec = userStat.watchSecondsByMedia?.manga || 0;
   const tvSec = userStat.watchSecondsByMedia?.livetv || 0;
   const ytSec = userStat.watchSecondsByMedia?.youtube || 0;
-  const totalWatchSec = userStat.totalWatchSeconds || (movieSec + mangaSec + tvSec + ytSec) || 0;
+  const totalWatchSec = getEffectiveTotalWatch(userStat) || (movieSec + mangaSec + tvSec + ytSec) || 0;
 
   const moviePct = totalWatchSec > 0 ? Math.round((movieSec / totalWatchSec) * 100) : 0;
   const mangaPct = totalWatchSec > 0 ? Math.round((mangaSec / totalWatchSec) * 100) : 0;
@@ -138,7 +138,7 @@ export const AdminUserDetailModal: React.FC<AdminUserDetailModalProps> = ({
               </div>
               <div>
                 <p className="text-xl sm:text-2xl font-black text-sky-400">
-                  {formatDurationText(userStat.totalOnlineSeconds)}
+                  {formatDurationText(getEffectiveTotalOnline(userStat))}
                 </p>
                 <p className="text-[11px] text-slate-400 mt-1">
                   Đăng nhập: {userStat.totalSessions || 1} phiên hoạt động
@@ -157,7 +157,7 @@ export const AdminUserDetailModal: React.FC<AdminUserDetailModalProps> = ({
                   {formatDurationText(totalWatchSec)}
                 </p>
                 <p className="text-[11px] text-slate-400 mt-1">
-                  Hiệu suất xem: {userStat.totalOnlineSeconds > 0 ? Math.round((totalWatchSec / userStat.totalOnlineSeconds) * 100) : 100}% thời gian
+                  Hiệu suất xem: {getEffectiveTotalOnline(userStat) > 0 ? Math.round((totalWatchSec / getEffectiveTotalOnline(userStat)) * 100) : 100}% thời gian
                 </p>
               </div>
             </div>

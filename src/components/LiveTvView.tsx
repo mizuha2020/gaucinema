@@ -801,6 +801,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         profileId: 'tv_profile',
         profileName: currentAccount?.displayName || 'Người xem TV',
         type: 'livetv',
+        contentId: activeChannel.url,
         itemTitle: activeChannel.name,
         itemSubtitle: activeChannel.group || 'Kênh LiveTV',
         itemCover: activeChannel.logo,

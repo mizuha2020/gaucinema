@@ -127,7 +127,8 @@ export const YouTubePlayerModal: React.FC<YouTubePlayerModalProps> = ({
       profileId: activeProfile?.id || 'youtube_profile',
       profileName: activeProfile?.name || 'Người xem YouTube',
       profileAvatar: activeProfile?.avatar || '',
-      type: 'browsing', // or watching
+      type: 'youtube',
+      contentId: video.id,
       itemTitle: video.title || 'Video YouTube',
       itemSubtitle: video.channelTitle ? `Kênh: ${video.channelTitle}` : undefined,
       itemCover: video.thumbnailUrl,

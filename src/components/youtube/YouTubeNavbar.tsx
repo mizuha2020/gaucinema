@@ -24,6 +24,7 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import { youtubeApi } from '../../services/youtubeApi';
+import { appConfigService } from '../../services/appConfigService';
 import appLogo from '../../assets/images/app_logo.jpg';
 
 interface YouTubeNavbarProps {
@@ -73,6 +74,12 @@ export const YouTubeNavbar: React.FC<YouTubeNavbarProps> = ({
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isAppMenuOpen, setIsAppMenuOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [appConfig, setAppConfig] = useState<Record<string, { enabled: boolean }>>({});
+
+  useEffect(() => {
+    const unsub = appConfigService.subscribe((cfg) => setAppConfig(cfg));
+    return unsub;
+  }, []);
 
   // Search History / Auto-complete state
   const [searchHistory, setSearchHistory] = useState<string[]>(() => {
@@ -483,23 +490,31 @@ export const YouTubeNavbar: React.FC<YouTubeNavbarProps> = ({
                     </button>
                     <button
                       onClick={() => {
-                        onSwitchApp('livetv');
-                        setIsAppMenuOpen(false);
+                        if (appConfig.livetv?.enabled !== false) {
+                          onSwitchApp('livetv');
+                          setIsAppMenuOpen(false);
+                        }
                       }}
-                      className="w-full flex items-center gap-3 p-2 rounded-xl text-xs font-semibold text-slate-200 hover:bg-[#3F3F3F] hover:text-orange-400 transition-colors cursor-pointer text-left"
+                      disabled={appConfig.livetv?.enabled === false}
+                      className={`w-full flex items-center gap-3 p-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer text-left ${appConfig.livetv?.enabled === false ? 'opacity-40 cursor-not-allowed text-slate-500' : 'text-slate-200 hover:bg-[#3F3F3F] hover:text-orange-400'}`}
                     >
                       <Tv className="w-4 h-4 text-orange-400 shrink-0" />
                       <span>Gấu LiveTV</span>
+                      {appConfig.livetv?.enabled === false && <span className="ml-auto text-[9px] font-bold text-red-400 bg-red-950 px-1.5 py-0.5 rounded-full">OFF</span>}
                     </button>
                     <button
                       onClick={() => {
-                        onSwitchApp('manga');
-                        setIsAppMenuOpen(false);
+                        if (appConfig.manga?.enabled !== false) {
+                          onSwitchApp('manga');
+                          setIsAppMenuOpen(false);
+                        }
                       }}
-                      className="w-full flex items-center gap-3 p-2 rounded-xl text-xs font-semibold text-slate-200 hover:bg-[#3F3F3F] hover:text-purple-400 transition-colors cursor-pointer text-left"
+                      disabled={appConfig.manga?.enabled === false}
+                      className={`w-full flex items-center gap-3 p-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer text-left ${appConfig.manga?.enabled === false ? 'opacity-40 cursor-not-allowed text-slate-500' : 'text-slate-200 hover:bg-[#3F3F3F] hover:text-purple-400'}`}
                     >
                       <BookOpen className="w-4 h-4 text-purple-400 shrink-0" />
                       <span>Gấu Manga</span>
+                      {appConfig.manga?.enabled === false && <span className="ml-auto text-[9px] font-bold text-red-400 bg-red-950 px-1.5 py-0.5 rounded-full">OFF</span>}
                     </button>
                   </div>
                 </div>

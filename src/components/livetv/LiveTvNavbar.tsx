@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UserProfile, Account } from '../../types';
 import { Tv, User, ChevronDown, Check, Home, BookOpen, LayoutGrid, Shield, Settings, LogOut, Lock } from 'lucide-react';
 import appLogo from '../../assets/images/app_logo.jpg';
 import { motion, AnimatePresence } from 'motion/react';
+import { appConfigService } from '../../services/appConfigService';
 
 interface LiveTvNavbarProps {
   currentAccount?: Account | null;
@@ -29,6 +30,12 @@ export const LiveTvNavbar: React.FC<LiveTvNavbarProps> = ({
 }) => {
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isAppMenuOpen, setIsAppMenuOpen] = useState(false);
+  const [appConfig, setAppConfig] = useState<Record<string, { enabled: boolean }>>({});
+
+  useEffect(() => {
+    const unsub = appConfigService.subscribe((cfg) => setAppConfig(cfg));
+    return unsub;
+  }, []);
 
   // Profile PIN prompt state
   const [pinPromptProfile, setPinPromptProfile] = useState<UserProfile | null>(null);
@@ -110,13 +117,23 @@ export const LiveTvNavbar: React.FC<LiveTvNavbarProps> = ({
                       <div className="w-8 h-8 rounded-lg bg-blue-900/40 flex items-center justify-center"><Home className="w-4 h-4 text-blue-400"/></div>
                       <div className="flex flex-col items-start"><span>Gấu Cinema HD</span><span className="text-[10px] text-slate-400">Xem phim thả ga</span></div>
                     </button>
-                    <button onClick={() => { onSwitchApp('manga'); setIsAppMenuOpen(false); }} className="w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium text-slate-200 hover:bg-purple-900/30 hover:text-purple-300 transition-colors">
+                    <button
+                      onClick={() => { if (appConfig.manga?.enabled !== false) { onSwitchApp('manga'); setIsAppMenuOpen(false); } }}
+                      disabled={appConfig.manga?.enabled === false}
+                      className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium transition-colors ${appConfig.manga?.enabled === false ? 'opacity-40 cursor-not-allowed text-slate-500' : 'text-slate-200 hover:bg-purple-900/30 hover:text-purple-300'}`}
+                    >
                       <div className="w-8 h-8 rounded-lg bg-purple-900/40 flex items-center justify-center"><BookOpen className="w-4 h-4 text-purple-400"/></div>
-                      <div className="flex flex-col items-start"><span>Gấu Manga</span><span className="text-[10px] text-slate-400">Thế giới truyện tranh</span></div>
+                      <div className="flex flex-col items-start"><span>Gấu Manga</span><span className="text-[10px] text-slate-400">{appConfig.manga?.enabled === false ? 'Đang bảo trì' : 'Thế giới truyện tranh'}</span></div>
+                      {appConfig.manga?.enabled === false && <span className="ml-auto text-[9px] font-bold text-red-400 bg-red-950 px-1.5 py-0.5 rounded-full">OFF</span>}
                     </button>
-                    <button onClick={() => { onSwitchApp('youtube'); setIsAppMenuOpen(false); }} className="w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium text-slate-200 hover:bg-red-900/30 hover:text-red-300 transition-colors">
+                    <button
+                      onClick={() => { if (appConfig.youtube?.enabled !== false) { onSwitchApp('youtube'); setIsAppMenuOpen(false); } }}
+                      disabled={appConfig.youtube?.enabled === false}
+                      className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium transition-colors ${appConfig.youtube?.enabled === false ? 'opacity-40 cursor-not-allowed text-slate-500' : 'text-slate-200 hover:bg-red-900/30 hover:text-red-300'}`}
+                    >
                       <div className="w-8 h-8 rounded-lg bg-red-900/40 flex items-center justify-center"><Tv className="w-4 h-4 text-red-500"/></div>
-                      <div className="flex flex-col items-start"><span>Gấu YouTube</span><span className="text-[10px] text-red-400 font-normal">Theme Đỏ - 0 Quảng cáo</span></div>
+                      <div className="flex flex-col items-start"><span>Gấu YouTube</span><span className="text-[10px] text-red-400 font-normal">{appConfig.youtube?.enabled === false ? 'Đang bảo trì' : 'Theme Đỏ - 0 Quảng cáo'}</span></div>
+                      {appConfig.youtube?.enabled === false && <span className="ml-auto text-[9px] font-bold text-red-400 bg-red-950 px-1.5 py-0.5 rounded-full">OFF</span>}
                     </button>
                   </div>
                 </div>

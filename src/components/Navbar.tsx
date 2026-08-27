@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Account, NavTab, UserProfile, ApiSource } from '../types';
+import { appConfigService } from '../services/appConfigService';
 import {
   Search,
   ChevronDown,
@@ -74,6 +75,14 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [pinPromptProfile, setPinPromptProfile] = useState<UserProfile | null>(null);
   const [enteredPin, setEnteredPin] = useState('');
   const [pinError, setPinError] = useState(false);
+
+  // App Config (real-time)
+  const [appConfig, setAppConfig] = useState<Record<string, { enabled: boolean }>>({});
+
+  useEffect(() => {
+    const unsub = appConfigService.subscribe((cfg) => setAppConfig(cfg));
+    return unsub;
+  }, []);
 
   const handleProfileClickInDropdown = (p: UserProfile) => {
     if (p.id === activeProfile?.id) {
@@ -245,6 +254,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   // Secondary navigation tabs (Temporarily hide when search expands)
   const secondaryNavItems: { label: string; tab: NavTab }[] = [
     { label: 'Khám Phá / Lọc', tab: 'filter' },
+    { label: 'Xem Chung', tab: 'xem-chung' },
   ];
 
   const allNavItems = [...primaryNavItems, ...secondaryNavItems];
@@ -566,50 +576,89 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <div className="space-y-1">
                   <button
                     onClick={() => {
-                      onSwitchApp('livetv');
-                      setIsAppMenuOpen(false);
+                      if (appConfig.livetv?.enabled !== false) {
+                        onSwitchApp('livetv');
+                        setIsAppMenuOpen(false);
+                      }
                     }}
-                    className="w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium text-slate-200 hover:bg-sky-900/30 hover:text-sky-300 transition-colors cursor-pointer group"
+                    disabled={appConfig.livetv?.enabled === false}
+                    className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer group ${
+                      appConfig.livetv?.enabled === false
+                        ? 'opacity-40 cursor-not-allowed text-slate-500'
+                        : 'text-slate-200 hover:bg-sky-900/30 hover:text-sky-300'
+                    }`}
                   >
                     <div className="w-8 h-8 rounded-lg bg-sky-900/40 flex items-center justify-center group-hover:bg-sky-500/20 shrink-0">
                       <Tv className="w-4 h-4 text-sky-400" />
                     </div>
                     <div className="flex flex-col items-start">
                       <span>Gấu LiveTV</span>
-                      <span className="text-[10px] text-slate-400 font-normal">Kênh thể thao trực tiếp</span>
+                      <span className="text-[10px] text-slate-400 font-normal">
+                        {appConfig.livetv?.enabled === false ? 'Đang bảo trì' : 'Kênh thể thao trực tiếp'}
+                      </span>
                     </div>
+                    {appConfig.livetv?.enabled === false && (
+                      <span className="ml-auto text-[9px] font-bold text-red-400 bg-red-950 px-1.5 py-0.5 rounded-full">OFF</span>
+                    )}
                   </button>
 
                   <button
                     onClick={() => {
-                      onSwitchApp('manga');
-                      setIsAppMenuOpen(false);
+                      if (appConfig.manga?.enabled !== false) {
+                        onSwitchApp('manga');
+                        setIsAppMenuOpen(false);
+                      }
                     }}
-                    className="w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium text-slate-200 hover:bg-purple-900/30 hover:text-purple-300 transition-colors cursor-pointer group"
+                    disabled={appConfig.manga?.enabled === false}
+                    className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer group ${
+                      appConfig.manga?.enabled === false
+                        ? 'opacity-40 cursor-not-allowed text-slate-500'
+                        : 'text-slate-200 hover:bg-purple-900/30 hover:text-purple-300'
+                    }`}
                   >
                     <div className="w-8 h-8 rounded-lg bg-purple-900/40 flex items-center justify-center group-hover:bg-purple-500/20 shrink-0">
                       <BookOpen className="w-4 h-4 text-purple-400" />
                     </div>
                     <div className="flex flex-col items-start">
                       <span>Gấu Manga</span>
-                      <span className="text-[10px] text-slate-400 font-normal">Thế giới truyện tranh manga</span>
+                      <span className="text-[10px] text-slate-400 font-normal">
+                        {appConfig.manga?.enabled === false ? 'Đang bảo trì' : 'Thế giới truyện tranh manga'}
+                      </span>
                     </div>
+                    {appConfig.manga?.enabled === false && (
+                      <span className="ml-auto text-[9px] font-bold text-red-400 bg-red-950 px-1.5 py-0.5 rounded-full">OFF</span>
+                    )}
                   </button>
 
                   <button
                     onClick={() => {
-                      onSwitchApp('youtube');
-                      setIsAppMenuOpen(false);
+                      if (appConfig.youtube?.enabled !== false) {
+                        onSwitchApp('youtube');
+                        setIsAppMenuOpen(false);
+                      }
                     }}
-                    className="w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium text-slate-200 hover:bg-red-900/30 hover:text-red-300 transition-colors cursor-pointer group"
+                    disabled={appConfig.youtube?.enabled === false}
+                    className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer group ${
+                      appConfig.youtube?.enabled === false
+                        ? 'opacity-40 cursor-not-allowed text-slate-500'
+                        : 'text-slate-200 hover:bg-red-900/30 hover:text-red-300'
+                    }`}
                   >
                     <div className="w-8 h-8 rounded-lg bg-red-900/40 flex items-center justify-center group-hover:bg-red-500/20 shrink-0">
                       <Tv className="w-4 h-4 text-red-500" />
                     </div>
                     <div className="flex flex-col items-start">
                       <span>Gấu YouTube</span>
-                      <span className="text-[10px] text-red-400 font-normal">Theme Đỏ - 0 Quảng cáo</span>
+                      <span className="text-[10px] font-normal">
+                        {appConfig.youtube?.enabled === false
+                          ? <span className="text-red-400">Đang bảo trì</span>
+                          : <span className="text-red-400">Theme Đỏ - 0 Quảng cáo</span>
+                        }
+                      </span>
                     </div>
+                    {appConfig.youtube?.enabled === false && (
+                      <span className="ml-auto text-[9px] font-bold text-red-400 bg-red-950 px-1.5 py-0.5 rounded-full">OFF</span>
+                    )}
                   </button>
                 </div>
               </div>

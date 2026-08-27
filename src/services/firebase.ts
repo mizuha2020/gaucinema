@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { getFirestore, doc } from 'firebase/firestore';
 import { getDatabase } from 'firebase/database';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -119,6 +119,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 }
 
 // Sanitize objects by stripping undefined fields to prevent Firestore unsupported field value errors
+// IMPORTANT: Preserve Firestore FieldValue sentinels (increment, serverTimestamp, etc.)
 export function sanitizeData<T>(data: T): T {
   if (data === null || data === undefined) {
     return data;
@@ -127,8 +128,12 @@ export function sanitizeData<T>(data: T): T {
     return data.map((item) => sanitizeData(item)) as unknown as T;
   }
   if (typeof data === 'object' && !(data instanceof Date)) {
+    const raw = data as Record<string, any>;
+    if (raw._methodName && (raw._methodName.includes('increment') || raw._methodName.includes('FieldValue') || raw._methodName.includes('delete') || raw._methodName.includes('serverTimestamp'))) {
+      return data;
+    }
     const sanitized: Record<string, any> = {};
-    for (const [key, value] of Object.entries(data as Record<string, any>)) {
+    for (const [key, value] of Object.entries(raw)) {
       if (value !== undefined) {
         sanitized[key] = sanitizeData(value);
       }
@@ -136,16 +141,4 @@ export function sanitizeData<T>(data: T): T {
     return sanitized as T;
   }
   return data;
-}
-
-// Connection test (optional debug helper, not run automatically on module load)
-export async function testConnection() {
-  if (isFirestoreQuotaExhausted()) return;
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
-    }
-  }
 }

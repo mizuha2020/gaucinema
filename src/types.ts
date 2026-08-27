@@ -249,7 +249,7 @@ export interface YouTubeCommunityPost {
   isLiked?: boolean;
 }
 
-export type NavTab = 'home' | 'series' | 'single' | 'cinema' | 'anime' | 'tv-shows' | 'manga' | 'filter' | 'my-list' | 'history' | 'tv-live' | 'youtube';
+export type NavTab = 'home' | 'series' | 'single' | 'cinema' | 'anime' | 'tv-shows' | 'manga' | 'filter' | 'my-list' | 'history' | 'tv-live' | 'youtube' | 'xem-chung';
 
 export type ApiCategory = 'movie' | 'manga' | 'livetv' | 'youtube' | 'utility';
 export type ApiHealthStatus = 'live' | 'slow' | 'down';
@@ -352,5 +352,79 @@ export interface AdminNotification {
   active: boolean;
   createdAt: number;
   createdBy: string;
+}
+
+export interface AppConfigItem {
+  enabled: boolean;
+  label: string;
+  description: string;
+  icon?: string;
+  disabledAt?: number;
+  disabledBy?: string;
+}
+
+export type AppConfig = Record<ActiveApp, AppConfigItem>;
+
+export type RoomVisibility = 'public' | 'private';
+export type RoomStatus = 'active' | 'closed';
+export type RoomMemberRole = 'host' | 'member';
+export type PlaybackAction = 'play' | 'pause' | 'seek' | 'sync';
+export type ChatMessageType = 'user' | 'system';
+
+export interface WatchRoom {
+  roomId: string;
+  filmId: string;
+  filmName: string;
+  filmThumb: string;
+  episode: string;
+  episodeSlug: string;
+  serverName: string;
+  linkM3u8: string;
+  hostId: string;
+  hostName: string;
+  visibility: RoomVisibility;
+  passwordHash: string;
+  status: RoomStatus;
+  viewersCount: number;
+  createdAt: number;
+  endedAt?: number;
+  lastHostSeenAt: number;
+}
+
+export interface WatchRoomMember {
+  userId: string;
+  userName: string;
+  userAvatar?: string;
+  role: RoomMemberRole;
+  joinedAt: number;
+  lastSeenAt: number;
+}
+
+export interface PlaybackState {
+  position: number;
+  isPlaying: boolean;
+  updatedAt: number;
+  lastUpdatedBy: string;
+}
+
+export interface RoomChatMessage {
+  messageId: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar?: string;
+  text: string;
+  type: ChatMessageType;
+  createdAt: number;
+}
+
+export interface RoomListItem {
+  roomId: string;
+  hostName: string;
+  filmName: string;
+  episode: string;
+  viewersCount: number;
+  visibility: RoomVisibility;
+  status: RoomStatus;
+  createdAt: number;
 }
 

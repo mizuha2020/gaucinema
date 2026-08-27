@@ -300,6 +300,55 @@ class UserAnalyticsService {
   }
 
   /**
+   * Fix corrupted userStats documents where increment() FieldValue objects were saved
+   * as plain objects instead of being resolved by Firestore.
+   */
+  async fixCorruptedStats(): Promise<number> {
+    if (isFirestoreQuotaExhausted()) return 0;
+    try {
+      const snap = await getDocs(query(collection(db, 'userStats'), limit(100)));
+      let fixed = 0;
+      const batch = writeBatch(db);
+
+      for (const d of snap.docs) {
+        const data = d.data() as any;
+        const needsFix =
+          (data.totalOnlineSeconds && typeof data.totalOnlineSeconds === 'object') ||
+          (data.totalWatchSeconds && typeof data.totalWatchSeconds === 'object') ||
+          (data.watchSecondsByMedia && typeof data.watchSecondsByMedia === 'object' &&
+            Object.values(data.watchSecondsByMedia).some(v => typeof v === 'object'));
+
+        if (needsFix) {
+          const media = data.watchSecondsByMedia || {};
+          const movie = typeof media.movie === 'number' ? media.movie : 0;
+          const manga = typeof media.manga === 'number' ? media.manga : 0;
+          const livetv = typeof media.livetv === 'number' ? media.livetv : 0;
+          const youtube = typeof media.youtube === 'number' ? media.youtube : 0;
+          const mediaTotal = movie + manga + livetv + youtube;
+
+          const fixedData: Record<string, any> = {
+            totalOnlineSeconds: (typeof data.totalOnlineSeconds === 'number' ? data.totalOnlineSeconds : 0) || (mediaTotal > 0 ? mediaTotal + 300 : 0),
+            totalWatchSeconds: (typeof data.totalWatchSeconds === 'number' ? data.totalWatchSeconds : 0) || mediaTotal,
+            watchSecondsByMedia: { movie, manga, livetv, youtube },
+          };
+
+          batch.set(doc(db, 'userStats', d.id), fixedData, { merge: true });
+          fixed++;
+        }
+      }
+
+      if (fixed > 0) {
+        await batch.commit();
+        console.log(`[UserAnalytics] Fixed ${fixed} corrupted userStats documents`);
+      }
+      return fixed;
+    } catch (e) {
+      console.warn('Failed to fix corrupted stats:', e);
+      return 0;
+    }
+  }
+
+  /**
    * Fetch all user statistics combined with accounts list
    */
   async getAllUserStats(): Promise<UserStats[]> {
@@ -682,4 +731,20 @@ export function formatRelativeTime(timestamp?: number): string {
   const diffDay = Math.floor(diffHour / 24);
   if (diffDay < 30) return `${diffDay} ngày trước`;
   return `${Math.floor(diffDay / 30)} tháng trước`;
+}
+
+function getMediaTotal(stat: { watchSecondsByMedia?: { movie?: number; manga?: number; livetv?: number; youtube?: number } }): number {
+  const m = stat.watchSecondsByMedia;
+  return (m?.movie || 0) + (m?.manga || 0) + (m?.livetv || 0) + (m?.youtube || 0);
+}
+
+export function getEffectiveTotalOnline(stat: UserStats): number {
+  if (stat.totalOnlineSeconds && stat.totalOnlineSeconds > 0) return stat.totalOnlineSeconds;
+  const media = getMediaTotal(stat);
+  return media > 0 ? media + 300 : 0;
+}
+
+export function getEffectiveTotalWatch(stat: UserStats): number {
+  if (stat.totalWatchSeconds && stat.totalWatchSeconds > 0) return stat.totalWatchSeconds;
+  return getMediaTotal(stat);
 }

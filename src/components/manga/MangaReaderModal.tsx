@@ -297,6 +297,7 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
       profileName: activeProfile?.name || 'Độc Giả',
       profileAvatar: activeProfile?.avatar || '',
       type: 'manga',
+      contentId: manga.id,
       itemTitle: manga.title || 'Truyện tranh',
       itemSubtitle: currentChapter.title ? `Chương ${currentChapter.chapterNumber}: ${currentChapter.title}` : `Chương ${currentChapter.chapterNumber}`,
       itemCover: manga.coverUrl,
@@ -316,6 +317,7 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
       // Update presence content
       presenceService.updateContent({
         type: 'manga',
+        contentId: manga.id,
         itemTitle: manga.title || 'Truyện tranh',
         itemSubtitle: currentChapter.title ? `Chương ${currentChapter.chapterNumber}: ${currentChapter.title}` : `Chương ${currentChapter.chapterNumber}`,
         itemCover: manga.coverUrl,
