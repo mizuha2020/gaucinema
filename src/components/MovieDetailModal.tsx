@@ -40,6 +40,7 @@ interface MovieDetailModalProps {
   userActiveRoomId?: string | null;
   onCreateRoom?: (filmId: string, filmName: string, filmThumb: string, episode: string, episodeSlug: string, serverName: string, linkM3u8: string, password: string, visibility: RoomVisibility) => Promise<void>;
   onJoinRoom?: (roomId: string, password: string) => Promise<void>;
+  onShowToast?: (msg: string, type?: 'info' | 'success' | 'error' | 'warning') => void;
 }
 
 // Helper to parse Trailer URL (supports YouTube watch, embed, short links, or direct videos)
@@ -86,6 +87,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   userActiveRoomId,
   onCreateRoom,
   onJoinRoom,
+  onShowToast,
 }) => {
   const [fullMovieData, setFullMovieData] = useState<Movie | null>(null);
   const [episodes, setEpisodes] = useState<EpisodeServer[]>([]);
@@ -911,7 +913,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                     <button
                       onClick={() => {
                         if (userActiveRoomId) {
-                          alert('Bạn đang ở trong một phòng khác. Vui lòng rời phòng trước khi tham gia phòng mới.');
+                          onShowToast?.('Bạn đang ở trong một phòng khác. Vui lòng rời phòng trước khi tham gia phòng mới.', 'warning');
                           return;
                         }
                         if (room.visibility === 'public') {

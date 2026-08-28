@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Account,
   EpisodeServer,
@@ -39,6 +39,7 @@ import { MobileBottomNav } from './components/MobileBottomNav';
 import { NotificationTickerBanner } from './components/NotificationTickerBanner';
 import { WatchTogetherRoom } from './components/watch-together/WatchTogetherRoom';
 import { JoinRoomModal } from './components/watch-together/JoinRoomModal';
+import { CustomDialog, ToastContainer } from './components/CustomDialog';
 import { watchTogetherService } from './services/watchTogetherService';
 import { App as CapApp } from '@capacitor/app';
 import {
@@ -239,13 +240,46 @@ export default function App() {
   const [myList, setMyList] = useState<MyListItem[]>([]);
   const [watchHistory, setWatchHistory] = useState<WatchHistoryItem[]>([]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<Array<{ id: number; message: string; type?: 'info' | 'success' | 'error' | 'warning' }>>([]);
 
   // Show Toast Helper
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
+  const showToast = (msg: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') => {
+    const id = Date.now();
+    setToasts((prev) => [...prev, { id, message: msg, type }]);
     setTimeout(() => {
-      setToastMessage(null);
+      setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 3200);
+  };
+
+  // Dialog State
+  const [dialog, setDialog] = useState<{
+    isOpen: boolean;
+    title?: string;
+    message: string;
+    type?: 'info' | 'success' | 'error' | 'warning';
+    confirmText?: string;
+    cancelText?: string;
+    onConfirm?: () => void;
+    showCancel?: boolean;
+  } | null>(null);
+
+  const showDialog = (options: {
+    title?: string;
+    message: string;
+    type?: 'info' | 'success' | 'error' | 'warning';
+    confirmText?: string;
+    cancelText?: string;
+    onConfirm?: () => void;
+    showCancel?: boolean;
+  }) => {
+    setDialog({
+      isOpen: true,
+      ...options,
+    });
+  };
+
+  const closeDialog = () => {
+    setDialog(null);
   };
 
   // Bootstrap admin on initial start
@@ -326,8 +360,12 @@ export default function App() {
     }
     const unsub = watchTogetherService.subscribeRoom(activeRoomId, (room) => {
       if (!room || room.status === 'closed') {
+        const wasHost = room?.hostId === currentAccount?.id;
         setActiveRoomId(null);
-        setActiveRoomData(null);
+        if (!wasHost) {
+          showToast('Chủ phòng đã kết thúc xem chung.', 'info');
+          setActiveTab('xem-chung');
+        }
         watchTogetherService.leaveRoom(currentAccount?.id || '').catch(() => {});
       } else {
         setActiveRoomData(room);
@@ -383,7 +421,7 @@ export default function App() {
       setActiveRoomId(roomId);
       showToast('Đã tạo phòng xem chung thành công!');
     } catch (err: any) {
-      alert(err.message);
+      showToast(err.message, 'error');
     }
   }, [currentAccount, activeProfile]);
 
@@ -400,9 +438,17 @@ export default function App() {
       });
       setSelectedMovieForDetail(null);
       setActiveRoomId(roomId);
-      showToast('Đã tham gia phòng xem chung!');
+      showToast('Đã tham gia phòng xem chung!', 'success');
     } catch (err: any) {
-      alert(err.message);
+      const msg = err.message || 'Mật khẩu sai. Vui lòng thử lại.';
+      if (msg.includes('Yêu cầu vào lại đã được gửi')) {
+        // Auto-request sent, enter room to show waiting screen
+        setSelectedMovieForDetail(null);
+        setActiveRoomId(roomId);
+        showToast('Yêu cầu đã được gửi, vui lòng chờ host duyệt');
+      } else {
+        showToast(msg, 'error');
+      }
     }
   }, [currentAccount, activeProfile]);
 
@@ -604,7 +650,7 @@ export default function App() {
 
   // Online presence & browsing activity tracking
   useEffect(() => {
-    if (!currentAccount || playingMovie || showProfileSelector || showAdminDashboard) return;
+    if (!currentAccount || playingMovie || showProfileSelector) return;
 
     presenceService.startSession({
       accountId: currentAccount.id || currentAccount.username,
@@ -613,8 +659,8 @@ export default function App() {
       profileName: activeProfile?.name || currentAccount.displayName || 'Người xem',
       profileAvatar: activeProfile?.avatar || '',
       type: 'browsing',
-      itemTitle: 'Đang xem danh mục Phim',
-      itemSubtitle: `Mục: ${activeTab.toUpperCase()}`,
+      itemTitle: showAdminDashboard ? 'Đang quản trị' : 'Đang xem danh mục Phim',
+      itemSubtitle: showAdminDashboard ? 'Trang quản trị' : `Mục: ${activeTab.toUpperCase()}`,
     });
 
     return () => {
@@ -954,6 +1000,7 @@ export default function App() {
           onOpenAdminDashboard={
             currentAccount.role === 'admin' ? openAdminDashboard : undefined
           }
+          onShowToast={showToast}
         />
       )}
 
@@ -1324,7 +1371,7 @@ export default function App() {
                       className="p-4 rounded-2xl bg-[#0f172a] border border-slate-700/40 hover:border-emerald-500/30 transition-all cursor-pointer group"
                       onClick={() => {
                         if (activeRoomId) {
-                          alert('Bạn đang ở trong một phòng khác. Vui lòng rời phòng trước.');
+                          showToast('Bạn đang ở trong một phòng khác. Vui lòng rời phòng trước.', 'warning');
                           return;
                         }
                         if (room.visibility === 'public') {
@@ -1458,6 +1505,7 @@ export default function App() {
           userActiveRoomId={activeRoomId}
           onCreateRoom={handleCreateRoom}
           onJoinRoom={handleJoinRoom}
+          onShowToast={showToast}
         />
       )}
 
@@ -1478,6 +1526,7 @@ export default function App() {
           currentUserAvatar={activeProfile.avatar}
           onLeave={handleLeaveRoom}
           onEndRoom={handleEndRoom}
+          onRoomClosed={() => { handleLeaveRoom(); setActiveTab('xem-chung'); }}
         />
       )}
 
@@ -1629,6 +1678,20 @@ export default function App() {
           onLoadingComplete={handleSwitchAppComplete}
         />
       )}
+      {dialog && (
+        <CustomDialog
+          isOpen={dialog.isOpen}
+          onClose={closeDialog}
+          title={dialog.title}
+          message={dialog.message}
+          type={dialog.type}
+          confirmText={dialog.confirmText}
+          cancelText={dialog.cancelText}
+          onConfirm={dialog.onConfirm}
+          showCancel={dialog.showCancel}
+        />
+      )}
+      <ToastContainer toasts={toasts} onRemove={() => {}} />
     </>
   );
 }

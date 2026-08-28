@@ -25,6 +25,7 @@ interface ProfileSelectorProps {
   onDeleteProfile: (profileId: string) => Promise<void>;
   onLogout: () => void;
   onOpenAdminDashboard?: () => void;
+  onShowToast?: (msg: string, type?: 'info' | 'success' | 'error' | 'warning') => void;
 }
 
 const COLOR_PRESETS = ['#2563EB', '#38BDF8', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899'];
@@ -38,6 +39,7 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
   onDeleteProfile,
   onLogout,
   onOpenAdminDashboard,
+  onShowToast,
 }) => {
   const [isManaging, setIsManaging] = useState(false);
   const [editingProfile, setEditingProfile] = useState<UserProfile | null>(null);
@@ -129,7 +131,7 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
 
   const handleDeleteProfileClick = async (profile: UserProfile) => {
     if (profile.isPrimary) {
-      alert('Không thể xóa hồ sơ chính mặc định của tài khoản.');
+      onShowToast?.('Không thể xóa hồ sơ chính mặc định của tài khoản.', 'error');
       return;
     }
     if (!window.confirm(`Bạn có chắc chắn muốn xóa hồ sơ "${profile.name}"? Danh sách xem và lịch sử của hồ sơ này sẽ bị xóa vĩnh viễn.`)) {
@@ -139,7 +141,7 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
       await onDeleteProfile(profile.id);
       setEditingProfile(null);
     } catch (err: any) {
-      alert(err?.message || 'Không thể xóa hồ sơ');
+      onShowToast?.(err?.message || 'Không thể xóa hồ sơ', 'error');
     }
   };
 

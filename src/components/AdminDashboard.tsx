@@ -37,7 +37,7 @@ import { motion } from 'motion/react';
 interface AdminDashboardProps {
   currentAccount: Account;
   onBackToCinema: () => void;
-  onShowToast: (msg: string) => void;
+  onShowToast: (msg: string, type?: 'info' | 'success' | 'error' | 'warning') => void;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
@@ -255,7 +255,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      alert('Vui lòng chọn tệp hình ảnh hợp lệ (PNG, JPG, WEBP).');
+      onShowToast('Vui lòng chọn tệp hình ảnh hợp lệ (PNG, JPG, WEBP).', 'error');
       return;
     }
 
@@ -298,7 +298,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     e.preventDefault();
     const finalUrl = avatarFilePreview || avatarUrl.trim();
     if (!finalUrl) {
-      alert('Vui lòng tải lên ảnh hoặc nhập đường dẫn ảnh hợp lệ.');
+      onShowToast('Vui lòng tải lên ảnh hoặc nhập đường dẫn ảnh hợp lệ.', 'error');
       return;
     }
 

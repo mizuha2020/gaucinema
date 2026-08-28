@@ -100,7 +100,7 @@ export const YouTubeAppWrapper: React.FC<YouTubeAppWrapperProps> = ({
   const [selectedVnTopic, setSelectedVnTopic] = useState<string>('all');
   const showTopicPills = !searchQuery && (activeCategory === 'home' || activeCategory === 'trending' || activeCategory === 'all');
 
-  const showToast = (msg: string) => {
+  const showToast = (msg: string, _type?: 'info' | 'success' | 'error' | 'warning') => {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage(null);

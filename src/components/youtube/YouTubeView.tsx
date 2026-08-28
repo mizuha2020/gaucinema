@@ -146,7 +146,7 @@ interface YouTubeViewProps {
   onClearSelectedChannel?: () => void;
   onSelectVnTopic?: (topicId: string) => void;
   onChannelViewChange?: (isOpen: boolean) => void;
-  onShowToast?: (msg: string) => void;
+  onShowToast?: (msg: string, type?: 'info' | 'success' | 'error' | 'warning') => void;
 }
 
 export const YouTubeView: React.FC<YouTubeViewProps> = ({
@@ -642,6 +642,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
             onClearSelectedChannel?.();
           }}
           onPlayVideo={handleOpenVideo}
+          onShowToast={onShowToast}
         />
         {playerModal}
       </>

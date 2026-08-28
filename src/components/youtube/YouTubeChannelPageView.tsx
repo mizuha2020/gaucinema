@@ -34,6 +34,7 @@ interface YouTubeChannelPageViewProps {
   activeProfile?: UserProfile | null;
   onBack: () => void;
   onPlayVideo: (video: YouTubeVideo) => void;
+  onShowToast?: (msg: string, type?: 'info' | 'success' | 'error' | 'warning') => void;
 }
 
 export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
@@ -44,6 +45,7 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
   activeProfile,
   onBack,
   onPlayVideo,
+  onShowToast,
 }) => {
   const [channelData, setChannelData] = useState<YouTubeChannel | null>(initialChannel);
   const [videos, setVideos] = useState<YouTubeVideo[]>([]);
@@ -368,7 +370,7 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
               </button>
 
               <button
-                onClick={() => alert(`Tham gia hội viên kênh ${displayTitle}`)}
+                onClick={() => onShowToast?.(`Tham gia hội viên kênh ${displayTitle}`, 'info')}
                 className="flex-1 sm:flex-initial px-4 py-2 rounded-full bg-neutral-800 hover:bg-neutral-700 text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-slate-200 border border-neutral-700"
               >
                 <span className="text-yellow-400 text-sm">⭐</span>
@@ -376,7 +378,7 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
               </button>
 
               <button
-                onClick={() => alert(`Cộng đồng kênh ${displayTitle}`)}
+                onClick={() => onShowToast?.(`Cộng đồng kênh ${displayTitle}`, 'info')}
                 className="hidden sm:flex px-4 py-2 rounded-full bg-neutral-800 hover:bg-neutral-700 text-xs sm:text-sm font-bold items-center justify-center gap-1.5 transition-colors cursor-pointer text-slate-200 border border-neutral-700"
               >
                 <Users className="w-3.5 h-3.5 text-slate-300 shrink-0" />
@@ -596,7 +598,7 @@ export const YouTubeChannelPageView: React.FC<YouTubeChannelPageViewProps> = ({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              alert(`Tùy chọn video: ${vid.title}`);
+                              onShowToast?.(`Tùy chọn video: ${vid.title}`, 'info');
                             }}
                             className="p-1 hover:bg-white/10 rounded-full text-slate-400 hover:text-white shrink-0"
                           >

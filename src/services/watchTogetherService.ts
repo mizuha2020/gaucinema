@@ -149,6 +149,37 @@ class WatchTogetherService {
       }
     }
 
+    const rejectedSnap = await new Promise<boolean>((resolve) => {
+      const rejectedRef = ref(rtdb, `${ROOMS_PATH}/${params.roomId}/joinRejected/${params.userId}`);
+      let unsub: () => void = () => {};
+      unsub = onValue(rejectedRef, (snap) => {
+        unsub();
+        resolve(snap.val() === true);
+      }, () => resolve(false));
+    });
+    if (rejectedSnap) {
+      throw new Error('Bạn không thể vào phòng này nữa.');
+    }
+
+    const removedSnap = await new Promise<boolean>((resolve) => {
+      const removedRef = ref(rtdb, `${ROOMS_PATH}/${params.roomId}/joinRemoved/${params.userId}`);
+      let unsub: () => void = () => {};
+      unsub = onValue(removedRef, (snap) => {
+        unsub();
+        resolve(snap.val() === true);
+      }, () => resolve(false));
+    });
+    if (removedSnap) {
+      // First rejoin attempt after being kicked: auto-send request
+      await remove(ref(rtdb, `${ROOMS_PATH}/${params.roomId}/joinRemoved/${params.userId}`));
+      await set(ref(rtdb, `${ROOMS_PATH}/${params.roomId}/pendingJoins/${params.userId}`), sanitizeData({
+        userId: params.userId,
+        userName: params.userName,
+        requestedAt: Date.now(),
+      }));
+      throw new Error('Yêu cầu vào lại đã được gửi. Vui lòng chờ host duyệt.');
+    }
+
     const now = Date.now();
     const member: WatchRoomMember = {
       userId: params.userId,
@@ -191,6 +222,7 @@ class WatchTogetherService {
     const room = roomSnap as WatchRoom;
 
     const updates: Record<string, any> = {};
+    let hostClosedRoom = false;
 
     if (room.hostId === userId) {
       const members = await this.getMembers(roomId);
@@ -211,6 +243,7 @@ class WatchTogetherService {
       } else {
         updates[`${ROOMS_PATH}/${roomId}/status`] = 'closed';
         updates[`${ROOMS_PATH}/${roomId}/endedAt`] = Date.now();
+        hostClosedRoom = true;
       }
     }
 
@@ -230,6 +263,10 @@ class WatchTogetherService {
     updates[`${USERS_PATH}/${userId}/activeRoomId`] = null;
 
     await update(ref(rtdb), updates);
+
+    if (hostClosedRoom) {
+      await remove(ref(rtdb, `${ROOMS_PATH}/${roomId}`));
+    }
   }
 
   async endRoom(hostId: string): Promise<void> {
@@ -266,6 +303,8 @@ class WatchTogetherService {
       type: 'system',
       createdAt: Date.now(),
     }));
+
+    await remove(ref(rtdb, `${ROOMS_PATH}/${roomId}`));
   }
 
   async verifyPassword(roomId: string, password: string): Promise<boolean> {
@@ -380,6 +419,7 @@ class WatchTogetherService {
   async removeMember(roomId: string, memberId: string): Promise<void> {
     const updates: Record<string, any> = {};
     updates[`${ROOMS_PATH}/${roomId}/members/${memberId}`] = null;
+    updates[`${ROOMS_PATH}/${roomId}/joinRemoved/${memberId}`] = true;
     updates[`${USERS_PATH}/${memberId}/activeRoomId`] = null;
     await update(ref(rtdb), updates);
     await push(ref(rtdb, `${ROOMS_PATH}/${roomId}/chat`), sanitizeData({
@@ -400,6 +440,119 @@ class WatchTogetherService {
       type: 'system',
       createdAt: Date.now(),
     }));
+  }
+
+  subscribeChatBanned(roomId: string, userId: string, callback: (banned: boolean) => void): () => void {
+    const bannedRef = ref(rtdb, `${ROOMS_PATH}/${roomId}/chatBanned/${userId}`);
+    return onValue(bannedRef, (snap) => {
+      callback(snap.val() === true);
+    });
+  }
+
+  subscribeAllChatBanned(roomId: string, callback: (bannedMap: Record<string, boolean>) => void): () => void {
+    const bannedRef = ref(rtdb, `${ROOMS_PATH}/${roomId}/chatBanned`);
+    return onValue(bannedRef, (snap) => {
+      const map: Record<string, boolean> = {};
+      snap.forEach((child) => {
+        if (child.val() === true) map[child.key!] = true;
+      });
+      callback(map);
+    });
+  }
+
+  async unbanChat(roomId: string, memberId: string): Promise<void> {
+    await remove(ref(rtdb, `${ROOMS_PATH}/${roomId}/chatBanned/${memberId}`));
+    await push(ref(rtdb, `${ROOMS_PATH}/${roomId}/chat`), sanitizeData({
+      senderId: 'system',
+      senderName: 'Hệ thống',
+      text: `Một thành viên đã được host gỡ cấm chat.`,
+      type: 'system',
+      createdAt: Date.now(),
+    }));
+  }
+
+  async requestJoin(roomId: string, userId: string, userName: string): Promise<void> {
+    await set(ref(rtdb, `${ROOMS_PATH}/${roomId}/pendingJoins/${userId}`), sanitizeData({
+      userId,
+      userName,
+      requestedAt: Date.now(),
+    }));
+  }
+
+  subscribePendingJoins(roomId: string, callback: (joins: Array<{ userId: string; userName: string; requestedAt: number }>) => void): () => void {
+    const pendingRef = ref(rtdb, `${ROOMS_PATH}/${roomId}/pendingJoins`);
+    return onValue(pendingRef, (snap) => {
+      const joins: Array<{ userId: string; userName: string; requestedAt: number }> = [];
+      snap.forEach((child) => {
+        joins.push(child.val() as { userId: string; userName: string; requestedAt: number });
+      });
+      callback(joins.sort((a, b) => a.requestedAt - b.requestedAt));
+    });
+  }
+
+  async approveJoin(roomId: string, userId: string, roomData: WatchRoom): Promise<void> {
+    const now = Date.now();
+    const member: WatchRoomMember = {
+      userId,
+      userName: '',
+      role: 'member',
+      joinedAt: now,
+      lastSeenAt: now,
+    };
+
+    const pendingSnap = await new Promise<{ userName: string } | null>((resolve) => {
+      const pendingRef = ref(rtdb, `${ROOMS_PATH}/${roomId}/pendingJoins/${userId}`);
+      let unsub: () => void = () => {};
+      unsub = onValue(pendingRef, (snap) => {
+        unsub();
+        resolve(snap.val());
+      }, () => resolve(null));
+    });
+
+    if (pendingSnap) member.userName = pendingSnap.userName;
+
+    const updates: Record<string, any> = {};
+    updates[`${ROOMS_PATH}/${roomId}/members/${userId}`] = sanitizeData(member);
+    updates[`${ROOMS_PATH}/${roomId}/viewersCount`] = (roomData.viewersCount || 0) + 1;
+    updates[`${ROOMS_PATH}/${roomId}/pendingJoins/${userId}`] = null;
+    updates[`${ROOMS_PATH}/${roomId}/joinRejected/${userId}`] = null;
+    updates[`${ROOMS_PATH}/${roomId}/joinRemoved/${userId}`] = null;
+    updates[`${USERS_PATH}/${userId}/activeRoomId`] = roomId;
+
+    await update(ref(rtdb), updates);
+
+    await push(ref(rtdb, `${ROOMS_PATH}/${roomId}/chat`), sanitizeData({
+      senderId: 'system',
+      senderName: 'Hệ thống',
+      text: `${member.userName} đã tham gia phòng xem chung.`,
+      type: 'system',
+      createdAt: Date.now(),
+    }));
+  }
+
+  async rejectJoin(roomId: string, userId: string): Promise<void> {
+    const updates: Record<string, any> = {};
+    updates[`${ROOMS_PATH}/${roomId}/pendingJoins/${userId}`] = null;
+    updates[`${ROOMS_PATH}/${roomId}/joinRejected/${userId}`] = true;
+    await update(ref(rtdb), updates);
+  }
+
+  subscribeRejected(roomId: string, userId: string, callback: (rejected: boolean) => void): () => void {
+    const rejectedRef = ref(rtdb, `${ROOMS_PATH}/${roomId}/joinRejected/${userId}`);
+    return onValue(rejectedRef, (snap) => {
+      callback(snap.val() === true);
+    });
+  }
+
+  subscribeRemoved(roomId: string, userId: string, callback: (removed: boolean) => void): () => void {
+    const removedRef = ref(rtdb, `${ROOMS_PATH}/${roomId}/joinRemoved/${userId}`);
+    return onValue(removedRef, (snap) => {
+      callback(snap.val() === true);
+    });
+  }
+
+  async clearJoinRemoved(roomId: string, userId: string): Promise<void> {
+    await remove(ref(rtdb, `${ROOMS_PATH}/${roomId}/joinRemoved/${userId}`));
   }
 
   private startPresence(userId: string): void {
