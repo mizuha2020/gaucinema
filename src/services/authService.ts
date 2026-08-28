@@ -196,9 +196,7 @@ export const authService = {
       // Validate password
       const storedPass = String(acc.password || '').trim();
 
-      const isPasswordValid =
-        storedPass === hashedInput ||
-        storedPass === trimmedPass;
+      const isPasswordValid = storedPass === hashedInput;
 
       if (!isPasswordValid) {
         throw new Error('Mật khẩu không chính xác!');
@@ -230,14 +228,6 @@ export const authService = {
         throw err;
       }
       console.error('Login error:', err);
-
-      // Emergency offline/fallback for admin login if network fails
-      if (trimmedUser === 'admin' && trimmedPass === 'Admin@2026!') {
-        const adminAcc = await this.bootstrapAdminAccount(false);
-        this.saveSessionAccount(adminAcc);
-        return adminAcc;
-      }
-
       throw new Error(err.message || 'Không thể đăng nhập. Vui lòng kiểm tra lại mật khẩu hoặc kết nối mạng.');
     }
   },

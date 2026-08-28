@@ -22,6 +22,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import DOMPurify from 'dompurify';
 import { CreateRoomModal, JoinRoomModal } from './watch-together';
 
 interface MovieDetailModalProps {
@@ -582,7 +583,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                   {currentData.content ? (
                     <div
                       dangerouslySetInnerHTML={{
-                        __html: currentData.content,
+                        __html: DOMPurify.sanitize(currentData.content),
                       }}
                     />
                   ) : (

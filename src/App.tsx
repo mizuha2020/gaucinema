@@ -52,7 +52,6 @@ import {
   Sword,
   Clapperboard,
   ShieldCheck,
-  CheckCircle2,
   Info,
   Lock,
   AlertTriangle,
@@ -101,6 +100,9 @@ export default function App() {
     }
   };
 
+  const handleSwitchAppRef = useRef(handleSwitchApp);
+  handleSwitchAppRef.current = handleSwitchApp;
+
   const handleSwitchAppComplete = () => {
     setTargetApp(null);
     setIsSwitchingApp(false);
@@ -117,7 +119,7 @@ export default function App() {
   }, []);
 
   // Auto-redirect when active app is disabled by admin
-  const maintenanceTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const maintenanceTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
   const [maintenanceMessage, setMaintenanceMessage] = useState<string | null>(null);
   const [maintenanceCountdown, setMaintenanceCountdown] = useState<number>(0);
 
@@ -126,7 +128,7 @@ export default function App() {
       setMaintenanceMessage(null);
       setMaintenanceCountdown(0);
       if (maintenanceTimerRef.current) {
-        clearTimeout(maintenanceTimerRef.current);
+        clearInterval(maintenanceTimerRef.current);
         maintenanceTimerRef.current = null;
       }
       return;
@@ -147,7 +149,7 @@ export default function App() {
           maintenanceTimerRef.current = null;
           setMaintenanceMessage(null);
           setMaintenanceCountdown(0);
-          handleSwitchApp('cinema');
+          handleSwitchAppRef.current('cinema');
         } else {
           setMaintenanceCountdown(remaining);
         }
@@ -163,7 +165,7 @@ export default function App() {
       setMaintenanceMessage(null);
       setMaintenanceCountdown(0);
       if (maintenanceTimerRef.current) {
-        clearTimeout(maintenanceTimerRef.current);
+        clearInterval(maintenanceTimerRef.current);
         maintenanceTimerRef.current = null;
       }
     }
@@ -204,20 +206,26 @@ export default function App() {
   const [searchKeyword, setSearchKeyword] = useState<string>('');
 
   // Movie collections for Home
-  const [newUpdated, setNewUpdated] = useState<Movie[]>([]);
-  const [topHotAll, setTopHotAll] = useState<Movie[]>([]);
-  const [topSeries, setTopSeries] = useState<Movie[]>([]);
-  const [topSingle, setTopSingle] = useState<Movie[]>([]);
-  const [theaterList, setTheaterList] = useState<Movie[]>([]);
-  const [seriesList, setSeriesList] = useState<Movie[]>([]);
-  const [singleList, setSingleList] = useState<Movie[]>([]);
-  const [animeList, setAnimeList] = useState<Movie[]>([]);
-  const [actionList, setActionList] = useState<Movie[]>([]);
-  const [romanceList, setRomanceList] = useState<Movie[]>([]);
-  const [horrorList, setHorrorList] = useState<Movie[]>([]);
-  const [sciFiList, setSciFiList] = useState<Movie[]>([]);
-  const [koreanList, setKoreanList] = useState<Movie[]>([]);
+  const [movieCollections, setMovieCollections] = useState<Record<string, Movie[]>>({
+    newUpdated: [],
+    topHotAll: [],
+    topSeries: [],
+    topSingle: [],
+    theaterList: [],
+    seriesList: [],
+    singleList: [],
+    animeList: [],
+    actionList: [],
+    romanceList: [],
+    horrorList: [],
+    sciFiList: [],
+    koreanList: [],
+  });
   const [isLoadingHome, setIsLoadingHome] = useState<boolean>(true);
+
+  const setMovieCollection = (key: string, value: Movie[]) => {
+    setMovieCollections((prev) => ({ ...prev, [key]: value }));
+  };
 
   // Active Modals & Player State
   const [selectedMovieForDetail, setSelectedMovieForDetail] = useState<Movie | null>(null);
@@ -228,6 +236,8 @@ export default function App() {
   const [playingServer, setPlayingServer] = useState<EpisodeServer | null>(null);
   const [allServers, setAllServers] = useState<EpisodeServer[]>([]);
   const [initialResumeTime, setInitialResumeTime] = useState<number>(0);
+  const videoTimeRef = useRef(0);
+  const videoDurationRef = useRef(0);
 
   // Watch Together State
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
@@ -239,12 +249,12 @@ export default function App() {
   // User Profile Data (My List & History scoped to activeProfile)
   const [myList, setMyList] = useState<MyListItem[]>([]);
   const [watchHistory, setWatchHistory] = useState<WatchHistoryItem[]>([]);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; type?: 'info' | 'success' | 'error' | 'warning' }>>([]);
+  const toastIdRef = useRef(0);
 
   // Show Toast Helper
   const showToast = (msg: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') => {
-    const id = Date.now();
+    const id = ++toastIdRef.current;
     setToasts((prev) => [...prev, { id, message: msg, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -483,9 +493,9 @@ export default function App() {
       ]);
 
       const trendingItems = trendingAllRes?.items || [];
-      if (trendingItems.length) setTopHotAll(trendingItems);
+      if (trendingItems.length) setMovieCollection('topHotAll', trendingItems);
 
-      if (theaterRes?.items?.length) setTheaterList(theaterRes.items);
+      if (theaterRes?.items?.length) setMovieCollection('theaterList', theaterRes.items);
 
       if (newRes?.items?.length) {
         // Lọc bỏ các phim đã có trong Top Hot (All, Series, Single) để tránh trùng lặp
@@ -495,11 +505,11 @@ export default function App() {
           ...(topSingleRes?.items || []).map((m: any) => m.slug)
         ]);
         const filteredNew = newRes.items.filter((m: any) => !hotSlugs.has(m.slug));
-        setNewUpdated(filteredNew);
+        setMovieCollection('newUpdated', filteredNew);
       }
 
-      if (topSeriesRes?.items?.length) setTopSeries(topSeriesRes.items);
-      if (topSingleRes?.items?.length) setTopSingle(topSingleRes.items);
+      if (topSeriesRes?.items?.length) setMovieCollection('topSeries', topSeriesRes.items);
+      if (topSingleRes?.items?.length) setMovieCollection('topSingle', topSingleRes.items);
       if (newRes?.items?.length || trendingItems.length || topSeriesRes?.items?.length || topSingleRes?.items?.length) {
         setIsLoadingHome(false);
       }
@@ -524,17 +534,14 @@ export default function App() {
         movieApi.getByCountry('han-quoc', 1, 16),
       ]);
 
-      if (newRes?.items?.length && !newUpdated.length) {
-        setNewUpdated(newRes.items);
-      }
-      if (seriesRes.status === 'fulfilled') setSeriesList(seriesRes.value.items?.slice(10) || []);
-      if (singleRes.status === 'fulfilled') setSingleList(singleRes.value.items?.slice(10) || []);
-      if (animeRes.status === 'fulfilled') setAnimeList(animeRes.value.items || []);
-      if (actionRes.status === 'fulfilled') setActionList(actionRes.value.items || []);
-      if (romanceRes.status === 'fulfilled') setRomanceList(romanceRes.value.items || []);
-      if (horrorRes.status === 'fulfilled') setHorrorList(horrorRes.value.items || []);
-      if (sciFiRes.status === 'fulfilled') setSciFiList(sciFiRes.value.items || []);
-      if (koreanRes.status === 'fulfilled') setKoreanList(koreanRes.value.items || []);
+      if (seriesRes.status === 'fulfilled') setMovieCollection('seriesList', seriesRes.value.items?.slice(10) || []);
+      if (singleRes.status === 'fulfilled') setMovieCollection('singleList', singleRes.value.items?.slice(10) || []);
+      if (animeRes.status === 'fulfilled') setMovieCollection('animeList', animeRes.value.items || []);
+      if (actionRes.status === 'fulfilled') setMovieCollection('actionList', actionRes.value.items || []);
+      if (romanceRes.status === 'fulfilled') setMovieCollection('romanceList', romanceRes.value.items || []);
+      if (horrorRes.status === 'fulfilled') setMovieCollection('horrorList', horrorRes.value.items || []);
+      if (sciFiRes.status === 'fulfilled') setMovieCollection('sciFiList', sciFiRes.value.items || []);
+      if (koreanRes.status === 'fulfilled') setMovieCollection('koreanList', koreanRes.value.items || []);
     } catch (e) {
       console.error('Failed to load initial movie data', e);
     } finally {
@@ -577,10 +584,8 @@ export default function App() {
   const handleUpdateProfiles = async (updated: UserProfile[]) => {
     if (!currentAccount) return;
     setProfiles(updated);
-    // Persist each updated profile in Firestore
-    for (const p of updated) {
-      await firestoreStorage.updateProfile(currentAccount.id, p);
-    }
+    // Persist each updated profile in Firestore (parallel)
+    await Promise.all(updated.map((p) => firestoreStorage.updateProfile(currentAccount.id, p)));
     if (activeProfile) {
       const activeUpdated = updated.find((p) => p.id === activeProfile.id);
       if (activeUpdated) setActiveProfile(activeUpdated);
@@ -672,9 +677,31 @@ export default function App() {
   useEffect(() => {
     const handlePopState = (e: PopStateEvent) => {
       if (playingMovie) {
+        const movieToDetail = playingMovie;
+        const episodeToSave = playingEpisode;
+        const serverToSave = playingServer;
         setPlayingMovie(null);
-        setSelectedMovieForDetail(playingMovie);
-        refreshProfileData();
+        setSelectedMovieForDetail(movieToDetail);
+        // Save one final progress snapshot before closing
+        if (currentAccount && activeProfile && episodeToSave && serverToSave && videoTimeRef.current > 0) {
+          firestoreStorage.saveWatchProgress(currentAccount.id, activeProfile.id, {
+            id: `${movieToDetail.slug}_${episodeToSave.slug}`,
+            movieSlug: movieToDetail.slug,
+            movieName: movieToDetail.name,
+            movieOriginName: movieToDetail.origin_name,
+            movieThumb: movieToDetail.thumb_url,
+            moviePoster: movieToDetail.poster_url,
+            episodeName: episodeToSave.name,
+            episodeSlug: episodeToSave.slug,
+            serverName: serverToSave.server_name,
+            linkM3u8: episodeToSave.link_m3u8,
+            currentTime: videoTimeRef.current,
+            duration: videoDurationRef.current || 0,
+            progressPercent: videoDurationRef.current > 0 ? Math.round((videoTimeRef.current / videoDurationRef.current) * 100) : 0,
+          }).then(() => refreshProfileData());
+        } else {
+          refreshProfileData();
+        }
       } else if (selectedMovieForDetail) {
         setSelectedMovieForDetail(null);
       } else if (showAdminDashboard) {
@@ -771,6 +798,8 @@ export default function App() {
     servers: EpisodeServer[],
     resumeTime: number
   ) => {
+    videoTimeRef.current = resumeTime;
+    videoDurationRef.current = 0;
     setPlayingMovie(movie);
     setPlayingEpisode(episode);
     setPlayingServer(server);
@@ -778,6 +807,27 @@ export default function App() {
     setInitialResumeTime(resumeTime);
     setSelectedMovieForDetail(null);
     window.history.pushState({ playerOpen: true }, '', '');
+
+    // Ghi nhận ngay khi bắt đầu xem để mục "Xem tiếp" / "Lịch sử" xuất hiện lập tức.
+    if (currentAccount && activeProfile) {
+      firestoreStorage
+        .saveWatchProgress(currentAccount.id, activeProfile.id, {
+          id: `${movie.slug}_${episode.slug}`,
+          movieSlug: movie.slug,
+          movieName: movie.name,
+          movieOriginName: movie.origin_name,
+          movieThumb: movie.thumb_url,
+          moviePoster: movie.poster_url,
+          episodeName: episode.name,
+          episodeSlug: episode.slug,
+          serverName: server.server_name,
+          linkM3u8: episode.link_m3u8,
+          currentTime: resumeTime,
+          duration: 0,
+          progressPercent: 0,
+        })
+        .then(() => refreshProfileData());
+    }
   };
 
   const closePlayer = () => {
@@ -890,9 +940,24 @@ export default function App() {
     }
   };
 
+  // Select episode inside the player (memoized so re-renders don't retrigger the player's load effect)
+  const handleSelectEpisode = useCallback((ep: MovieEpisode, srv: EpisodeServer, resumeTime?: number) => {
+    setPlayingEpisode(ep);
+    setPlayingServer(srv);
+    setInitialResumeTime(resumeTime ?? 0);
+  }, []);
+
+  // Lightweight live-time forwarder so the exit save uses the real final time
+  const handlePlayerTimeUpdate = useCallback((t: number, d: number) => {
+    videoTimeRef.current = t;
+    if (d > 0) videoDurationRef.current = d;
+  }, []);
+
   // Save Progress Callback from Player to Firestore
   const handleSaveProgress = useCallback(
     async (currentTime: number, duration: number) => {
+      videoTimeRef.current = currentTime;
+      videoDurationRef.current = duration;
       if (!currentAccount || !activeProfile || !playingMovie || !playingEpisode || !playingServer) return;
       if (duration <= 0) return;
 
@@ -912,6 +977,10 @@ export default function App() {
         duration,
         progressPercent,
       });
+      // Refresh the "Continue Watching" / History lists live so they appear
+      // while the user is still watching, not only after closing the player.
+      const history = await firestoreStorage.getHistory(currentAccount.id, activeProfile.id);
+      setWatchHistory(history);
     },
     [currentAccount, activeProfile, playingMovie, playingEpisode, playingServer]
   );
@@ -946,6 +1015,12 @@ export default function App() {
   }
 
   let appContent = null;
+
+  const {
+    newUpdated, topHotAll, topSeries, topSingle, theaterList,
+    seriesList, singleList, animeList, actionList, romanceList,
+    horrorList, sciFiList, koreanList,
+  } = movieCollections;
 
   if (activeApp === 'manga') {
     appContent = (
@@ -1013,12 +1088,9 @@ export default function App() {
           allServers={allServers}
           initialTime={initialResumeTime}
           onBack={closePlayer}
-          onSelectEpisode={(ep, srv, resumeTime) => {
-            setPlayingEpisode(ep);
-            setPlayingServer(srv);
-            setInitialResumeTime(resumeTime ?? 0);
-          }}
+          onSelectEpisode={handleSelectEpisode}
           onSaveProgress={handleSaveProgress}
+          onTimeUpdate={handlePlayerTimeUpdate}
           currentAccount={currentAccount}
           activeProfile={activeProfile}
         />
@@ -1461,9 +1533,7 @@ export default function App() {
                 }}
                 onClearAll={async () => {
                   if (!currentAccount || !activeProfile) return;
-                  for (const item of watchHistory) {
-                    await firestoreStorage.removeHistoryItem(currentAccount.id, activeProfile.id, item.movieSlug);
-                  }
+                  await Promise.all(watchHistory.map((item) => firestoreStorage.removeHistoryItem(currentAccount.id, activeProfile.id, item.movieSlug)));
                   await refreshProfileData();
                   showToast('Đã dọn sạch lịch sử xem của hồ sơ');
                 }}
@@ -1544,14 +1614,6 @@ export default function App() {
             setJoinRoomTarget(null);
           }}
         />
-      )}
-
-      {/* Toast Notification Box */}
-      {toastMessage && (
-        <div className="fixed bottom-20 md:bottom-8 right-4 md:right-8 z-50 bg-[#0f172a] border border-blue-500/80 text-white text-xs sm:text-sm font-semibold px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-4 duration-300">
-          <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
-          <span>{toastMessage}</span>
-        </div>
       )}
 
       {/* 6. Comprehensive Footer */}

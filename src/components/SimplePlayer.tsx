@@ -4,6 +4,7 @@ import React, {
   useState,
   useCallback,
   useMemo,
+  memo,
 } from 'react';
 import Hls from 'hls.js';
 import {
@@ -38,38 +39,16 @@ interface SimplePlayerProps {
   onBack: () => void;
   onSelectEpisode: (ep: MovieEpisode, server: EpisodeServer, currentTime?: number) => void;
   onSaveProgress: (currentTime: number, duration: number) => void;
+  onTimeUpdate?: (currentTime: number, duration: number) => void;
   initialTime?: number;
   autoFullscreen?: boolean; // 👈 Thêm prop này, mặc định true
   currentAccount?: Account | null;
   activeProfile?: UserProfile | null;
 }
 
-function getMirrorUrls(originalUrl: string): string[] {
-  if (!originalUrl) return [];
-  const mirrors = [
-    'vip.opstream15.com',
-    'vip.opstream16.com',
-    'vip.opstream17.com',
-    's1.phim1280.tv',
-  ];
-  const list: string[] = [originalUrl];
-  try {
-    const url = new URL(originalUrl);
-    const host = url.host;
-    if (host.includes('opstream') || host.includes('phim1280')) {
-      for (const m of mirrors) {
-        if (m !== host) {
-          const copy = new URL(originalUrl);
-          copy.host = m;
-          list.push(copy.toString());
-        }
-      }
-    }
-  } catch {}
-  return list;
-}
+import { getMirrorUrls } from '../utils/mirrorUrls';
 
-export const SimplePlayer: React.FC<SimplePlayerProps> = ({
+export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
   movie,
   currentEpisode,
   currentServer,
@@ -77,6 +56,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
   onBack,
   onSelectEpisode,
   onSaveProgress,
+  onTimeUpdate,
   initialTime = 0,
   autoFullscreen = false, // 👈 Mặc định bật
   currentAccount,
@@ -684,6 +664,39 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     };
   }, [duration, onSaveProgress]);
 
+  // Save progress on unmount (when player closes)
+  useEffect(() => {
+    return () => {
+      const video = videoRef.current;
+      // Read live duration from the video element because this effect has
+      // empty deps and would otherwise capture the initial `duration` (= 0).
+      const liveDuration = video?.duration || duration;
+      if (video && liveDuration > 0 && currentAccount && activeProfile) {
+        const cur = video.currentTime;
+        const progressPercent = Math.round((cur / liveDuration) * 100);
+        onSaveProgress(cur, liveDuration);
+        watchHistoryService.recordWatch({
+          accountId: currentAccount.id || currentAccount.username || 'user',
+          accountDisplayName: currentAccount.displayName || currentAccount.username || 'Khán Giả Phim',
+          profileId: activeProfile.id || 'movie_profile',
+          profileName: activeProfile.name || 'Người xem',
+          profileAvatar: activeProfile.avatar || '',
+          mediaType: 'movie',
+          contentId: movie.slug || movie._id || movie.id || '',
+          title: movie.name,
+          subtitle: currentEpisode.name ? `Tập ${currentEpisode.name}` : undefined,
+          coverUrl: movie.poster_url || movie.thumb_url,
+          apiSource: currentServer.server_name || 'movie',
+          currentTime: cur,
+          duration: liveDuration,
+          progressPercent,
+          watchedDurationSeconds: 0,
+        });
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Phím tắt (giữ nguyên)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -853,6 +866,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
     if (!video) return;
     const cur = video.currentTime;
     setCurrentTime(cur);
+    onTimeUpdate?.(cur, video.duration || 0);
     if (video.buffered.length > 0) {
       setBuffered(video.buffered.end(video.buffered.length - 1));
     }
@@ -1330,4 +1344,4 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = ({
       )}
     </div>
   );
-};
+});

@@ -413,15 +413,15 @@ class SystemApiService {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 7000);
-      const directRes = await fetch(smartUrl, { signal: controller.signal, mode: 'no-cors' });
+      const directRes = await fetch(smartUrl, { signal: controller.signal });
       clearTimeout(timer);
       const latencyMs = Date.now() - start;
       return {
-        ok: true,
-        status: latencyMs < 800 ? 'live' : 'slow',
-        statusCode: 200,
+        ok: directRes.ok,
+        status: directRes.ok ? (latencyMs < 800 ? 'live' : 'slow') : 'down',
+        statusCode: directRes.status,
         latencyMs,
-        message: `Phản hồi trực tiếp (${latencyMs}ms)`,
+        message: directRes.ok ? `Phản hồi trực tiếp (${latencyMs}ms)` : `Lỗi HTTP ${directRes.status}`,
       };
     } catch (err: any) {
       const latencyMs = Date.now() - start;

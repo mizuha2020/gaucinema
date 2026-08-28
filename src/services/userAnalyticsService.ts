@@ -444,7 +444,7 @@ class UserAnalyticsService {
     const colRef = query(collection(db, 'userStats'), limit(50));
     let throttleTimeout: NodeJS.Timeout | null = null;
 
-    return onSnapshot(
+    const unsubscribe = onSnapshot(
       colRef,
       () => {
         if (throttleTimeout) return;
@@ -458,6 +458,14 @@ class UserAnalyticsService {
         handleFirestoreError(error, OperationType.LIST, 'userStats');
       }
     );
+
+    return () => {
+      if (throttleTimeout) {
+        clearTimeout(throttleTimeout);
+        throttleTimeout = null;
+      }
+      unsubscribe();
+    };
   }
 
   /**

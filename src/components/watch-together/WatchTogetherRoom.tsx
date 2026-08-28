@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
+import { getMirrorUrls } from '../../utils/mirrorUrls';
 import {
   ArrowLeft,
   Copy,
@@ -51,31 +52,6 @@ const AD_RANGES: Array<{ start: number; end: number }> = [
     }
     return null;
   }
-
-  function getMirrorUrls(originalUrl: string): string[] {
-  if (!originalUrl) return [];
-  const mirrors = [
-    'vip.opstream15.com',
-    'vip.opstream16.com',
-    'vip.opstream17.com',
-    's1.phim1280.tv',
-  ];
-  const list: string[] = [originalUrl];
-  try {
-    const url = new URL(originalUrl);
-    const host = url.host;
-    if (host.includes('opstream') || host.includes('phim1280')) {
-      for (const m of mirrors) {
-        if (m !== host) {
-          const copy = new URL(originalUrl);
-          copy.host = m;
-          list.push(copy.toString());
-        }
-      }
-    }
-  } catch {}
-  return list;
-}
 
 export const WatchTogetherRoom: React.FC<WatchTogetherRoomProps> = ({
   room,

@@ -87,7 +87,6 @@ class WatchHistoryService {
       };
 
       await setDoc(doc(db, HISTORY_COLLECTION, activityId), sanitizeData(activityData), { merge: true });
-      console.log(`[watchHistory] Recorded: ${activityId}`, activityData);
     } catch (e) {
       handleFirestoreError(e, OperationType.CREATE, HISTORY_COLLECTION);
     }
@@ -137,12 +136,8 @@ class WatchHistoryService {
         lastDoc = doc;
       });
 
-      // Get total count (for display) - simple query without where for speed
+      // Estimate total from current page (avoid fetching entire collection)
       let total = items.length;
-      try {
-        const totalSnapshot = await getDocs(collection(db, HISTORY_COLLECTION));
-        total = totalSnapshot.size;
-      } catch {}
 
       return {
         items,
@@ -163,7 +158,7 @@ class WatchHistoryService {
         const items = snapshot.docs.map(doc => doc.data() as UserActivityItem);
         return { items, lastDoc: null, hasMore: false, total: items.length };
       } catch (e2) {
-        handleFirestoreError(e, OperationType.LIST, HISTORY_COLLECTION);
+        handleFirestoreError(e2, OperationType.LIST, HISTORY_COLLECTION);
         return { items: [], lastDoc: null, hasMore: false, total: 0 };
       }
     }
@@ -184,10 +179,8 @@ class WatchHistoryService {
         limit(100), // Fetch more for client-side search
       ];
 
-      if (options?.accountId && options.accountId !== 'all') {
-        constraints.unshift(where('accountId', '==', options.accountId));
-      }
-
+      // NOTE: Avoid combining where('accountId') + orderBy here — that requires a
+      // Firestore composite index. Filter accountId client-side instead.
       const q = query(collection(db, HISTORY_COLLECTION), ...constraints);
       const snapshot = await getDocs(q);
 
@@ -195,9 +188,10 @@ class WatchHistoryService {
       return snapshot.docs
         .map((doc) => doc.data() as UserActivityItem)
         .filter((item) =>
-          item.title?.toLowerCase().includes(searchLower) ||
-          item.subtitle?.toLowerCase().includes(searchLower) ||
-          item.accountDisplayName?.toLowerCase().includes(searchLower)
+          (!options?.accountId || options.accountId === 'all' || item.accountId === options.accountId) &&
+          (item.title?.toLowerCase().includes(searchLower) ||
+            item.subtitle?.toLowerCase().includes(searchLower) ||
+            item.accountDisplayName?.toLowerCase().includes(searchLower))
         )
         .slice(0, options?.pageSize || PAGE_SIZE);
     } catch (e) {
@@ -226,11 +220,17 @@ class WatchHistoryService {
     if (isFirestoreQuotaExhausted()) return;
 
     try {
-      const q = query(collection(db, HISTORY_COLLECTION), where('accountId', '==', accountId), limit(100));
-      const snapshot = await getDocs(q);
-
-      const deletePromises = snapshot.docs.map((doc) => deleteDoc(doc.ref));
-      await Promise.all(deletePromises);
+      let hasMore = true;
+      while (hasMore) {
+        const q = query(collection(db, HISTORY_COLLECTION), where('accountId', '==', accountId), limit(100));
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) {
+          hasMore = false;
+          break;
+        }
+        await Promise.all(snapshot.docs.map((d) => deleteDoc(d.ref)));
+        if (snapshot.docs.length < 100) hasMore = false;
+      }
     } catch (e) {
       handleFirestoreError(e, OperationType.DELETE, HISTORY_COLLECTION);
     }
@@ -243,25 +243,34 @@ class WatchHistoryService {
     if (isFirestoreQuotaExhausted()) return [];
 
     try {
-      // Simple query - get all and filter client-side for reliability
       const q = query(
         collection(db, HISTORY_COLLECTION),
+        where('accountId', '==', accountId),
         orderBy('lastWatchedAt', 'desc'),
-        limit(200) // Get more to filter
+        limit(pageSize)
       );
       const snapshot = await getDocs(q);
 
-      const allItems = snapshot.docs.map((doc) => doc.data() as UserActivityItem);
-      console.log(`[watchHistory] Total items: ${allItems.length}, filtering for accountId: ${accountId}`);
-
-      // Filter client-side for this account
-      const filtered = allItems.filter(item => item.accountId === accountId);
-      console.log(`[watchHistory] Filtered items for ${accountId}: ${filtered.length}`);
-
-      return filtered.slice(0, pageSize);
+      return snapshot.docs.map((doc) => doc.data() as UserActivityItem);
     } catch (e) {
-      console.warn('Failed to get user history:', e);
-      return [];
+      console.warn('Failed to get user history (compound query), trying fallback:', e);
+      // Fallback: Firestore requires a composite index for where('accountId') + orderBy.
+      // If that index is missing, fetch by lastWatchedAt and filter client-side.
+      try {
+        const fallbackQuery = query(
+          collection(db, HISTORY_COLLECTION),
+          orderBy('lastWatchedAt', 'desc'),
+          limit(Math.max(pageSize, 200))
+        );
+        const snapshot = await getDocs(fallbackQuery);
+        return snapshot.docs
+          .map((doc) => doc.data() as UserActivityItem)
+          .filter((item) => item.accountId === accountId)
+          .slice(0, pageSize);
+      } catch (e2) {
+        handleFirestoreError(e2, OperationType.LIST, HISTORY_COLLECTION);
+        return [];
+      }
     }
   }
 }

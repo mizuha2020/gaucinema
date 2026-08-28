@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Movie } from '../types';
 import { Play, Info, Plus, Check, Volume2, VolumeX, ChevronRight, ChevronLeft, Sparkles, Star } from 'lucide-react';
 import { getImageUrl } from '../services/movieApi';
@@ -25,18 +25,26 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(true);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const handlePlay = onPlay || onPlayMovie || (() => {});
   const handleOpenDetail = onOpenDetail || onSelectMovie || (() => {});
 
-  // Auto rotate featured hero movie every 8 seconds if not interacted
-  useEffect(() => {
+  const resetInterval = useCallback(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
     if (!movies || movies.length <= 1) return;
-    const interval = setInterval(() => {
+    intervalRef.current = setInterval(() => {
       setCurrentIndex((prev) => (prev + 1) % Math.min(movies.length, 5));
     }, 9000);
-    return () => clearInterval(interval);
   }, [movies]);
+
+  // Auto rotate featured hero movie every 9 seconds if not interacted
+  useEffect(() => {
+    resetInterval();
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [resetInterval]);
 
   if (!movies || movies.length === 0) {
     return (
@@ -66,10 +74,12 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 
   const handlePrev = () => {
     setCurrentIndex((prev) => (prev === 0 ? Math.min(movies.length, 5) - 1 : prev - 1));
+    resetInterval();
   };
 
   const handleNext = () => {
     setCurrentIndex((prev) => (prev + 1) % Math.min(movies.length, 5));
+    resetInterval();
   };
 
   return (
@@ -191,7 +201,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           {movies.slice(0, 5).map((_, idx) => (
             <button
               key={idx}
-              onClick={() => setCurrentIndex(idx)}
+              onClick={() => { setCurrentIndex(idx); resetInterval(); }}
               className={`h-1.5 rounded-full transition-all duration-300 ${
                 idx === currentIndex ? 'w-6 bg-blue-500' : 'w-2 bg-slate-600 hover:bg-slate-400'
               }`}

@@ -98,7 +98,7 @@ class PresenceService {
       subtitle: data.itemSubtitle,
       coverUrl: data.itemCover,
       apiSource: data.apiSourceUsed,
-      secondsElapsed: 5,
+      secondsElapsed: 0,
       isActivelyPlaying: data.type !== 'browsing',
     });
   }

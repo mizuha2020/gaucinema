@@ -36,10 +36,16 @@ if (rootElement) {
     );
   } catch (e: any) {
     console.error('Fatal render error:', e);
+    const safeMsg = (e?.message || 'Lỗi khởi tạo hệ thống')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
     rootElement.innerHTML = `
       <div style="padding: 24px; color: white; background: #070b16; min-height: 100vh; font-family: sans-serif; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center;">
         <h2 style="font-size: 20px; font-weight: bold; margin-bottom: 8px;">Không thể tải ứng dụng</h2>
-        <p style="color: #94a3b8; font-size: 14px; margin-bottom: 16px;">${e?.message || 'Lỗi khởi tạo hệ thống'}</p>
+        <p style="color: #94a3b8; font-size: 14px; margin-bottom: 16px;">${safeMsg}</p>
         <button onclick="localStorage.clear(); window.location.reload();" style="padding: 10px 20px; background: #2563eb; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">Xóa bộ nhớ đệm & Tải lại</button>
       </div>
     `;

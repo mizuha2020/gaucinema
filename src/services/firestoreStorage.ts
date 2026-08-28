@@ -168,7 +168,7 @@ export const firestoreStorage = {
 
     const docRef = doc(db, 'accounts', accountId, 'profiles', profile.id);
     try {
-      await setDoc(docRef, sanitizeData(profile));
+      await setDoc(docRef, sanitizeData(profile), { merge: true });
     } catch (e) {
       handleFirestoreError(e, OperationType.UPDATE, `accounts/${accountId}/profiles/${profile.id}`);
     }

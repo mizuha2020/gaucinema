@@ -85,7 +85,19 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
 
   const handlePinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (pinPromptProfile && enteredPin === pinPromptProfile.pin) {
+    if (!pinPromptProfile || !pinPromptProfile.pin) return;
+    // Constant-time comparison to prevent timing attacks
+    const a = enteredPin;
+    const b = pinPromptProfile.pin;
+    if (a.length !== b.length) {
+      setPinError(true);
+      return;
+    }
+    let mismatch = 0;
+    for (let i = 0; i < a.length; i++) {
+      mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    }
+    if (mismatch === 0) {
       onSelectProfile(pinPromptProfile);
       setPinPromptProfile(null);
     } else {

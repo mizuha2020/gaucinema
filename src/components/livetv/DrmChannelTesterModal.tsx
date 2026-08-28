@@ -17,12 +17,10 @@ export const DrmChannelTesterModal: React.FC<DrmChannelTesterModalProps> = ({
   const [activeTab, setActiveTab] = useState<'quick' | 'm3u'>('quick');
 
   // Quick form
-  const [streamName, setStreamName] = useState('Kênh Test ClearKey');
-  const [streamUrl, setStreamUrl] = useState(
-    'https://s2129134.cdn.mytvnet.vn/pkg20/live_dzones/hbo.smil/manifest.mpd'
-  );
-  const [drmKey, setDrmKey] = useState('Cd3+PWOGPK+ut50FRrCYqw:PeDzjc8BSCff1b7Dh0PGog');
-  const [userAgent, setUserAgent] = useState('Dalvik/2.1.0');
+  const [streamName, setStreamName] = useState('');
+  const [streamUrl, setStreamUrl] = useState('');
+  const [drmKey, setDrmKey] = useState('');
+  const [userAgent, setUserAgent] = useState('');
 
   // M3U paste form
   const [m3uText, setM3uText] = useState(

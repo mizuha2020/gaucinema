@@ -1,17 +1,17 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore, doc } from 'firebase/firestore';
-import { getDatabase } from 'firebase/database';
+import { initializeApp, FirebaseApp } from 'firebase/app';
+import { getAuth, Auth } from 'firebase/auth';
+import { getFirestore, Firestore, doc } from 'firebase/firestore';
+import { getDatabase, Database } from 'firebase/database';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-let app: any;
-let dbInstance: any;
-let authInstance: any;
-let rtdbInstance: any;
+let app: FirebaseApp | undefined;
+let dbInstance: Firestore | undefined;
+let authInstance: Auth | undefined;
+let rtdbInstance: Database | undefined;
 
 try {
   app = initializeApp(firebaseConfig);
-  dbInstance = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId || '(default)');
+  dbInstance = getFirestore(app, (firebaseConfig as Record<string, string>).firestoreDatabaseId || '(default)');
   authInstance = getAuth(app);
   rtdbInstance = getDatabase(app);
 } catch (e) {
@@ -26,9 +26,9 @@ try {
   }
 }
 
-export const db = dbInstance;
-export const auth = authInstance;
-export const rtdb = rtdbInstance;
+export const db = dbInstance!;
+export const auth = authInstance!;
+export const rtdb = rtdbInstance!;
 
 export enum OperationType {
   CREATE = 'create',
@@ -70,6 +70,9 @@ export function isFirestoreQuotaExhausted(): boolean {
           quotaExhausted = true;
           return true;
         }
+        // Window expired, reset flag and clear storage
+        quotaExhausted = false;
+        sessionStorage.removeItem(QUOTA_EXHAUSTED_KEY);
       }
     }
   } catch {}
@@ -90,7 +93,7 @@ export function markFirestoreQuotaExhausted(): void {
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errMessage = error instanceof Error ? error.message : String(error);
-  const errCode = (error as any)?.code;
+  const errCode = (error as { code?: string })?.code;
 
   if (errCode === 'resource-exhausted' || errMessage.includes('Quota limit exceeded') || errMessage.includes('resource-exhausted')) {
     markFirestoreQuotaExhausted();

@@ -243,8 +243,8 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
 
   // Helper: get effective duration from activity item
   const getEffectiveDuration = (item: UserActivityItem): number => {
-    let sec = item.watchedDurationSeconds || 0;
-    if (sec === 0) {
+    let sec = Number(item.watchedDurationSeconds);
+    if (!Number.isFinite(sec) || sec <= 0) {
       if (item.currentTime && item.currentTime > 0) {
         sec = item.currentTime;
       } else if (item.progressPercent && item.duration && item.duration > 0) {
@@ -253,7 +253,8 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
         sec = 60;
       }
     }
-    return sec;
+    sec = Number(sec);
+    return Number.isFinite(sec) && sec > 0 ? sec : 60;
   };
 
   // Activity-based stats (fallback)
@@ -262,12 +263,27 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
   const activityTvSec = useMemo(() => activities.filter(a => a.mediaType === 'livetv').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
   const activityYtSec = useMemo(() => activities.filter(a => a.mediaType === 'youtube').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
 
-  // Final stats: userStat (Firestore) as primary, activity-based as fallback
-  const movieSec = userStat.watchSecondsByMedia?.movie || activityMovieSec;
-  const mangaSec = userStat.watchSecondsByMedia?.manga || activityMangaSec;
-  const tvSec = userStat.watchSecondsByMedia?.livetv || activityTvSec;
-  const ytSec = userStat.watchSecondsByMedia?.youtube || activityYtSec;
-  const totalWatchSec = getEffectiveTotalWatch(userStat) || (movieSec + mangaSec + tvSec + ytSec);
+  // Final stats: userStat (Firestore) as primary, activity-based as fallback.
+  // Coerce to finite numbers so a corrupted (e.g. unresolved increment) value
+  // can never produce NaN in the charts/percentages.
+  const safeSec = (v: number | undefined | null, fallback: number): number => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  };
+
+  const movieSec = safeSec(userStat.watchSecondsByMedia?.movie, activityMovieSec);
+  const mangaSec = safeSec(userStat.watchSecondsByMedia?.manga, activityMangaSec);
+  const tvSec = safeSec(userStat.watchSecondsByMedia?.livetv, activityTvSec);
+  const ytSec = safeSec(userStat.watchSecondsByMedia?.youtube, activityYtSec);
+
+  const effTotal = getEffectiveTotalWatch(userStat);
+  const sumTotal = movieSec + mangaSec + tvSec + ytSec;
+  const totalWatchSec =
+    Number.isFinite(effTotal) && effTotal > 0
+      ? effTotal
+      : Number.isFinite(sumTotal) && sumTotal > 0
+        ? sumTotal
+        : 0;
 
   const moviePct = totalWatchSec > 0 ? Math.round((movieSec / totalWatchSec) * 100) : 0;
   const mangaPct = totalWatchSec > 0 ? Math.round((mangaSec / totalWatchSec) * 100) : 0;
