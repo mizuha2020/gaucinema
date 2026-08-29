@@ -165,6 +165,14 @@ video::-webkit-media-controls {
   }
 }
 
+/* Hide scrollbars on horizontal carousels while keeping scroll behavior */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
 
 
 

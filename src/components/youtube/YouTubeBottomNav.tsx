@@ -10,7 +10,7 @@ interface YouTubeBottomNavProps {
   profiles?: UserProfile[];
   onSelectProfile?: (profile: UserProfile) => void;
   onSwitchProfileScreen?: () => void;
-  onSwitchApp?: (app: 'cinema' | 'manga' | 'livetv' | 'youtube') => void;
+  onSwitchApp?: (app: 'cinema' | 'manga' | 'livetv' | 'youtube' | 'anime') => void;
 }
 
 export const YouTubeBottomNav: React.FC<YouTubeBottomNavProps> = ({
@@ -132,6 +132,20 @@ export const YouTubeBottomNav: React.FC<YouTubeBottomNavProps> = ({
                     </div>
                     <span className="text-xs font-bold text-white">Gấu Manga</span>
                     <span className="text-[9px] text-purple-400">Đọc truyện</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsDrawerOpen(false);
+                      onSwitchApp('anime');
+                    }}
+                    className="flex flex-col items-center justify-center p-3 rounded-2xl bg-[#222] hover:bg-[#2c2c2c] border border-white/5 hover:border-yellow-500/50 text-slate-200 transition-all cursor-pointer group shadow-sm active:scale-95"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-yellow-950/60 border border-yellow-500/30 flex items-center justify-center mb-1.5 group-hover:scale-110 transition-transform shadow-inner">
+                      <Sparkles className="w-5 h-5 text-yellow-400" />
+                    </div>
+                    <span className="text-xs font-bold text-white">Gấu Anime</span>
+                    <span className="text-[9px] text-yellow-400">Anime & Manga</span>
                   </button>
                 </div>
               </div>

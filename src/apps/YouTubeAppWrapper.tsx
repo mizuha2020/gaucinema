@@ -17,7 +17,7 @@ interface YouTubeAppWrapperProps {
   activeProfile: UserProfile | null;
   profiles: UserProfile[];
   onSelectProfile: (profile: UserProfile) => void;
-  onSwitchApp: (app: 'cinema' | 'manga' | 'livetv' | 'youtube') => void;
+  onSwitchApp: (app: 'cinema' | 'manga' | 'livetv' | 'youtube' | 'anime') => void;
   onSwitchProfileScreen: () => void;
   onOpenAdminDashboard?: () => void;
   onLogout?: () => void;

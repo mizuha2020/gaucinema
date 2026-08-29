@@ -34,6 +34,7 @@ import { HistoryView } from './components/HistoryView';
 import { MangaAppWrapper } from './apps/MangaAppWrapper';
 import { LiveTvAppWrapper } from './apps/LiveTvAppWrapper';
 import { YouTubeAppWrapper } from './apps/YouTubeAppWrapper';
+import { AnimeAppWrapper } from './apps/AnimeAppWrapper';
 import { AppSwitcherLoading } from './components/AppSwitcherLoading';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { NotificationTickerBanner } from './components/NotificationTickerBanner';
@@ -1047,6 +1048,21 @@ export default function App() {
   } else if (activeApp === 'youtube') {
     appContent = (
       <YouTubeAppWrapper
+        currentAccount={currentAccount}
+        activeProfile={activeProfile}
+        profiles={profiles}
+        onSelectProfile={handleSelectProfile}
+        onSwitchApp={handleSwitchApp}
+        onSwitchProfileScreen={() => setShowProfileSelector(true)}
+        onOpenAdminDashboard={
+          currentAccount?.role === 'admin' ? openAdminDashboard : undefined
+        }
+        onLogout={handleLogout}
+      />
+    );
+  } else if (activeApp === 'anime') {
+    appContent = (
+      <AnimeAppWrapper
         currentAccount={currentAccount}
         activeProfile={activeProfile}
         profiles={profiles}

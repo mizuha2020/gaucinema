@@ -6,6 +6,7 @@ import {
   Film,
   BookOpen,
   Youtube,
+  Clapperboard,
   Power,
   PowerOff,
   Shield,
@@ -25,6 +26,7 @@ const APP_ICONS: Record<ActiveApp, React.ReactNode> = {
   manga: <BookOpen className="w-5 h-5" />,
   livetv: <Tv className="w-5 h-5" />,
   youtube: <Youtube className="w-5 h-5" />,
+  anime: <Clapperboard className="w-5 h-5" />,
 };
 
 const APP_COLORS: Record<ActiveApp, { bg: string; border: string; text: string; glow: string }> = {
@@ -32,6 +34,7 @@ const APP_COLORS: Record<ActiveApp, { bg: string; border: string; text: string; 
   manga: { bg: 'bg-purple-950/60', border: 'border-purple-700/60', text: 'text-purple-400', glow: 'shadow-purple-500/20' },
   livetv: { bg: 'bg-amber-950/60', border: 'border-amber-700/60', text: 'text-amber-400', glow: 'shadow-amber-500/20' },
   youtube: { bg: 'bg-red-950/60', border: 'border-red-700/60', text: 'text-red-400', glow: 'shadow-red-500/20' },
+  anime: { bg: 'bg-yellow-950/60', border: 'border-yellow-700/60', text: 'text-yellow-400', glow: 'shadow-yellow-500/20' },
 };
 
 export const AdminEcoSystemTab: React.FC<AdminEcoSystemTabProps> = ({
@@ -101,7 +104,7 @@ export const AdminEcoSystemTab: React.FC<AdminEcoSystemTabProps> = ({
     }
   }, [onShowToast]);
 
-  const apps: ActiveApp[] = ['cinema', 'manga', 'livetv', 'youtube'];
+  const apps: ActiveApp[] = ['cinema', 'manga', 'livetv', 'youtube', 'anime'];
 
   return (
     <div className="space-y-6">

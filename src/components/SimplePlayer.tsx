@@ -44,6 +44,7 @@ interface SimplePlayerProps {
   autoFullscreen?: boolean; // 👈 Thêm prop này, mặc định true
   currentAccount?: Account | null;
   activeProfile?: UserProfile | null;
+  disableHistory?: boolean; // when true, skip built-in history writes (caller records instead)
 }
 
 import { getMirrorUrls } from '../utils/mirrorUrls';
@@ -61,6 +62,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
   autoFullscreen = false, // 👈 Mặc định bật
   currentAccount,
   activeProfile,
+  disableHistory = false,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -641,7 +643,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
       if (lastSavedTimeRef.current > 0 && cur - lastSavedTimeRef.current < 15) return;
       lastSavedTimeRef.current = cur;
       onSaveProgress(cur, duration);
-      watchHistoryService.recordWatch({
+      if (!disableHistory) watchHistoryService.recordWatch({
         accountId: currentAccount?.id || currentAccount?.username || 'user',
         accountDisplayName: currentAccount?.displayName || currentAccount?.username || 'Khán Giả Phim',
         profileId: activeProfile?.id || 'movie_profile',
@@ -671,7 +673,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
       // Read live duration from the video element because this effect has
       // empty deps and would otherwise capture the initial `duration` (= 0).
       const liveDuration = video?.duration || duration;
-      if (video && liveDuration > 0 && currentAccount && activeProfile) {
+      if (video && liveDuration > 0 && currentAccount && activeProfile && !disableHistory) {
         const cur = video.currentTime;
         const progressPercent = Math.round((cur / liveDuration) * 100);
         onSaveProgress(cur, liveDuration);

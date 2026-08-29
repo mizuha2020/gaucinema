@@ -21,6 +21,7 @@ import {
   CheckCircle2,
   Radio,
   User,
+  Clapperboard,
   ChevronRight,
 } from 'lucide-react';
 import { YouTubeChannel } from '../../types';
@@ -48,7 +49,7 @@ interface YouTubeSidebarProps {
   onCloseMobile?: () => void;
   subscribedChannels?: YouTubeChannel[];
   onSelectChannel?: (channel: YouTubeChannel) => void;
-  onSwitchApp?: (app: 'cinema' | 'manga' | 'livetv' | 'youtube') => void;
+  onSwitchApp?: (app: 'cinema' | 'manga' | 'livetv' | 'youtube' | 'anime') => void;
 }
 
 export const YouTubeSidebar: React.FC<YouTubeSidebarProps> = ({
@@ -235,6 +236,13 @@ export const YouTubeSidebar: React.FC<YouTubeSidebarProps> = ({
               >
                 <BookOpen className="w-4 h-4 text-purple-400 shrink-0" />
                 <span className="truncate">Gấu Manga</span>
+              </button>
+              <button
+                onClick={() => onSwitchApp?.('anime')}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-[#272727] hover:text-yellow-400 transition-colors cursor-pointer"
+              >
+                <Clapperboard className="w-4 h-4 text-yellow-400 shrink-0" />
+                <span className="truncate">Gấu Anime</span>
               </button>
             </div>
           </>

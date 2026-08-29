@@ -22,6 +22,7 @@ import {
   Trash2,
   Sparkles,
   ArrowLeft,
+  Clapperboard,
 } from 'lucide-react';
 import { youtubeApi } from '../../services/youtubeApi';
 import { appConfigService } from '../../services/appConfigService';
@@ -32,7 +33,7 @@ interface YouTubeNavbarProps {
   activeProfile: UserProfile | null;
   profiles: UserProfile[];
   onSelectProfile: (profile: UserProfile) => void;
-  onSwitchApp: (app: 'cinema' | 'manga' | 'livetv' | 'youtube') => void;
+  onSwitchApp: (app: 'cinema' | 'manga' | 'livetv' | 'youtube' | 'anime') => void;
   onSwitchProfileScreen?: () => void;
   onOpenAdminDashboard?: () => void;
   onLogout?: () => void;
@@ -515,6 +516,20 @@ export const YouTubeNavbar: React.FC<YouTubeNavbarProps> = ({
                       <BookOpen className="w-4 h-4 text-purple-400 shrink-0" />
                       <span>Gấu Manga</span>
                       {appConfig.manga?.enabled === false && <span className="ml-auto text-[9px] font-bold text-red-400 bg-red-950 px-1.5 py-0.5 rounded-full">OFF</span>}
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (appConfig.anime?.enabled !== false) {
+                          onSwitchApp('anime');
+                          setIsAppMenuOpen(false);
+                        }
+                      }}
+                      disabled={appConfig.anime?.enabled === false}
+                      className={`w-full flex items-center gap-3 p-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer text-left ${appConfig.anime?.enabled === false ? 'opacity-40 cursor-not-allowed text-slate-500' : 'text-slate-200 hover:bg-[#3F3F3F] hover:text-yellow-400'}`}
+                    >
+                      <Clapperboard className="w-4 h-4 text-yellow-400 shrink-0" />
+                      <span>Gấu Anime</span>
+                      {appConfig.anime?.enabled === false && <span className="ml-auto text-[9px] font-bold text-red-400 bg-red-950 px-1.5 py-0.5 rounded-full">OFF</span>}
                     </button>
                   </div>
                 </div>

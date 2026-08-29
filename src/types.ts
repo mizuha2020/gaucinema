@@ -158,7 +158,7 @@ export interface MyListItem {
   addedAt: number;
 }
 
-export type ActiveApp = 'cinema' | 'manga' | 'livetv' | 'youtube';
+export type ActiveApp = 'cinema' | 'manga' | 'livetv' | 'youtube' | 'anime';
 
 export interface YouTubeChannel {
   id: string;
@@ -293,7 +293,7 @@ export interface ActiveViewerSession {
   deviceInfo?: string;
 }
 
-export type MediaActivityType = 'movie' | 'manga' | 'livetv' | 'youtube' | 'browsing';
+export type MediaActivityType = 'movie' | 'manga' | 'livetv' | 'youtube' | 'browsing' | 'anime';
 
 export interface UserActivityItem {
   id: string; // e.g. act_${accountId}_${profileId}_${mediaType}_${contentKey}

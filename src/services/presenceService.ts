@@ -19,6 +19,7 @@ function mapToSessionType(mediaType: MediaActivityType): ActiveViewerSession['ty
     case 'manga': return 'reading_manga';
     case 'livetv': return 'watching_tv';
     case 'youtube': return 'browsing';
+    case 'anime': return 'watching_movie';
     case 'browsing': return 'browsing';
     default: return 'browsing';
   }

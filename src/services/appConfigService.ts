@@ -9,6 +9,7 @@ const DEFAULT_CONFIG: AppConfig = {
   manga: { enabled: true, label: 'Gấu Manga', description: 'Thế giới truyện tranh manga', icon: 'book' },
   livetv: { enabled: true, label: 'Gấu LiveTV', description: 'Kênh thể thao trực tiếp', icon: 'tv' },
   youtube: { enabled: true, label: 'Gấu YouTube', description: 'Theme Đỏ - 0 Quảng cáo', icon: 'youtube' },
+  anime: { enabled: true, label: 'Gấu Anime', description: 'Anime & Manga từ AniMapper', icon: 'anime' },
 };
 
 type Listener = (config: AppConfig) => void;

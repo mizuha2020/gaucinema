@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { NavTab, UserProfile, Account } from '../../types';
-import { BookOpen, User, ChevronDown, Check, Home, Lock, LayoutGrid, Tv, Shield, Settings, LogOut } from 'lucide-react';
+import { BookOpen, User, ChevronDown, Check, Home, Lock, LayoutGrid, Tv, Shield, Settings, LogOut, Clapperboard } from 'lucide-react';
 import appLogo from '../../assets/images/app_logo.jpg';
 import { motion, AnimatePresence } from 'motion/react';
 import { appConfigService } from '../../services/appConfigService';
@@ -10,7 +10,7 @@ interface MangaNavbarProps {
   activeProfile: UserProfile | null;
   profiles: UserProfile[];
   onSelectProfile: (profile: UserProfile) => void;
-  onSwitchApp: (app: 'cinema' | 'manga' | 'livetv' | 'youtube') => void;
+  onSwitchApp: (app: 'cinema' | 'manga' | 'livetv' | 'youtube' | 'anime') => void;
   onSwitchProfileScreen?: () => void;
   onOpenAdminDashboard?: () => void;
   onLogout?: () => void;
@@ -134,6 +134,15 @@ export const MangaNavbar: React.FC<MangaNavbarProps> = ({
                       <div className="w-8 h-8 rounded-lg bg-red-900/40 flex items-center justify-center"><Tv className="w-4 h-4 text-red-500"/></div>
                       <div className="flex flex-col items-start"><span>Gấu YouTube</span><span className="text-[10px] text-red-400 font-normal">{appConfig.youtube?.enabled === false ? 'Đang bảo trì' : 'Theme Đỏ - 0 Quảng cáo'}</span></div>
                       {appConfig.youtube?.enabled === false && <span className="ml-auto text-[9px] font-bold text-red-400 bg-red-950 px-1.5 py-0.5 rounded-full">OFF</span>}
+                    </button>
+                    <button
+                      onClick={() => { if (appConfig.anime?.enabled !== false) { onSwitchApp('anime'); setIsAppMenuOpen(false); } }}
+                      disabled={appConfig.anime?.enabled === false}
+                      className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium transition-colors ${appConfig.anime?.enabled === false ? 'opacity-40 cursor-not-allowed text-slate-500' : 'text-slate-200 hover:bg-yellow-900/30 hover:text-yellow-300'}`}
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-yellow-900/40 flex items-center justify-center"><Clapperboard className="w-4 h-4 text-yellow-400"/></div>
+                      <div className="flex flex-col items-start"><span>Gấu Anime</span><span className="text-[10px] text-slate-400">{appConfig.anime?.enabled === false ? 'Đang bảo trì' : 'Anime & Manga'}</span></div>
+                      {appConfig.anime?.enabled === false && <span className="ml-auto text-[9px] font-bold text-red-400 bg-red-950 px-1.5 py-0.5 rounded-full">OFF</span>}
                     </button>
                   </div>
                 </div>

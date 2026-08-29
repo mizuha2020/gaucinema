@@ -158,7 +158,7 @@ class UserAnalyticsService {
       accountDisplayName,
       onlineSeconds: 0,
       watchSeconds: 0,
-      mediaSeconds: { movie: 0, manga: 0, livetv: 0, youtube: 0, browsing: 0 },
+      mediaSeconds: { movie: 0, manga: 0, livetv: 0, youtube: 0, browsing: 0, anime: 0 },
       lastTimestamp: now,
     };
 
