@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Movie } from '../types';
 import { Play, Plus, Check, ChevronDown, ThumbsUp } from 'lucide-react';
 import { getImageUrl } from '../services/movieApi';
+import { useTvMode } from '../hooks/useTvMode';
 
 interface MovieCardProps {
   movie: Movie;
@@ -26,6 +27,7 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
   const [liked, setLiked] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const [hoverPos, setHoverPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const isTv = useTvMode();
 
   const inList = typeof isInMyList === 'function' ? isInMyList(movie.slug) : Boolean(isInMyList);
 
@@ -79,7 +81,7 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
       ref={cardRef}
       id={`movie-card-${movie.slug || movie._id}`}
       tabIndex={0}
-      className={`relative group shrink-0 select-none transition-all duration-300 focus:outline-none focus:ring-4 focus:ring-blue-500 focus:z-10 focus:scale-105 ${
+      className={`relative group shrink-0 select-none transition-all duration-300 focus:outline-none focus:ring-4 focus:ring-blue-500 focus:z-10 ${isTv ? 'focus:scale-110 focus:ring-[6px]' : 'focus:scale-105'} ${
         isTop10 ? 'w-44 sm:w-56 h-64 sm:h-80' : 'w-36 sm:w-48 md:w-52'
       }`}
       onMouseEnter={handleMouseEnter}
@@ -90,6 +92,17 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
         if (e.key === 'Enter') {
           e.preventDefault();
           handleOpenDetail();
+        }
+        if (isTv && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+          e.preventDefault();
+          const row = cardRef.current?.parentElement?.parentElement as HTMLElement | null;
+          if (row) {
+            const cards = Array.from(row.querySelectorAll('[id^="movie-card-"]')) as HTMLElement[];
+            const idx = cards.indexOf(cardRef.current as HTMLElement);
+            const nextIdx = e.key === 'ArrowRight' ? Math.min(cards.length - 1, idx + 1) : Math.max(0, idx - 1);
+            cards[nextIdx]?.focus();
+            cards[nextIdx]?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+          }
         }
       }}
     >

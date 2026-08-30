@@ -45,6 +45,7 @@ import { offlineMovieService } from './services/offlineMovieService';
 import { followMovieService, FollowedMovie } from './services/followMovieService';
 import { FollowedRow } from './components/FollowedRow';
 import { Capacitor } from '@capacitor/core';
+import { applyTvClass } from './utils/tvDetect';
 import { App as CapApp } from '@capacitor/app';
 import {
   Sparkles,
@@ -64,6 +65,15 @@ import {
 } from 'lucide-react';
 
 export default function App() {
+  // Apply TV 10-foot class on mount
+  useEffect(() => {
+    try {
+      applyTvClass();
+      const onResize = () => applyTvClass();
+      window.addEventListener('resize', onResize);
+      return () => window.removeEventListener('resize', onResize);
+    } catch {}
+  }, []);
   // Gatekeeper state...
   const [currentAccount, setCurrentAccount] = useState<Account | null>(() => authService.getSessionAccount());
   const [showAdminDashboard, setShowAdminDashboard] = useState<boolean>(false);

@@ -30,6 +30,7 @@ import { presenceService } from '../services/presenceService';
 import { watchHistoryService } from '../services/watchHistoryService';
 import { enterNativePip, setNativeVideoPlaying, checkNativePipSupported } from '../utils/nativeVideoPlayer';
 import { Capacitor } from '@capacitor/core';
+import { useTvMode } from '../hooks/useTvMode';
 
 interface SimplePlayerProps {
   movie: Movie;
@@ -71,6 +72,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
   const saveInterval = useRef<NodeJS.Timeout | null>(null);
   const lastSavedTimeRef = useRef<number>(0);
 
+  const isTv = useTvMode();
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -105,6 +107,15 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
   const [isEpisodesOpen, setIsEpisodesOpen] = useState(false);
   const [isPip, setIsPip] = useState(false);
   const [pipSupported, setPipSupported] = useState(true);
+
+  // Thumbnail preview state (hover/drag/keyboard)
+  const previewVideoRef = useRef<HTMLVideoElement>(null);
+  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const previewHlsRef = useRef<Hls | null>(null);
+  const progressTrackRef = useRef<HTMLDivElement>(null);
+  const previewSeekTimer = useRef<NodeJS.Timeout | null>(null);
+  const previewDebounce = useRef<NodeJS.Timeout | null>(null);
+  const [preview, setPreview] = useState<{ time: number; xPct: number; img: string | null; visible: boolean; loading: boolean } | null>(null);
 
   // Auto skip 30s ad at 15:00 - 15:30
   const [autoSkipAd, setAutoSkipAd] = useState<boolean>(() => {
@@ -219,6 +230,72 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
       changeVolume(0);
     }
   }, [isMuted, volume, changeVolume]);
+
+  // Thumbnail preview helpers
+  const capturePreviewFrame = useCallback(() => {
+    const pv = previewVideoRef.current;
+    const cv = previewCanvasRef.current;
+    if (!pv || !cv) return;
+    try {
+      const w = 160, h = 90;
+      // Responsive thumbnail size
+      const isMobile = window.innerWidth < 640;
+      const isTv = window.innerWidth >= 1280 && window.matchMedia('(hover: none)').matches === false;
+      const cw = isMobile ? 120 : isTv ? 200 : w;
+      const ch = isMobile ? 68 : isTv ? 112 : h;
+      cv.width = cw; cv.height = ch;
+      const ctx = cv.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(pv, 0, 0, cw, ch);
+      const dataUrl = cv.toDataURL('image/jpeg', 0.65);
+      setPreview(prev => prev ? { ...prev, img: dataUrl, loading: false } : prev);
+    } catch (e) {
+      // CORS taint fallback - keep time label only
+      setPreview(prev => prev ? { ...prev, loading: false } : prev);
+    }
+  }, []);
+
+  const seekPreviewTo = useCallback((time: number) => {
+    const pv = previewVideoRef.current;
+    if (!pv || !duration || duration <= 0) return;
+    const clamped = Math.max(0, Math.min(duration - 0.5, time));
+    setPreview(prev => prev ? { ...prev, time: clamped, loading: true } : prev);
+    if (previewSeekTimer.current) clearTimeout(previewSeekTimer.current);
+    // Debounce seek a bit to avoid spamming
+    previewSeekTimer.current = setTimeout(() => {
+      try {
+        pv.currentTime = clamped;
+      } catch {}
+    }, 80);
+  }, [duration]);
+
+  const getTimeFromClientX = useCallback((clientX: number) => {
+    const track = progressTrackRef.current;
+    if (!track || !duration) return { time: 0, pct: 0 };
+    const rect = track.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    const pct = rect.width > 0 ? (x / rect.width) * 100 : 0;
+    const time = (pct / 100) * duration;
+    return { time, pct };
+  }, [duration]);
+
+  const showPreviewAtClientX = useCallback((clientX: number) => {
+    if (!duration || duration <= 0) return;
+    const { time, pct } = getTimeFromClientX(clientX);
+    setPreview({ time, xPct: pct, img: null, visible: true, loading: true });
+    seekPreviewTo(time);
+  }, [duration, getTimeFromClientX, seekPreviewTo]);
+
+  const hidePreview = useCallback(() => {
+    if (previewDebounce.current) clearTimeout(previewDebounce.current);
+    setPreview(null);
+  }, []);
+
+  const handleProgressPointerMove = useCallback((clientX: number) => {
+    if (previewDebounce.current) clearTimeout(previewDebounce.current);
+    // debounce slightly for performance
+    previewDebounce.current = setTimeout(() => showPreviewAtClientX(clientX), 30);
+  }, [showPreviewAtClientX]);
 
   // 👇 Hàm togglePlay có auto fullscreen
   const togglePlay = useCallback(() => {
@@ -613,6 +690,61 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     };
   }, [currentEpisode.link_m3u8, useEmbed, allServers, currentServer, initialTime, onSelectEpisode]);
 
+  // Preview video HLS setup (thumbnail)
+  useEffect(() => {
+    const pv = previewVideoRef.current;
+    if (!pv || !currentEpisode.link_m3u8 || useEmbed) return;
+    // reset preview state on source change
+    setPreview(null);
+    if (previewHlsRef.current) {
+      previewHlsRef.current.destroy();
+      previewHlsRef.current = null;
+    }
+    const candidates = getMirrorUrls(currentEpisode.link_m3u8);
+    const onSeeked = () => {
+      capturePreviewFrame();
+    };
+    pv.addEventListener('seeked', onSeeked);
+    pv.muted = true;
+    pv.preload = 'metadata';
+    // @ts-ignore
+    pv.crossOrigin = 'anonymous';
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        backBufferLength: 10,
+        maxBufferLength: 10,
+        maxMaxBufferLength: 15,
+        maxBufferSize: 10 * 1000 * 1000,
+        manifestLoadingTimeOut: 8000,
+        levelLoadingTimeOut: 8000,
+        fragLoadingTimeOut: 15000,
+        startLevel: 0, // lowest quality for fast preview
+        capLevelToPlayerSize: true,
+      });
+      previewHlsRef.current = hls;
+      hls.loadSource(candidates[0]);
+      hls.attachMedia(pv);
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          // fallback: try canvas from main video if preview fails (CORS)
+          setPreview(prev => prev ? { ...prev, loading: false } : prev);
+        }
+      });
+    } else if (pv.canPlayType('application/vnd.apple.mpegurl')) {
+      pv.src = candidates[0];
+    }
+
+    return () => {
+      pv.removeEventListener('seeked', onSeeked);
+      if (previewHlsRef.current) {
+        previewHlsRef.current.destroy();
+        previewHlsRef.current = null;
+      }
+    };
+  }, [currentEpisode.link_m3u8, useEmbed, capturePreviewFrame]);
+
   useEffect(() => {
     presenceService.startSession({
       accountId: currentAccount?.id || currentAccount?.username || 'user',
@@ -726,15 +858,32 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
           toggleMute();
           break;
         case 'arrowleft':
-        case 'j':
+        case 'j': {
           e.preventDefault();
+          // TV/desktop preview: show thumbnail at target before seek
+          if (duration > 0) {
+            const target = Math.max(0, (videoRef.current?.currentTime || 0) - 10);
+            const pct = (target / duration) * 100;
+            setPreview({ time: target, xPct: pct, img: null, visible: true, loading: true });
+            seekPreviewTo(target);
+            setTimeout(hidePreview, 1200);
+          }
           skip(-10);
           break;
+        }
         case 'arrowright':
-        case 'l':
+        case 'l': {
           e.preventDefault();
+          if (duration > 0) {
+            const target = Math.min(duration, (videoRef.current?.currentTime || 0) + 10);
+            const pct = (target / duration) * 100;
+            setPreview({ time: target, xPct: pct, img: null, visible: true, loading: true });
+            seekPreviewTo(target);
+            setTimeout(hidePreview, 1200);
+          }
           skip(10);
           break;
+        }
         case 'arrowup':
           e.preventDefault();
           changeVolume(Math.min(1, volume + 0.05));
@@ -769,6 +918,9 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     volume,
     brightness,
     resetControlsTimer,
+    duration,
+    seekPreviewTo,
+    hidePreview,
   ]);
 
   // Touch gesture & tap-to-toggle controls (mobile/tablet)
@@ -946,6 +1098,9 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
             {...({ autopictureinpicture: 'true' } as any)}
             onClick={handleVideoClick}
           />
+          {/* Hidden preview video + canvas for thumbnail (desktop hover / mobile drag / TV dpad) */}
+          <video ref={previewVideoRef} muted playsInline preload="metadata" crossOrigin="anonymous" className="hidden w-0 h-0 opacity-0 pointer-events-none" tabIndex={-1} />
+          <canvas ref={previewCanvasRef} className="hidden w-0 h-0 opacity-0 pointer-events-none" />
 
           {isLoading && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/70">
@@ -1005,8 +1160,8 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
                 'linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.3) 25%, transparent 45%, transparent 65%, rgba(0,0,0,0.4) 80%, rgba(0,0,0,0.9) 100%)',
             }}
           >
-            {/* Top Bar Header */}
-            <div className="flex items-center justify-between gap-3 pointer-events-auto shrink-0">
+            {/* Top Bar Header - TV overscan safe */}
+            <div className="tv-player-top flex items-center justify-between gap-3 pointer-events-auto shrink-0">
               <div className="flex flex-col min-w-0 pr-2">
                 <h2 className="text-white text-base sm:text-lg font-bold drop-shadow-md truncate">
                   {movie.name}
@@ -1063,11 +1218,110 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
               </button>
             </div>
 
-            {/* Bottom Controls Area */}
-            <div className="pointer-events-auto space-y-2 sm:space-y-3 shrink-0">
-              {/* Progress Slider */}
-              <div className="relative w-full h-2 group/seek cursor-pointer flex items-center">
-                <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-1.5 bg-gray-700/80 rounded-full overflow-hidden">
+            {/* Bottom Controls Area - TV larger */}
+            <div className="tv-player-bottom pointer-events-auto space-y-2 sm:space-y-3 shrink-0">
+              {/* Progress Slider + Thumbnail Preview (Desktop hover / Mobile drag / TV dpad) */}
+              <div
+                ref={progressTrackRef}
+                className={`relative w-full ${isTv ? 'h-7' : 'h-4'} group/seek cursor-pointer flex items-center touch-none`}
+                onMouseMove={(e) => {
+                  if (window.matchMedia('(hover: hover)').matches) {
+                    handleProgressPointerMove(e.clientX);
+                  }
+                }}
+                onMouseEnter={(e) => {
+                  if (window.matchMedia('(hover: hover)').matches && duration > 0) {
+                    handleProgressPointerMove(e.clientX);
+                  }
+                }}
+                onMouseLeave={hidePreview}
+                onTouchStart={(e) => {
+                  if (e.touches[0]) handleProgressPointerMove(e.touches[0].clientX);
+                }}
+                onTouchMove={(e) => {
+                  if (e.touches[0]) {
+                    handleProgressPointerMove(e.touches[0].clientX);
+                    // keep controls visible while dragging
+                    resetControlsTimer();
+                  }
+                }}
+                onTouchEnd={() => {
+                  // keep preview 800ms after lift for mobile
+                  setTimeout(hidePreview, 800);
+                }}
+                // TV remote: when focused, arrow keys move preview
+                onFocus={() => setShowControls(true)}
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (!duration) return;
+                  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    const step = e.shiftKey ? 30 : 10;
+                    const delta = e.key === 'ArrowLeft' ? -step : step;
+                    const base = preview?.visible ? preview.time : currentTime;
+                    const next = Math.max(0, Math.min(duration, base + delta));
+                    const pct = duration > 0 ? (next / duration) * 100 : 0;
+                    setPreview({ time: next, xPct: pct, img: preview?.img || null, visible: true, loading: true });
+                    seekPreviewTo(next);
+                    // show controls while navigating with remote
+                    resetControlsTimer();
+                    // auto hide after 1.5s for TV
+                    setTimeout(hidePreview, 1500);
+                  } else if (e.key === 'Enter' || e.key === ' ') {
+                    if (preview?.visible) {
+                      if (videoRef.current) {
+                        videoRef.current.currentTime = preview.time;
+                        setCurrentTime(preview.time);
+                      }
+                      hidePreview();
+                    }
+                  }
+                }}
+                aria-label="Thanh thời lượng - di chuột/kéo để xem thumbnail, dùng phím mũi tên trên TV remote"
+              >
+                {/* Thumbnail preview tooltip */}
+                {preview?.visible && (
+                  <div
+                    className="absolute -top-2 -translate-y-full pointer-events-none z-20 flex flex-col items-center gap-1.5 animate-in fade-in zoom-in-95 duration-150"
+                    style={{
+                      left: `${preview.xPct}%`,
+                      transform: `translateX(-50%) translateY(-8px)`,
+                      // clamp to edges via max/min
+                    }}
+                  >
+                    <div className="bg-black border border-white/20 rounded-lg overflow-hidden shadow-2xl">
+                      {preview.img ? (
+                        <img
+                          src={preview.img}
+                          alt={`Preview ${formatTime(preview.time)}`}
+                          className="block object-cover bg-slate-900"
+                          style={{
+                            width: window.innerWidth < 640 ? 120 : window.innerWidth >= 1280 ? 200 : 160,
+                            height: window.innerWidth < 640 ? 68 : window.innerWidth >= 1280 ? 112 : 90,
+                          }}
+                          draggable={false}
+                        />
+                      ) : (
+                        <div
+                          className="flex items-center justify-center bg-slate-800 text-white/80"
+                          style={{
+                            width: window.innerWidth < 640 ? 120 : window.innerWidth >= 1280 ? 200 : 160,
+                            height: window.innerWidth < 640 ? 68 : window.innerWidth >= 1280 ? 112 : 90,
+                          }}
+                        >
+                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        </div>
+                      )}
+                      <div className="bg-black/90 text-white text-[11px] font-mono font-bold px-2 py-1 text-center border-t border-white/10">
+                        {formatTime(preview.time)} {preview.loading ? '• đang tải...' : ''}
+                      </div>
+                    </div>
+                    {/* small arrow */}
+                    <div className="w-2 h-2 bg-black border-r border-b border-white/20 rotate-45 -mt-2 shadow-lg" />
+                  </div>
+                )}
+
+                <div className={`absolute top-1/2 -translate-y-1/2 left-0 right-0 ${isTv ? 'h-2.5' : 'h-1.5'} bg-gray-700/80 rounded-full overflow-hidden`}>
                   <div
                     className="absolute top-0 left-0 h-full bg-gray-500/80 rounded-full transition-all"
                     style={{
@@ -1081,6 +1335,13 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
                     }}
                   />
                 </div>
+                {/* hover indicator dot */}
+                {preview?.visible && (
+                  <div
+                    className={`absolute top-1/2 -translate-y-1/2 ${isTv ? 'w-5 h-5' : 'w-3 h-3'} bg-white border-2 border-blue-500 rounded-full shadow-lg pointer-events-none`}
+                    style={{ left: `calc(${preview.xPct}% - ${isTv ? '10px' : '6px'})` }}
+                  />
+                )}
                 <input
                   type="range"
                   min={0}
@@ -1088,7 +1349,15 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
                   step={0.1}
                   value={currentTime}
                   onChange={handleSeek}
+                  onInput={(e) => {
+                    // mobile drag: update preview live
+                    const val = parseFloat((e.target as HTMLInputElement).value);
+                    const pct = duration > 0 ? (val / duration) * 100 : 0;
+                    setPreview({ time: val, xPct: pct, img: preview?.img || null, visible: true, loading: true });
+                    seekPreviewTo(val);
+                  }}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                  aria-label="Tua video"
                 />
               </div>
 

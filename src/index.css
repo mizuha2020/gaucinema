@@ -174,5 +174,65 @@ video::-webkit-media-controls {
   display: none;
 }
 
+/* TV 10-foot UI: Overscan safe area 5% + large focus + 10ft scaling */
+.tv-mode { --tv-safe: 5vw; }
+@media (min-width: 1920px) {
+  :root { --tv-safe: 5vw; }
+}
+.tv-mode #root,
+@media (min-width: 1920px) {
+  #root {
+    padding-left: max(2.5vw, 24px);
+    padding-right: max(2.5vw, 24px);
+  }
+}
+.tv-mode *:focus-visible {
+  outline: 4px solid #38bdf8 !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 0 6px rgba(56, 189, 248, 0.35), 0 0 24px rgba(56, 189, 248, 0.6) !important;
+}
+@media (min-width: 1920px) {
+  *:focus-visible {
+    outline: 4px solid #38bdf8 !important;
+    outline-offset: 3px !important;
+    box-shadow: 0 0 0 6px rgba(56, 189, 248, 0.35), 0 0 24px rgba(56, 189, 248, 0.6) !important;
+  }
+  ::-webkit-scrollbar { width: 12px; height: 12px; }
+}
+.tv-mode ::-webkit-scrollbar { width: 12px; height: 12px; }
+.tv-mode .tv-safe-px {
+  padding-left: max(3vw, 32px) !important;
+  padding-right: max(3vw, 32px) !important;
+}
+.tv-mode button, .tv-mode [role="button"] {
+  min-height: 48px;
+}
+/* HeroBanner TV: larger 10ft */
+.tv-mode #qtb-hero-banner { min-height: 640px !important; height: 82vh !important; max-height: 860px !important; }
+.tv-mode #qtb-hero-banner h1 { font-size: 3.75rem !important; line-height: 1.1 !important; }
+@media (min-width: 1920px) {
+  #qtb-hero-banner { min-height: 640px !important; height: 82vh !important; max-height: 860px !important; }
+  #qtb-hero-banner h1 { font-size: 3.75rem !important; line-height: 1.1 !important; }
+}
+.tv-mode #qtb-hero-banner .max-w-2xl { max-width: 48rem !important; }
+.tv-mode #hero-play-btn, .tv-mode #hero-detail-btn { padding: 16px 32px !important; font-size: 1.1rem !important; min-height: 52px; }
+.tv-mode #hero-add-list-btn { width: 52px !important; height: 52px !important; }
+/* TV MovieRow: always show arrows, larger cards handled in component */
+@media (min-width: 1920px) {
+  .group\/row .opacity-0.group-hover\/row\:opacity-100 {
+    opacity: 1 !important;
+  }
+}
+.tv-mode .group\/row .opacity-0.group-hover\/row\:opacity-100 { opacity: 1 !important; }
+/* SimplePlayer TV: larger controls + overscan */
+.tv-mode #simple-player-close-btn { width: 56px !important; height: 56px !important; }
+.tv-mode .group\/center-skip, .tv-mode .group\/center-play { transform: scale(1.25); }
+.tv-mode .tv-player-bottom { padding-left: 3vw !important; padding-right: 3vw !important; padding-bottom: 2vw !important; gap: 16px !important; }
+.tv-mode .tv-player-top { padding-left: 3vw !important; padding-right: 3vw !important; padding-top: 2vw !important; }
+.tv-mode .tv-progress-height { height: 28px !important; }
+.tv-mode .tv-player-bottom button { padding: 10px !important; min-width: 48px; min-height: 48px; }
+.tv-mode .tv-player-bottom svg { width: 28px !important; height: 28px !important; }
+.tv-mode .tv-player-bottom span { font-size: 16px !important; }
+
 
 

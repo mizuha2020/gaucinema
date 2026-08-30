@@ -2,6 +2,7 @@ import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { Movie } from '../types';
 import { MovieCard } from './MovieCard';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { useTvMode } from '../hooks/useTvMode';
 
 interface MovieRowProps {
   title: string;
@@ -33,6 +34,7 @@ export const MovieRow: React.FC<MovieRowProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const [showLeftArrow, setShowLeftArrow] = useState(false);
   const [showRightArrow, setShowRightArrow] = useState(true);
+  const isTv = useTvMode();
   
   const [itemWidth, setItemWidth] = useState(isTop10 ? 224 : 208);
   const [gap, setGap] = useState(24);
@@ -41,7 +43,13 @@ export const MovieRow: React.FC<MovieRowProps> = ({
     const updateDimensions = () => {
       const isMobile = window.innerWidth < 640;
       const isTablet = window.innerWidth >= 640 && window.innerWidth < 768;
+      const isTvScreen = window.innerWidth >= 1920 || document.documentElement.classList.contains('tv-mode');
       
+      if (isTvScreen) {
+        setGap(28);
+        setItemWidth(isTop10 ? 280 : 260);
+        return;
+      }
       setGap(isMobile ? 16 : 24);
       
       if (isTop10) {
@@ -57,8 +65,8 @@ export const MovieRow: React.FC<MovieRowProps> = ({
     return () => window.removeEventListener('resize', updateDimensions);
   }, [isTop10]);
 
-  // Use a sensible default height for the row container
-  const rowHeightClass = isTop10 ? 'h-[300px] sm:h-[360px]' : 'h-[250px] sm:h-[330px] md:h-[360px]';
+  // Use a sensible default height for the row container (TV larger)
+  const rowHeightClass = isTv ? (isTop10 ? 'h-[380px]' : 'h-[400px]') : (isTop10 ? 'h-[300px] sm:h-[360px]' : 'h-[250px] sm:h-[330px] md:h-[360px]');
 
   useEffect(() => {
     if (containerRef.current) {
@@ -125,14 +133,14 @@ export const MovieRow: React.FC<MovieRowProps> = ({
 
       {/* Row Carousel Area */}
       <div className="relative -mx-2 px-2">
-        {/* Left Scroll Arrow */}
-        {showLeftArrow && (
+        {/* Left Scroll Arrow - always visible on TV */}
+        {(showLeftArrow || isTv) && (
           <button
             onClick={() => handleScrollBtn('left')}
-            className="absolute -left-3 sm:-left-5 top-0 bottom-0 z-30 w-10 sm:w-12 bg-[#0b1329]/80 hover:bg-blue-600 text-white flex items-center justify-center transition-all opacity-0 group-hover/row:opacity-100 backdrop-blur-md rounded-r-xl border border-slate-700/80 shadow-lg cursor-pointer"
+            className={`absolute -left-3 sm:-left-5 top-0 bottom-0 z-30 w-10 sm:w-12 ${isTv ? 'w-14' : ''} bg-[#0b1329]/80 hover:bg-blue-600 text-white flex items-center justify-center transition-all ${isTv ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100'} backdrop-blur-md rounded-r-xl border border-slate-700/80 shadow-lg cursor-pointer focus:opacity-100 focus:ring-4 focus:ring-blue-500`}
             aria-label="Cuộn sang trái"
           >
-            <ChevronLeft className="w-7 h-7 hover:scale-125 transition-transform" />
+            <ChevronLeft className={`${isTv ? 'w-9 h-9' : 'w-7 h-7'} hover:scale-125 transition-transform`} />
           </button>
         )}
 
@@ -162,14 +170,14 @@ export const MovieRow: React.FC<MovieRowProps> = ({
           ))}
         </div>
 
-        {/* Right Scroll Arrow */}
-        {showRightArrow && (
+        {/* Right Scroll Arrow - always visible on TV */}
+        {(showRightArrow || isTv) && (
           <button
             onClick={() => handleScrollBtn('right')}
-            className="absolute -right-3 sm:-right-5 top-0 bottom-0 z-30 w-10 sm:w-12 bg-[#0b1329]/80 hover:bg-blue-600 text-white flex items-center justify-center transition-all opacity-0 group-hover/row:opacity-100 backdrop-blur-md rounded-l-xl border border-slate-700/80 shadow-lg cursor-pointer"
+            className={`absolute -right-3 sm:-right-5 top-0 bottom-0 z-30 w-10 sm:w-12 ${isTv ? 'w-14' : ''} bg-[#0b1329]/80 hover:bg-blue-600 text-white flex items-center justify-center transition-all ${isTv ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100'} backdrop-blur-md rounded-l-xl border border-slate-700/80 shadow-lg cursor-pointer focus:opacity-100 focus:ring-4 focus:ring-blue-500`}
             aria-label="Cuộn sang phải"
           >
-            <ChevronRight className="w-7 h-7 hover:scale-125 transition-transform" />
+            <ChevronRight className={`${isTv ? 'w-9 h-9' : 'w-7 h-7'} hover:scale-125 transition-transform`} />
           </button>
         )}
       </div>
