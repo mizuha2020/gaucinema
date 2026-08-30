@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { NavTab, UserProfile } from '../types';
-import { Home, Tv, Film, Search, User, Bookmark, Clock, Check, Layers } from 'lucide-react';
+import { Home, Tv, Film, Search, User, Bookmark, Clock, Check, Layers, Download, HardDrive } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
 
 interface MobileBottomNavProps {
   activeTab: NavTab;
@@ -20,8 +21,30 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   onSwitchProfileScreen,
 }) => {
   const [isProfileDrawerOpen, setIsProfileDrawerOpen] = useState(false);
+  const isNativeApp = (() => { try { return Capacitor.isNativePlatform(); } catch { return false; } })();
 
-  const navButtons = [
+  const navButtons = isNativeApp ? [
+    {
+      tab: 'home' as NavTab,
+      label: 'Trang Chủ',
+      icon: Home,
+    },
+    {
+      tab: 'offline' as NavTab,
+      label: 'Đã Lưu',
+      icon: HardDrive,
+    },
+    {
+      tab: 'filter' as NavTab,
+      label: 'Tìm / Lọc',
+      icon: Search,
+    },
+    {
+      tab: 'single' as NavTab,
+      label: 'Phim Lẻ',
+      icon: Film,
+    },
+  ] : [
     {
       tab: 'home' as NavTab,
       label: 'Trang Chủ',
@@ -155,6 +178,23 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                 <Bookmark className="w-5 h-5 text-sky-400" />
                 <span>Danh sách phim đã lưu của tôi</span>
               </button>
+
+              {isNativeApp && (
+                <button
+                  onClick={() => {
+                    onTabChange('offline');
+                    setIsProfileDrawerOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-3 p-3 rounded-xl text-left text-sm font-medium transition-colors border ${
+                    activeTab === 'offline'
+                      ? 'bg-amber-600/25 text-amber-300 border-amber-500/40'
+                      : 'text-amber-300 hover:bg-amber-950/30 border-amber-900/30'
+                  }`}
+                >
+                  <HardDrive className="w-5 h-5 text-amber-400" />
+                  <span>Đã Lưu Offline (7 ngày)</span>
+                </button>
+              )}
 
               <button
                 onClick={() => {

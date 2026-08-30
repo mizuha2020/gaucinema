@@ -71,16 +71,6 @@ export const AppSwitcherLoading: React.FC<AppSwitcherLoadingProps> = ({ targetAp
     title = 'Gấu LiveTV';
     message = 'Đang kết nối các kênh trực tiếp...';
     accentColor = 'bg-orange-500';
-  } else if (targetApp === 'youtube') {
-    themeClass = 'from-red-950 via-red-900 to-black';
-    title = 'Gấu YouTube';
-    message = 'Đang mở không gian YouTube đỏ không quảng cáo...';
-    accentColor = 'bg-red-600';
-  } else if (targetApp === 'anime') {
-    themeClass = 'from-yellow-900 via-yellow-800 to-black';
-    title = 'Gấu Anime';
-    message = 'Đang tải kho anime & manga...';
-    accentColor = 'bg-yellow-400';
   }
 
   return (

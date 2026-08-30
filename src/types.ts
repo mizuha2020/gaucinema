@@ -158,7 +158,7 @@ export interface MyListItem {
   addedAt: number;
 }
 
-export type ActiveApp = 'cinema' | 'manga' | 'livetv' | 'youtube' | 'anime';
+export type ActiveApp = 'cinema' | 'manga' | 'livetv';
 
 export interface YouTubeChannel {
   id: string;
@@ -249,7 +249,7 @@ export interface YouTubeCommunityPost {
   isLiked?: boolean;
 }
 
-export type NavTab = 'home' | 'series' | 'single' | 'cinema' | 'anime' | 'tv-shows' | 'manga' | 'filter' | 'my-list' | 'history' | 'tv-live' | 'youtube' | 'xem-chung';
+export type NavTab = 'home' | 'series' | 'single' | 'cinema' | 'anime' | 'tv-shows' | 'manga' | 'filter' | 'my-list' | 'history' | 'offline' | 'tv-live' | 'youtube' | 'xem-chung';
 
 export type ApiCategory = 'movie' | 'manga' | 'livetv' | 'youtube' | 'utility';
 export type ApiHealthStatus = 'live' | 'slow' | 'down';

@@ -20,10 +20,15 @@ import {
   Users,
   Lock,
   Loader2,
+  Download,
+  Trash2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import DOMPurify from 'dompurify';
 import { CreateRoomModal, JoinRoomModal } from './watch-together';
+import { offlineMovieService } from '../services/offlineMovieService';
+import { followMovieService } from '../services/followMovieService';
+import { Capacitor } from '@capacitor/core';
 
 interface MovieDetailModalProps {
   movie: Movie | null;
@@ -202,6 +207,69 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
         : false
       : Boolean(isInMyList);
   const currentServer = episodes[selectedServerIndex];
+
+  // Offline save state (only on native) - đặt sau currentData để tránh TS2448
+  const isNativeApp = useMemo(() => {
+    try { return Capacitor.isNativePlatform(); } catch { return false; }
+  }, []);
+  const [isOfflineSaved, setIsOfflineSaved] = useState(false);
+
+  useEffect(() => {
+    if (!isNativeApp || !currentData || !currentAccount || !activeProfile) {
+      setIsOfflineSaved(false);
+      return;
+    }
+    setIsOfflineSaved(offlineMovieService.isSaved(currentAccount.id, activeProfile.id, currentData.slug));
+    const unsub = offlineMovieService.subscribe(currentAccount.id, activeProfile.id, (list) => {
+      setIsOfflineSaved(list.some((m) => m.slug === currentData.slug));
+    });
+    return unsub;
+  }, [isNativeApp, currentData?.slug, currentAccount?.id, activeProfile?.id]);
+
+  const handleToggleOfflineSave = () => {
+    if (!currentData || !currentAccount || !activeProfile) return;
+    if (isOfflineSaved) {
+      offlineMovieService.remove(currentAccount.id, activeProfile.id, currentData.slug);
+      onShowToast?.('Đã xóa khỏi Đã lưu (Offline)', 'info');
+    } else {
+      const res = offlineMovieService.save(currentAccount.id, activeProfile.id, currentData);
+      if (res.already) {
+        onShowToast?.('Phim đã có trong Đã lưu', 'info');
+      } else {
+        onShowToast?.('Đã lưu để xem offline (tự xóa sau 7 ngày)', 'success');
+      }
+    }
+  };
+
+  // Follow state
+  const [isFollowed, setIsFollowed] = useState(false);
+  const [hasNewEp, setHasNewEp] = useState(false);
+  useEffect(() => {
+    if (!currentData || !currentAccount || !activeProfile) {
+      setIsFollowed(false); setHasNewEp(false); return;
+    }
+    const check = () => {
+      const list = followMovieService.getAll(currentAccount.id, activeProfile.id);
+      const found = list.find(m=> m.slug === currentData.slug);
+      setIsFollowed(!!found);
+      setHasNewEp(!!found?.hasNewEpisode);
+    };
+    check();
+    const unsub = followMovieService.subscribe(currentAccount.id, activeProfile.id, check);
+    return unsub;
+  }, [currentData?.slug, currentAccount?.id, activeProfile?.id]);
+
+  const handleToggleFollow = () => {
+    if (!currentData || !currentAccount || !activeProfile) return;
+    if (isFollowed) {
+      followMovieService.unfollow(currentAccount.id, activeProfile.id, currentData.slug);
+      onShowToast?.('Đã bỏ theo dõi phim', 'info');
+    } else {
+      const r = followMovieService.follow(currentAccount.id, activeProfile.id, currentData);
+      if (r.already) onShowToast?.('Đã theo dõi trước đó', 'info');
+      else onShowToast?.('Đã theo dõi • Sẽ báo khi có tập mới', 'success');
+    }
+  };
   const serverEpisodes = currentServer?.server_data || [];
 
   // Parse trailer url from movie data
@@ -454,6 +522,61 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                       >
                         <Users className="w-4 h-4" />
                         <span>Xem Chung</span>
+                      </button>
+                    )}
+
+                    {/* Follow Button - Báo tập mới */}
+                    {currentAccount && activeProfile && (
+                      <button
+                        id="hero-follow-btn"
+                        onClick={handleToggleFollow}
+                        className={`relative flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3.5 rounded-2xl font-bold text-xs sm:text-sm border transition-all cursor-pointer ${
+                          isFollowed
+                            ? 'bg-violet-600 border-violet-500 text-white shadow-xl shadow-violet-600/30'
+                            : 'bg-slate-900/90 border-slate-700 text-slate-200 hover:text-white hover:bg-slate-800'
+                        }`}
+                        title={isFollowed ? 'Đang theo dõi - bấm để bỏ' : 'Theo dõi để báo khi có tập mới'}
+                      >
+                        {isFollowed ? (
+                          <>
+                            <Check className="w-4 h-4" />
+                            <span>Đang theo dõi</span>
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="w-4 h-4 text-violet-400" />
+                            <span>Theo dõi</span>
+                          </>
+                        )}
+                        {hasNewEp && (
+                          <span className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-red-500 rounded-full animate-pulse border-2 border-[#060a14]" title="Có tập mới!" />
+                        )}
+                      </button>
+                    )}
+
+                    {/* Offline Save Button - ONLY on Native App */}
+                    {isNativeApp && currentAccount && activeProfile && (
+                      <button
+                        id="hero-offline-save-btn"
+                        onClick={handleToggleOfflineSave}
+                        className={`flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3.5 rounded-2xl font-bold text-xs sm:text-sm border transition-all cursor-pointer ${
+                          isOfflineSaved
+                            ? 'bg-amber-600 border-amber-500 text-white shadow-xl shadow-amber-600/30'
+                            : 'bg-slate-900/90 border-slate-700 text-slate-200 hover:text-white hover:bg-slate-800'
+                        }`}
+                        title={isOfflineSaved ? 'Đã lưu offline - bấm để xóa' : 'Tải xem offline (lưu 7 ngày)'}
+                      >
+                        {isOfflineSaved ? (
+                          <>
+                            <Check className="w-4 h-4" />
+                            <span>Đã lưu Offline</span>
+                          </>
+                        ) : (
+                          <>
+                            <Download className="w-4 h-4 text-amber-400" />
+                            <span>Tải xem Offline</span>
+                          </>
+                        )}
                       </button>
                     )}
                   </div>

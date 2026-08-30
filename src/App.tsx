@@ -31,10 +31,9 @@ import { ProfileSelector } from './components/ProfileSelector';
 import { FilterSection } from './components/FilterSection';
 import { MyListView } from './components/MyListView';
 import { HistoryView } from './components/HistoryView';
+import { OfflineSavedView } from './components/OfflineSavedView';
 import { MangaAppWrapper } from './apps/MangaAppWrapper';
 import { LiveTvAppWrapper } from './apps/LiveTvAppWrapper';
-import { YouTubeAppWrapper } from './apps/YouTubeAppWrapper';
-import { AnimeAppWrapper } from './apps/AnimeAppWrapper';
 import { AppSwitcherLoading } from './components/AppSwitcherLoading';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { NotificationTickerBanner } from './components/NotificationTickerBanner';
@@ -42,6 +41,10 @@ import { WatchTogetherRoom } from './components/watch-together/WatchTogetherRoom
 import { JoinRoomModal } from './components/watch-together/JoinRoomModal';
 import { CustomDialog, ToastContainer } from './components/CustomDialog';
 import { watchTogetherService } from './services/watchTogetherService';
+import { offlineMovieService } from './services/offlineMovieService';
+import { followMovieService, FollowedMovie } from './services/followMovieService';
+import { FollowedRow } from './components/FollowedRow';
+import { Capacitor } from '@capacitor/core';
 import { App as CapApp } from '@capacitor/app';
 import {
   Sparkles,
@@ -69,7 +72,7 @@ export default function App() {
   const [activeApp, setActiveApp] = useState<ActiveApp>(() => {
     try {
       const savedApp = localStorage.getItem('gau_active_app');
-      if (savedApp === 'cinema' || savedApp === 'manga' || savedApp === 'livetv' || savedApp === 'youtube') {
+      if (savedApp === 'cinema' || savedApp === 'manga' || savedApp === 'livetv') {
         return savedApp as ActiveApp;
       }
     } catch (e) {
@@ -137,7 +140,7 @@ export default function App() {
 
     const appState = appConfig[activeApp];
     if (appState && !appState.enabled) {
-      const label = activeApp === 'manga' ? 'Gấu Manga' : activeApp === 'livetv' ? 'Gấu LiveTV' : activeApp === 'youtube' ? 'Gấu YouTube' : activeApp;
+      const label = activeApp === 'manga' ? 'Gấu Manga' : activeApp === 'livetv' ? 'Gấu LiveTV' : activeApp;
       setMaintenanceMessage(`${label} đang được bảo trì. Bạn sẽ được chuyển về Cinema sau 5 phút.`);
       setMaintenanceCountdown(300);
 
@@ -185,8 +188,11 @@ export default function App() {
       const savedTab = localStorage.getItem('gau_active_tab');
       const validTabs: NavTab[] = [
         'home', 'series', 'single', 'cinema', 'anime',
-        'tv-shows', 'manga', 'filter', 'my-list', 'history', 'tv-live', 'xem-chung'
+        'tv-shows', 'manga', 'filter', 'my-list', 'history', 'offline', 'tv-live', 'xem-chung'
       ];
+      // Nếu web mà saved là offline thì fallback về home (web không hỗ trợ)
+      const isNative = (() => { try { return Capacitor.isNativePlatform(); } catch { return false; } })();
+      if (!isNative && savedTab === 'offline') return 'home';
       if (savedTab && validTabs.includes(savedTab as NavTab)) {
         return savedTab as NavTab;
       }
@@ -250,6 +256,8 @@ export default function App() {
   // User Profile Data (My List & History scoped to activeProfile)
   const [myList, setMyList] = useState<MyListItem[]>([]);
   const [watchHistory, setWatchHistory] = useState<WatchHistoryItem[]>([]);
+  const [followedMovies, setFollowedMovies] = useState<FollowedMovie[]>([]);
+  const [isCheckingFollow, setIsCheckingFollow] = useState(false);
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; type?: 'info' | 'success' | 'error' | 'warning' }>>([]);
   const toastIdRef = useRef(0);
 
@@ -362,6 +370,60 @@ export default function App() {
   useEffect(() => {
     refreshProfileData();
   }, [refreshProfileData]);
+
+  // Offline auto-cleanup: khi đổi profile/account thì xóa hết hạn 7 ngày
+  useEffect(() => {
+    if (!currentAccount || !activeProfile) return;
+    try {
+      if (!Capacitor.isNativePlatform()) return;
+    } catch { return; }
+    const expired = offlineMovieService.cleanupExpired(currentAccount.id, activeProfile.id);
+    if (expired > 0) {
+      showToast(`Đã tự động xóa ${expired} phim hết hạn 7 ngày trong Đã lưu`, 'info');
+    }
+  }, [currentAccount?.id, activeProfile?.id]);
+
+  // Follow: load + subscribe + check tập mới
+  const refreshFollowed = useCallback(() => {
+    if (!currentAccount || !activeProfile) { setFollowedMovies([]); return; }
+    setFollowedMovies(followMovieService.getAll(currentAccount.id, activeProfile.id));
+  }, [currentAccount?.id, activeProfile?.id]);
+
+  useEffect(() => { refreshFollowed(); }, [refreshFollowed]);
+  useEffect(() => {
+    if (!currentAccount || !activeProfile) return;
+    const unsub = followMovieService.subscribe(currentAccount.id, activeProfile.id, setFollowedMovies);
+    return unsub;
+  }, [currentAccount?.id, activeProfile?.id]);
+
+  // Auto check tập mới khi vào app và mỗi 5 phút (chỉ khi có theo dõi)
+  const handleCheckFollowUpdates = useCallback(async () => {
+    if (!currentAccount || !activeProfile || isCheckingFollow) return;
+    const list = followMovieService.getAll(currentAccount.id, activeProfile.id);
+    if (list.length === 0) return;
+    // tránh spam: chỉ check nếu lần cuối >5p
+    const newestCheck = Math.max(...list.map(m=> m.lastCheckedAt || 0));
+    if (Date.now() - newestCheck < 5*60*1000 && list.some(m=> !m.hasNewEpisode)) return;
+    setIsCheckingFollow(true);
+    try {
+      const count = await followMovieService.checkForUpdates(currentAccount.id, activeProfile.id, (newItems)=>{
+        if (newItems.length>0) showToast(`Có ${newItems.length} phim vừa ra tập mới!`, 'success');
+      });
+      if (count>0) refreshFollowed();
+    } finally { setIsCheckingFollow(false); }
+  }, [currentAccount?.id, activeProfile?.id, isCheckingFollow]);
+
+  useEffect(() => {
+    handleCheckFollowUpdates();
+    const id = setInterval(handleCheckFollowUpdates, 5*60*1000);
+    return ()=> clearInterval(id);
+  }, [handleCheckFollowUpdates]);
+
+  // Khi xem xong 1 phim có theo dõi thì đánh dấu đã xem (clear badge)
+  const handleFollowSeen = useCallback((slug: string, episodeName?: string) => {
+    if (!currentAccount || !activeProfile) return;
+    followMovieService.markSeen(currentAccount.id, activeProfile.id, slug, episodeName);
+  }, [currentAccount, activeProfile]);
 
   // Watch Together - Subscribe to active room data
   useEffect(() => {
@@ -753,6 +815,13 @@ export default function App() {
   // Wrapper for state changes
   const handleTabChange = (tab: NavTab) => {
     if (tab === activeTab) return;
+    // Chặn tab offline trên Web
+    try {
+      if (tab === 'offline' && !Capacitor.isNativePlatform()) {
+        showToast('Tính năng Đã lưu Offline chỉ có trên App APK', 'warning');
+        return;
+      }
+    } catch {}
     window.history.pushState({ tab }, '', '');
     setActiveTab(tab);
     if (tab !== 'filter') setSearchKeyword('');
@@ -1045,36 +1114,6 @@ export default function App() {
         onSwitchProfileScreen={() => setShowProfileSelector(true)}
       />
     );
-  } else if (activeApp === 'youtube') {
-    appContent = (
-      <YouTubeAppWrapper
-        currentAccount={currentAccount}
-        activeProfile={activeProfile}
-        profiles={profiles}
-        onSelectProfile={handleSelectProfile}
-        onSwitchApp={handleSwitchApp}
-        onSwitchProfileScreen={() => setShowProfileSelector(true)}
-        onOpenAdminDashboard={
-          currentAccount?.role === 'admin' ? openAdminDashboard : undefined
-        }
-        onLogout={handleLogout}
-      />
-    );
-  } else if (activeApp === 'anime') {
-    appContent = (
-      <AnimeAppWrapper
-        currentAccount={currentAccount}
-        activeProfile={activeProfile}
-        profiles={profiles}
-        onSelectProfile={handleSelectProfile}
-        onSwitchApp={handleSwitchApp}
-        onSwitchProfileScreen={() => setShowProfileSelector(true)}
-        onOpenAdminDashboard={
-          currentAccount?.role === 'admin' ? openAdminDashboard : undefined
-        }
-        onLogout={handleLogout}
-      />
-    );
   } else {
     appContent = (
       <div className="min-h-screen bg-[#070b16] text-white font-sans selection:bg-blue-600 selection:text-white">
@@ -1149,60 +1188,77 @@ export default function App() {
                 isInMyList={isInMyList}
               />
 
-              {/* Continue Watching Row (if user has active history) */}
-              {watchHistory.length > 0 && (
+              {/* Followed - Báo tập mới */}
+              {followedMovies.length > 0 && (
+                <FollowedRow
+                  items={followedMovies}
+                  onOpenDetail={(m)=> openDetailModal(m)}
+                  onPlay={(m)=> { handlePlayMovie(m); handleFollowSeen(m.slug); }}
+                  onClearNew={(slug)=> handleFollowSeen(slug)}
+                  onUnfollow={(slug)=> {
+                    followMovieService.unfollow(currentAccount!.id, activeProfile!.id, slug);
+                    showToast('Đã bỏ theo dõi', 'info');
+                  }}
+                />
+              )}
+
+              {/* Continue Watching Row - Chính xác hơn */}
+              {(() => {
+                const filtered = [...watchHistory]
+                  .filter(h=> {
+                    // ẩn phim đã xem xong >92% hoặc mới bấm nhầm <2%
+                    if (h.progressPercent >= 92) return false;
+                    if (h.progressPercent < 2 && h.currentTime < 15) return false;
+                    return true;
+                  })
+                  .sort((a,b)=> b.updatedAt - a.updatedAt)
+                  .slice(0, 6);
+                if (filtered.length === 0) return null;
+                const fmt = (s:number)=> {
+                  if (!s || s<0) return '00:00';
+                  const h=Math.floor(s/3600), m=Math.floor((s%3600)/60);
+                  const sec=Math.floor(s%60);
+                  if (h>0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+                  return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+                };
+                return (
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-2 mb-4">
                   <div className="flex items-center justify-between mb-3">
                     <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
                       <Sparkles className="w-5 h-5 text-sky-400" />
                       <span>Tiếp Tục Xem ({activeProfile?.name})</span>
+                      <span className="text-[11px] font-bold text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">{filtered.length}</span>
                     </h2>
-                    <button
-                      onClick={() => handleTabChange('history')}
-                      className="text-xs text-slate-400 hover:text-white cursor-pointer"
-                    >
-                      Xem tất cả →
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {isCheckingFollow && <span className="text-[11px] text-violet-300 animate-pulse">Đang kiểm tra tập mới...</span>}
+                      <button onClick={()=> { handleCheckFollowUpdates(); showToast('Đang kiểm tra tập mới...','info'); }} className="text-[11px] text-violet-300 hover:text-violet-200 border border-violet-800/60 bg-violet-950/40 px-2 py-1 rounded-full cursor-pointer">Kiểm tra tập mới</button>
+                      <button onClick={() => handleTabChange('history')} className="text-xs text-slate-400 hover:text-white cursor-pointer">Xem tất cả →</button>
+                    </div>
                   </div>
                   <div className="flex items-center gap-4 overflow-x-auto pb-3 scrollbar-none">
-                    {watchHistory.slice(0, 6).map((item, idx) => (
-                      <div
-                        key={`${item.movieSlug}-${idx}`}
-                        onClick={() => handleResumeHistoryItem(item)}
-                        className="group relative w-64 shrink-0 bg-[#0f172a] rounded-2xl overflow-hidden border border-blue-900/50 hover:border-blue-500/80 transition-all cursor-pointer shadow-md hover:scale-105"
-                      >
+                    {filtered.map((item, idx) => {
+                      const remaining = Math.max(0, (item.duration||0) - (item.currentTime||0));
+                      const pct = Math.round(item.progressPercent||0);
+                      return (
+                      <div key={`${item.movieSlug}-${idx}`} onClick={() => { handleResumeHistoryItem(item); handleFollowSeen(item.movieSlug, item.episodeName); }} className="group relative w-64 shrink-0 bg-[#0f172a] rounded-2xl overflow-hidden border border-blue-900/50 hover:border-blue-500/80 transition-all cursor-pointer shadow-md hover:scale-105">
                         <div className="relative aspect-video w-full">
-                          <img
-                            src={item.movieThumb || item.moviePoster}
-                            alt={item.movieName}
-                            className="w-full h-full object-cover"
-                          />
-                          <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <span className="bg-blue-600 text-white p-2.5 rounded-full shadow-xl shadow-blue-600/40">
-                              ▶
-                            </span>
-                          </div>
-                          {/* Progress bar */}
-                          <div className="absolute bottom-0 left-0 right-0 h-1 bg-slate-800">
-                            <div
-                              className="h-full bg-blue-500"
-                              style={{ width: `${item.progressPercent}%` }}
-                            />
-                          </div>
+                          <img src={item.movieThumb || item.moviePoster} alt={item.movieName} className="w-full h-full object-cover" />
+                          <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><span className="bg-blue-600 text-white p-2.5 rounded-full shadow-xl shadow-blue-600/40">▶</span></div>
+                          <div className="absolute top-2 left-2 bg-black/70 text-white text-[10px] font-bold px-1.5 py-0.5 rounded border border-white/20">{item.episodeName.startsWith('Tập')? item.episodeName : `Tập ${item.episodeName}`} • {pct}%</div>
+                          {remaining>0 && <div className="absolute top-2 right-2 bg-blue-600/90 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">Còn {fmt(remaining)}</div>}
+                          <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800"><div className="h-full bg-gradient-to-r from-blue-500 to-cyan-400" style={{ width: `${Math.min(100, pct)}%` }} /></div>
                         </div>
                         <div className="p-3">
-                          <h4 className="font-semibold text-xs text-white truncate">
-                            {item.movieName}
-                          </h4>
-                          <p className="text-[11px] text-slate-400 mt-0.5">
-                            {item.episodeName} • {Math.round(item.progressPercent)}% đã xem
-                          </p>
+                          <h4 className="font-semibold text-xs text-white truncate">{item.movieName}</h4>
+                          <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1">{item.serverName} • {fmt(item.currentTime)} / {fmt(item.duration)} <span className="text-sky-400 font-semibold">{pct}%</span></p>
+                          <p className="text-[10px] text-slate-500">{new Date(item.updatedAt).toLocaleString('vi-VN')}</p>
                         </div>
                       </div>
-                    ))}
+                    )})}
                   </div>
                 </div>
-              )}
+                );
+              })()}
 
               {/* "Dành Riêng Cho Bạn" Personalized Recommendation Row */}
               <ForYouRow
@@ -1554,6 +1610,19 @@ export default function App() {
                   showToast('Đã dọn sạch lịch sử xem của hồ sơ');
                 }}
                 onExploreClick={() => handleTabChange('home')}
+              />
+            </div>
+          )}
+
+          {/* OFFLINE SAVED TAB - ONLY ON NATIVE APP */}
+          {activeTab === 'offline' && (
+            <div className="pt-2">
+              <OfflineSavedView
+                currentAccount={currentAccount}
+                activeProfile={activeProfile}
+                onPlayMovie={handlePlayMovie}
+                onOpenDetail={(m) => openDetailModal(m)}
+                onShowToast={showToast}
               />
             </div>
           )}

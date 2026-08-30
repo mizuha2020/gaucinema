@@ -22,7 +22,10 @@ import {
   LayoutGrid,
   Tv,
   BookOpen,
+  Download,
+  HardDrive,
 } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
 import { movieApi, getImageUrl, API_SOURCES } from '../services/movieApi';
 import { getFullApiUrl } from '../services/apiConfig';
 import { Movie } from '../types';
@@ -42,7 +45,7 @@ interface NavbarProps {
   onSearchSubmit: (query: string) => void;
   onOpenAdminDashboard?: () => void;
   onLogout?: () => void;
-  onSwitchApp: (app: 'cinema' | 'manga' | 'livetv' | 'youtube' | 'anime') => void;
+  onSwitchApp: (app: 'cinema' | 'manga' | 'livetv') => void;
   onRefreshHome?: () => void;
 }
 
@@ -78,6 +81,8 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   // App Config (real-time)
   const [appConfig, setAppConfig] = useState<Record<string, { enabled: boolean }>>({});
+
+  const isNativeApp = (() => { try { return Capacitor.isNativePlatform(); } catch { return false; } })();
 
   useEffect(() => {
     const unsub = appConfigService.subscribe((cfg) => setAppConfig(cfg));
@@ -255,6 +260,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const secondaryNavItems: { label: string; tab: NavTab }[] = [
     { label: 'Khám Phá / Lọc', tab: 'filter' },
     { label: 'Xem Chung', tab: 'xem-chung' },
+    ...(isNativeApp ? [{ label: 'Đã Lưu', tab: 'offline' as NavTab }] : []),
   ];
 
   const allNavItems = [...primaryNavItems, ...secondaryNavItems];
@@ -630,64 +636,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                     )}
                   </button>
 
-                  <button
-                    onClick={() => {
-                      if (appConfig.youtube?.enabled !== false) {
-                        onSwitchApp('youtube');
-                        setIsAppMenuOpen(false);
-                      }
-                    }}
-                    disabled={appConfig.youtube?.enabled === false}
-                    className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer group ${
-                      appConfig.youtube?.enabled === false
-                        ? 'opacity-40 cursor-not-allowed text-slate-500'
-                        : 'text-slate-200 hover:bg-red-900/30 hover:text-red-300'
-                    }`}
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-red-900/40 flex items-center justify-center group-hover:bg-red-500/20 shrink-0">
-                      <Tv className="w-4 h-4 text-red-500" />
-                    </div>
-                    <div className="flex flex-col items-start">
-                      <span>Gấu YouTube</span>
-                      <span className="text-[10px] font-normal">
-                        {appConfig.youtube?.enabled === false
-                          ? <span className="text-red-400">Đang bảo trì</span>
-                          : <span className="text-red-400">Theme Đỏ - 0 Quảng cáo</span>
-                        }
-                      </span>
-                    </div>
-                      {appConfig.youtube?.enabled === false && (
-                        <span className="ml-auto text-[9px] font-bold text-red-400 bg-red-950 px-1.5 py-0.5 rounded-full">OFF</span>
-                      )}
-                    </button>
 
-                    <button
-                      onClick={() => {
-                        if (appConfig.anime?.enabled !== false) {
-                          onSwitchApp('anime');
-                          setIsAppMenuOpen(false);
-                        }
-                      }}
-                      disabled={appConfig.anime?.enabled === false}
-                      className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer group ${
-                        appConfig.anime?.enabled === false
-                          ? 'opacity-40 cursor-not-allowed text-slate-500'
-                          : 'text-slate-200 hover:bg-yellow-900/30 hover:text-yellow-300'
-                      }`}
-                    >
-                      <div className="w-8 h-8 rounded-lg bg-yellow-900/40 flex items-center justify-center group-hover:bg-yellow-500/20 shrink-0">
-                        <Sparkles className="w-4 h-4 text-yellow-400" />
-                      </div>
-                      <div className="flex flex-col items-start">
-                        <span>Gấu Anime</span>
-                        <span className="text-[10px] text-slate-400 font-normal">
-                          {appConfig.anime?.enabled === false ? 'Đang bảo trì' : 'Anime & Manga từ AniMapper'}
-                        </span>
-                      </div>
-                      {appConfig.anime?.enabled === false && (
-                        <span className="ml-auto text-[9px] font-bold text-red-400 bg-red-950 px-1.5 py-0.5 rounded-full">OFF</span>
-                      )}
-                    </button>
                   </div>
               </div>
             )}
@@ -836,6 +785,20 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <Bookmark className="w-4 h-4 text-slate-400" />
                     <span>Danh sách yêu thích</span>
                   </button>
+
+                  {isNativeApp && (
+                    <button
+                      id="nav-to-offline-btn"
+                      onClick={() => {
+                        onTabChange('offline');
+                        setIsProfileMenuOpen(false);
+                      }}
+                      className="w-full flex items-center gap-2.5 p-2 rounded-xl text-sm text-amber-300 hover:bg-amber-950/40 hover:text-amber-200 transition-colors cursor-pointer border border-amber-900/30"
+                    >
+                      <HardDrive className="w-4 h-4 text-amber-400" />
+                      <span>Đã Lưu Offline (7 ngày)</span>
+                    </button>
+                  )}
 
                   {onLogout && (
                     <button
