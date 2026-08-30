@@ -406,6 +406,20 @@ export default function App() {
     return unsub;
   }, [currentAccount?.id, activeProfile?.id]);
 
+  // Navigate to cinema tab from sub-apps (manga/livetv profile menu)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as NavTab;
+      if (detail && ['history','my-list','offline','home','filter'].includes(detail)) {
+        setActiveTab(detail);
+        window.history.pushState({ tab: detail }, '', '');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    };
+    window.addEventListener('gau_navigate_cinema_tab', handler as EventListener);
+    return () => window.removeEventListener('gau_navigate_cinema_tab', handler as EventListener);
+  }, []);
+
   // Auto check tập mới khi vào app và mỗi 5 phút (chỉ khi có theo dõi)
   const handleCheckFollowUpdates = useCallback(async () => {
     if (!currentAccount || !activeProfile || isCheckingFollow) return;
@@ -1111,6 +1125,8 @@ export default function App() {
         onSelectProfile={handleSelectProfile}
         onSwitchApp={handleSwitchApp}
         onSwitchProfileScreen={() => setShowProfileSelector(true)}
+        onOpenAdminDashboard={currentAccount.role === 'admin' ? openAdminDashboard : undefined}
+        onLogout={handleLogout}
       />
     );
   } else if (activeApp === 'livetv') {
@@ -1122,6 +1138,8 @@ export default function App() {
         onSelectProfile={handleSelectProfile}
         onSwitchApp={handleSwitchApp}
         onSwitchProfileScreen={() => setShowProfileSelector(true)}
+        onOpenAdminDashboard={currentAccount.role === 'admin' ? openAdminDashboard : undefined}
+        onLogout={handleLogout}
       />
     );
   } else {

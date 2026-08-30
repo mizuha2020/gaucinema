@@ -25,14 +25,15 @@ export const AppSwitcherLoading: React.FC<AppSwitcherLoadingProps> = ({ targetAp
           return 100;
         }
         
-        const next = prev + Math.floor(Math.random() * 20) + 10;
+        const nextRaw = prev + Math.floor(Math.random() * 20) + 10;
+        const next = Math.min(100, nextRaw);
         
         // If we reach 100 but data is not ready, hang at 99%
         if (next >= 100 && !isReady) {
           return 99;
         }
         
-        return next;
+        return Math.min(100, next);
       });
     }, 200);
 
@@ -101,12 +102,12 @@ export const AppSwitcherLoading: React.FC<AppSwitcherLoadingProps> = ({ targetAp
           <div className="w-64 sm:w-80 h-2 bg-white/10 rounded-full overflow-hidden">
             <motion.div
               initial={{ width: 0 }}
-              animate={{ width: `${progress}%` }}
+              animate={{ width: `${Math.min(100, progress)}%` }}
               className={`h-full ${accentColor} rounded-full`}
             />
           </div>
           <p className="mt-3 text-xs font-semibold text-slate-400">
-            {progress}% Hoàn tất
+            {Math.min(100, progress)}% Hoàn tất
           </p>
         </motion.div>
       </motion.div>

@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { NavTab, UserProfile, Account } from '../../types';
-import { BookOpen, User, ChevronDown, Check, Home, Lock, LayoutGrid, Tv, Shield, Settings, LogOut, Clapperboard } from 'lucide-react';
+import { BookOpen, User, ChevronDown, Check, Home, Lock, LayoutGrid, Tv, Shield, Settings, LogOut, Clapperboard, HardDrive } from 'lucide-react';
 import appLogo from '../../assets/images/app_logo.jpg';
 import { motion, AnimatePresence } from 'motion/react';
 import { appConfigService } from '../../services/appConfigService';
+import { Capacitor } from '@capacitor/core';
 
 interface MangaNavbarProps {
   currentAccount?: Account | null;
@@ -31,10 +32,26 @@ export const MangaNavbar: React.FC<MangaNavbarProps> = ({
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isAppMenuOpen, setIsAppMenuOpen] = useState(false);
   const [appConfig, setAppConfig] = useState<Record<string, { enabled: boolean }>>({});
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+  const appMenuRef = useRef<HTMLDivElement>(null);
+  const isNativeApp = (() => { try { return Capacitor.isNativePlatform(); } catch { return false; } })();
 
   useEffect(() => {
     const unsub = appConfigService.subscribe((cfg) => setAppConfig(cfg));
     return unsub;
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) setIsProfileMenuOpen(false);
+      if (appMenuRef.current && !appMenuRef.current.contains(e.target as Node)) setIsAppMenuOpen(false);
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setIsProfileMenuOpen(false); setIsAppMenuOpen(false); }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => { document.removeEventListener('mousedown', handleClickOutside); window.removeEventListener('keydown', handleKeyDown); };
   }, []);
 
   // Profile PIN prompt state
@@ -102,7 +119,7 @@ export const MangaNavbar: React.FC<MangaNavbarProps> = ({
           {/* Right Nav */}
           <div className="flex items-center gap-3">
             {/* App Switcher */}
-            <div className="relative">
+            <div className="relative" ref={appMenuRef}>
               <button
                 onClick={() => setIsAppMenuOpen(!isAppMenuOpen)}
                 className="flex items-center justify-center w-9 h-9 rounded-full bg-slate-900/60 hover:bg-[#131f37] border border-slate-800/80 hover:border-purple-500/60 text-slate-300 hover:text-purple-300 cursor-pointer transition-all hover:scale-105"
@@ -133,8 +150,8 @@ export const MangaNavbar: React.FC<MangaNavbarProps> = ({
             </div>
 
             {/* User Profile Menu */}
-            <div className="relative">
-              <button onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)} className="flex items-center gap-1.5 cursor-pointer focus:outline-none group p-1">
+            <div className="relative" ref={profileMenuRef}>
+              <button onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)} className="flex items-center gap-1.5 cursor-pointer focus:outline-none group p-1" id="manga-profile-dropdown-trigger">
                 <div className="w-8 h-8 rounded-lg overflow-hidden border-2 border-purple-500 shadow-md group-hover:scale-105 transition-transform" style={{ borderColor: activeProfile?.color || '#a855f7' }}>
                   <img src={activeProfile?.avatar} alt="Profile" className="w-full h-full object-cover" />
                 </div>
@@ -176,6 +193,7 @@ export const MangaNavbar: React.FC<MangaNavbarProps> = ({
                             <img src={p.avatar} alt={p.name} className="w-7 h-7 rounded-md object-cover border shrink-0" style={{ borderColor: p.color }} />
                             <span className="truncate">{p.name}</span>
                             {p.isPrimary && <span className="text-[9px] bg-purple-900/60 text-purple-300 px-1 rounded font-bold shrink-0">Chính</span>}
+                            {p.isKid && <span className="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1 rounded shrink-0">Kids</span>}
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0 ml-1">
                             {p.pin && <Lock className="w-3.5 h-3.5 text-slate-400" />}
@@ -210,6 +228,21 @@ export const MangaNavbar: React.FC<MangaNavbarProps> = ({
                       >
                         <User className="w-4 h-4 text-slate-400" />
                         <span>Màn hình chọn người xem</span>
+                      </button>
+                    )}
+
+                    {isNativeApp && (
+                      <button
+                        onClick={() => {
+                          onSwitchApp('cinema');
+                          setIsProfileMenuOpen(false);
+                          try { localStorage.setItem('gau_active_tab', 'offline'); } catch {}
+                          window.dispatchEvent(new CustomEvent('gau_navigate_cinema_tab', { detail: 'offline' }));
+                        }}
+                        className="w-full flex items-center gap-2.5 p-2 rounded-xl text-sm text-amber-300 hover:bg-amber-950/30 hover:text-amber-200 transition-colors cursor-pointer border border-amber-900/30"
+                      >
+                        <HardDrive className="w-4 h-4 text-amber-400" />
+                        <span>Đã Lưu Offline (7 ngày)</span>
                       </button>
                     )}
 
