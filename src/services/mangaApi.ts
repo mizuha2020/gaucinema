@@ -173,10 +173,16 @@ async function fetchMangaApi(url: string): Promise<any> {
 }
 
 // Client-side fallback scraper for TruyenQQ when backend is inaccessible
-// Uses working CORS proxy (cors.eu.org) — corsproxy.io now returns 401
+// Uses working CORS proxy (cors.eu.org, allorigins)
 async function fetchTruyenqqViaPublicCORS(path: string): Promise<string> {
-  const mirrors = ['https://truyenqqko.com', 'https://truyenqqgo.com', 'https://truyenqqno.com'];
-  // cors.eu.org tested working 2026-08, allorigins as backup
+  const mirrors = [
+    'https://truyenqqko.com',
+    'https://truyenqqno.com',
+    'https://truyenqqgo.com',
+    'https://truyenqqto.com',
+    'https://truyenqqviet.com',
+    'https://truyenvuainfo.com'
+  ];
   const publicProxies = [
     (u: string) => `https://cors.eu.org/${u}`,
     (u: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
@@ -188,12 +194,12 @@ async function fetchTruyenqqViaPublicCORS(path: string): Promise<string> {
       try {
         const proxyUrl = proxyGen(targetUrl);
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 8000);
+        const timer = setTimeout(() => controller.abort(), 7000);
         const res = await fetch(proxyUrl, { signal: controller.signal });
         clearTimeout(timer);
         if (res.ok) {
           const html = await res.text();
-          if (html && html.length > 500 && (html.includes('truyen-tranh') || html.includes('book_avatar'))) {
+          if (html && html.length > 500 && (html.includes('truyen-tranh') || html.includes('book_avatar') || html.includes('ItemList') || html.includes('list_chapter'))) {
             return html;
           }
         }
@@ -206,18 +212,15 @@ async function fetchTruyenqqViaPublicCORS(path: string): Promise<string> {
 function upgradeTruyenqqImageUrl(url: string): string {
   if (!url) return url;
   let u = url.trim();
-  // Fix chính: TruyenQQ dùng pattern F80x105 / 80x105 -> F190x247 (bạn confirm chỉ cần thay F80x105 thành F190x247 là nét)
-  // Ví dụ: .../ebook/80x105/conan_...jpg -> .../ebook/190x247/conan_...jpg
-  //        .../F80x105/conan_...jpg -> .../F190x247/conan_...jpg
+  if (u.startsWith('//')) u = 'https:' + u;
+  if (u.startsWith('http://')) u = 'https://' + u.slice(7);
+  // Fix chính: TruyenQQ dùng pattern F80x105 / 80x105 -> F190x247 (độ phân giải cao nét căng)
   u = u.replace(/F80x105/gi, 'F190x247');
   u = u.replace(/F\d+x\d+/gi, 'F190x247');
   u = u.replace(/\/ebook\/F?\d+x\d+\//gi, '/ebook/190x247/');
   u = u.replace(/\/thumb\/F?\d+x\d+\//gi, '/thumb/190x247/');
-  // Một số mirror dùng -80x105.jpg hoặc _80x105.
   u = u.replace(/[-_]F?80x105\./gi, '-190x247.').replace(/[-_]F?90x\d+\./gi, '-190x247.');
-  // Fallback: bất kỳ 80x105 còn sót thì đổi thẳng
   u = u.replace(/80x105/gi, '190x247');
-  // Nếu URL có tham số w/h nhỏ, xóa để lấy gốc hoặc tăng
   if (u.includes('?')) {
     try {
       const urlObj = new URL(u);
@@ -239,7 +242,7 @@ function parseTruyenqqHtmlList(html: string): { items: MangaItem[]; totalPages: 
 
   const items: MangaItem[] = [];
 
-  // 1. Try JSON-LD ItemList (most stable, added 2024) — faster and not dependent on li layout
+  // 1. Try JSON-LD ItemList (most stable, added 2024)
   try {
     const jsonLdMatch = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?"@type"\s*:\s*"ItemList"[\s\S]*?)<\/script>/i);
     if (jsonLdMatch) {
@@ -267,10 +270,10 @@ function parseTruyenqqHtmlList(html: string): { items: MangaItem[]; totalPages: 
     }
   } catch {}
 
-  const liBlocks = html.match(/<li>[\s\S]*?<div class="book_avatar">[\s\S]*?<\/li>/gi) || [];
+  const liBlocks = html.match(/<li[^>]*>[\s\S]*?(?:book_avatar|truyen-tranh)[\s\S]*?<\/li>/gi) || html.match(/<li[^>]*>[\s\S]*?<\/li>/gi) || [];
   for (const block of liBlocks) {
     const slugMatch = block.match(/href="[^"]*\/truyen-tranh\/([^"]+)"/i);
-    const titleMatch = block.match(/<h3[^>]*><a[^>]*title="([^"]+)"/i) || block.match(/<h3[^>]*><a[^>]*>([^<]+)<\/a>/i) || block.match(/alt="([^"]+)"/i);
+    const titleMatch = block.match(/<h3[^>]*><a[^>]*title="([^"]+)"/i) || block.match(/<h3[^>]*><a[^>]*>([^<]+)<\/a>/i) || block.match(/alt="([^"]+)"/i) || block.match(/<p class="name">([^<]+)<\/p>/i);
     const imgMatch = block.match(/<img[^>]*data-original="([^"]+)"/i) || block.match(/<img[^>]*src="([^"]+)"/i);
     const descMatch = block.match(/class="excerpt"[^>]*>([\s\S]*?)<\/div>/i);
     const statusMatch = block.match(/Tình trạng:\s*([^<]+)<\/p>/i);
@@ -899,7 +902,7 @@ export const mangaApi = {
             const chapterPath = data.data.item.chapter_path;
             const images = data.data.item.chapter_image || [];
             if (images.length > 0) {
-              return images.map((img: any) => getProxyImageUrl(`${domainCdn}/${chapterPath}/${img.image_file}`));
+              return images.map((img: any) => getMangaImageUrl(`${domainCdn}/${chapterPath}/${img.image_file}`));
             }
           }
         } catch (e) {
@@ -929,7 +932,7 @@ export const mangaApi = {
             }
 
             if (fileNames.length > 0) {
-              return fileNames.map((fn: string) => getProxyImageUrl(`https://uploads.mangadex.org/${folder}/${hash}/${fn}`));
+              return fileNames.map((fn: string) => getMangaImageUrl(`https://uploads.mangadex.org/${folder}/${hash}/${fn}`));
             }
           }
         } catch (e) {
@@ -940,7 +943,7 @@ export const mangaApi = {
         try {
           const data = await fetchMangaApi(`${getCuutruyenBase()}/chapters/${chapter.id}`);
           const rawPages = data.data?.pages || data.pages || [];
-          return rawPages.map((p: any) => getProxyImageUrl(p.image_url || p.url || p.src || p));
+          return rawPages.map((p: any) => getMangaImageUrl(p.image_url || p.url || p.src || p));
         } catch (e) {
           console.warn('CuuTruyen chapter pages fetch failed:', e);
           return [];
@@ -955,17 +958,50 @@ export const mangaApi = {
 };
 
 /**
- * Helper to generate resilient image URLs
+ * Helper to generate direct, resilient and clean image URLs for Manga posters & pages
  */
 export function getMangaImageUrl(url: string): string {
   if (!url) return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
-  return getProxyImageUrl(url);
+  let u = url.trim();
+  if (u.startsWith('//')) u = 'https:' + u;
+  if (u.startsWith('http://')) u = 'https://' + u.slice(7);
+
+  // If already relative /api/... path, resolve with getFullApiUrl
+  if (u.startsWith('/')) return getFullApiUrl(u);
+
+  // Upgrade TruyenQQ images to highest quality and HTTPS
+  if (u.includes('truyenvua.com') || u.includes('hinhhinh.com') || u.includes('truyenqq') || u.includes('80x105')) {
+    return upgradeTruyenqqImageUrl(u);
+  }
+
+  return u;
 }
 
 export function getProxyImageUrl(url: string): string {
-  if (!url) return '';
-  // Nếu đã là proxy URL (dù relative hay absolute) thì đảm bảo trả về absolute cho APK
-  if (url.includes('/api/proxy/image?url=')) return getFullApiUrl(url);
-  if (!url.startsWith('http')) return url;
-  return getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(url)}`);
+  return getMangaImageUrl(url);
+}
+
+/**
+ * Multi-stage resilient fallback for image onError handlers across all devices (Web, PWA, Android APK)
+ */
+export function getFallbackMangaImageUrl(url: string, currentFailedSrc?: string): string {
+  if (!url) return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
+  let cleanUrl = url.trim();
+  if (cleanUrl.startsWith('//')) cleanUrl = 'https:' + cleanUrl;
+  if (cleanUrl.startsWith('http://')) cleanUrl = 'https://' + cleanUrl.slice(7);
+
+  // Stage 1: If direct load failed (often due to referrer or CDN block), try fast global image CDN proxy (wsrv.nl strips referer and caches WebP)
+  if (!currentFailedSrc || (!currentFailedSrc.includes('wsrv.nl') && !currentFailedSrc.includes('/api/proxy/image'))) {
+    if (cleanUrl.startsWith('http')) {
+      return `https://wsrv.nl/?url=${encodeURIComponent(cleanUrl)}&output=webp`;
+    }
+  }
+
+  // Stage 2: If wsrv.nl failed or already attempted, try our backend proxy
+  if (currentFailedSrc && !currentFailedSrc.includes('/api/proxy/image') && cleanUrl.startsWith('http')) {
+    return getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(cleanUrl)}`);
+  }
+
+  // Stage 3: Default fallback
+  return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
 }

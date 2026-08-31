@@ -3,7 +3,7 @@ import {
   MangaItem,
   MangaChapter,
   MangaHistoryItem,
-  getProxyImageUrl,
+  getFallbackMangaImageUrl,
 } from "../../services/mangaApi";
 import {
   ArrowLeft,
@@ -84,14 +84,7 @@ export const MangaDetailView: React.FC<MangaDetailViewProps> = ({
             referrerPolicy="no-referrer"
             onError={(e) => {
               const t = e.target as HTMLImageElement;
-              if (
-                !t.src.includes("/api/proxy/image") &&
-                manga.coverUrl.startsWith("http")
-              )
-                t.src = getProxyImageUrl(manga.coverUrl);
-              else
-                t.src =
-                  "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop";
+              t.src = getFallbackMangaImageUrl(manga.coverUrl, t.src);
             }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-[#0b0c16] via-[#0b0c16]/70 to-[#0b0c16]/20" />
@@ -123,14 +116,7 @@ export const MangaDetailView: React.FC<MangaDetailViewProps> = ({
                 referrerPolicy="no-referrer"
                 onError={(e) => {
                   const t = e.target as HTMLImageElement;
-                  if (
-                    !t.src.includes("/api/proxy/image") &&
-                    manga.coverUrl.startsWith("http")
-                  )
-                    t.src = getProxyImageUrl(manga.coverUrl);
-                  else
-                    t.src =
-                      "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop";
+                  t.src = getFallbackMangaImageUrl(manga.coverUrl, t.src);
                 }}
               />
               <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3">

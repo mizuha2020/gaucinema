@@ -31,6 +31,7 @@ import { watchHistoryService } from '../services/watchHistoryService';
 import { enterNativePip, setNativeVideoPlaying, checkNativePipSupported } from '../utils/nativeVideoPlayer';
 import { Capacitor } from '@capacitor/core';
 import { useTvMode } from '../hooks/useTvMode';
+import { motion } from 'motion/react';
 
 interface SimplePlayerProps {
   movie: Movie;
@@ -1118,8 +1119,12 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
   };
 
   return (
-    <div
+    <motion.div
       ref={containerRef}
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
       className="fixed inset-0 bg-black z-50 flex items-center justify-center select-none touch-none"
       onMouseMove={handleMouseMove}
       onTouchStart={handleTouchStart}
@@ -1682,6 +1687,6 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
           </div>
         </>
       )}
-    </div>
+    </motion.div>
   );
 });

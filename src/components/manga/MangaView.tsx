@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { MangaItem, MangaSource, mangaApi, MangaChapter, MangaHistoryItem, getProxyImageUrl } from '../../services/mangaApi';
 import { getFullApiUrl } from '../../services/apiConfig';
 import { systemApiService } from '../../services/systemApiService';
@@ -498,33 +499,45 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
       )}
 
       {/* Reader Modal */}
-      {activeReadingSession && selectedManga && (
-        <MangaReaderModal
-          manga={selectedManga}
-          initialChapter={activeReadingSession.chapter}
-          initialPageIndex={activeReadingSession.pageIndex || 0}
-          onClose={handleCloseReader}
-          onSelectChapter={(ch) => setActiveReadingSession({ manga: selectedManga, chapter: ch, pageIndex: 0 })}
-          onChapterRead={handleChapterRead}
-          currentAccount={currentAccount}
-          activeProfile={activeProfile}
-        />
-      )}
+      <AnimatePresence mode="wait">
+        {activeReadingSession && selectedManga && (
+          <MangaReaderModal
+            key={`reader-${selectedManga.id}-${activeReadingSession.chapter.id}`}
+            manga={selectedManga}
+            initialChapter={activeReadingSession.chapter}
+            initialPageIndex={activeReadingSession.pageIndex || 0}
+            onClose={handleCloseReader}
+            onSelectChapter={(ch) => setActiveReadingSession({ manga: selectedManga, chapter: ch, pageIndex: 0 })}
+            onChapterRead={handleChapterRead}
+            currentAccount={currentAccount}
+            activeProfile={activeProfile}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Detail View */}
-      {isDetail && selectedManga ? (
-        <MangaDetailView
-          manga={selectedManga}
-          onBack={handleCloseDetail}
-          onReadChapter={handleStartReading}
-          recentHistory={historyList.find(h => h.mangaId === selectedManga.id)}
-          isSaved={isCurrentMangaSaved}
-          onToggleSave={() => handleToggleSave()}
-          relatedMangas={relatedForDetail}
-          onOpenRelated={handleOpenDetail}
-        />
-      ) : (
-        <div className="pt-20 sm:pt-24 pb-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto space-y-8">
+      <AnimatePresence mode="wait">
+        {isDetail && selectedManga ? (
+          <motion.div
+            key={`detail-${selectedManga.id}`}
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 16 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <MangaDetailView
+              manga={selectedManga}
+              onBack={handleCloseDetail}
+              onReadChapter={handleStartReading}
+              recentHistory={historyList.find(h => h.mangaId === selectedManga.id)}
+              isSaved={isCurrentMangaSaved}
+              onToggleSave={() => handleToggleSave()}
+              relatedMangas={relatedForDetail}
+              onOpenRelated={handleOpenDetail}
+            />
+          </motion.div>
+        ) : (
+          <div className="pt-20 sm:pt-24 pb-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto space-y-8">
           {/* Tab-specific content */}
           {activeTab === 'explore' ? (
             <MangaSearchView
@@ -802,6 +815,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
           )}
         </div>
       )}
+      </AnimatePresence>
 
       {/* Disabled source alert */}
       {disabledSourceAlert && (

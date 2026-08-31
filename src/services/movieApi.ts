@@ -608,31 +608,53 @@ export const movieApi = {
     const source = sourceOverride || getActiveApiSource();
     const cacheKey = `genre:${genreSlug}:${source}:${page}:${limit}`;
 
+    // Aliases for genres that have different slugs across providers (e.g. vien-tuong vs khoa-hoc-vien-tuong)
+    const genreAliases: Record<string, string[]> = {
+      'vien-tuong': ['vien-tuong', 'khoa-hoc-vien-tuong', 'khoa-hoc', 'phieu-luu'],
+      'khoa-hoc': ['khoa-hoc', 'khoa-hoc-vien-tuong', 'vien-tuong'],
+      'phieu-luu': ['phieu-luu', 'vien-tuong', 'hanh-dong'],
+      'tinh-cam': ['tinh-cam', 'tam-ly', 'lang-man'],
+      'kinh-di': ['kinh-di', 'bi-an', 'ma'],
+      'hanh-dong': ['hanh-dong', 'vo-thuat'],
+    };
+
     return cachedFetch(cacheKey, async () => {
-      if (source === 'kkphim') {
-        const raw = await fetchKKPhim<any>(`v1/api/the-loai/${genreSlug}`, { page, limit });
-        return normalizeMovieList(raw, 'kkphim');
-      }
-      if (source === 'ophim') {
-        const raw = await fetchOPhim<any>(`v1/api/the-loai/${genreSlug}`, { page, limit });
-        return normalizeMovieList(raw, 'ophim');
-      }
-      if (source === 'nguonc') {
-        const raw = await fetchNguonC<any>(`films/the-loai/${genreSlug}`, { page });
-        return normalizeMovieList(raw, 'nguonc');
+      const slugsToTry = genreAliases[genreSlug] || [genreSlug];
+
+      for (const currentSlug of slugsToTry) {
+        if (source === 'kkphim') {
+          const raw = await fetchKKPhim<any>(`v1/api/the-loai/${currentSlug}`, { page, limit });
+          const res = normalizeMovieList(raw, 'kkphim');
+          if (res.items.length > 0) return res;
+        } else if (source === 'ophim') {
+          const raw = await fetchOPhim<any>(`v1/api/the-loai/${currentSlug}`, { page, limit });
+          const res = normalizeMovieList(raw, 'ophim');
+          if (res.items.length > 0) return res;
+        } else if (source === 'nguonc') {
+          const raw = await fetchNguonC<any>(`films/the-loai/${currentSlug}`, { page });
+          const res = normalizeMovieList(raw, 'nguonc');
+          if (res.items.length > 0) return res;
+        } else {
+          // 'all' Mode
+          const [kk, op, nc] = await Promise.allSettled([
+            fetchKKPhim<any>(`v1/api/the-loai/${currentSlug}`, { page, limit }),
+            fetchOPhim<any>(`v1/api/the-loai/${currentSlug}`, { page, limit }),
+            fetchNguonC<any>(`films/the-loai/${currentSlug}`, { page }),
+          ]);
+          const kkList = kk.status === 'fulfilled' ? normalizeMovieList(kk.value, 'kkphim').items : [];
+          const opList = op.status === 'fulfilled' ? normalizeMovieList(op.value, 'ophim').items : [];
+          const ncList = nc.status === 'fulfilled' ? normalizeMovieList(nc.value, 'nguonc').items : [];
+          const map = new Map<string, Movie>();
+          for (const m of [...kkList, ...opList, ...ncList]) {
+            if (!map.has(m.slug)) map.set(m.slug, m);
+          }
+          if (map.size > 0) {
+            return { status: true, items: Array.from(map.values()) };
+          }
+        }
       }
 
-      const [kk, op] = await Promise.allSettled([
-        fetchKKPhim<any>(`v1/api/the-loai/${genreSlug}`, { page, limit }),
-        fetchOPhim<any>(`v1/api/the-loai/${genreSlug}`, { page, limit }),
-      ]);
-      const kkList = kk.status === 'fulfilled' ? normalizeMovieList(kk.value, 'kkphim').items : [];
-      const opList = op.status === 'fulfilled' ? normalizeMovieList(op.value, 'ophim').items : [];
-      const map = new Map<string, Movie>();
-      for (const m of [...kkList, ...opList]) {
-        if (!map.has(m.slug)) map.set(m.slug, m);
-      }
-      return { status: true, items: Array.from(map.values()) };
+      return { status: true, items: [] };
     });
   },
 
@@ -820,28 +842,34 @@ export const movieApi = {
       }
       
       let items: Movie[] = [];
-      if (p1.status === 'fulfilled') items = [...items, ...p1.value.items];
-      if (p2.status === 'fulfilled') items = [...items, ...p2.value.items];
+      if (p1.status === 'fulfilled' && p1.value?.items) items = [...items, ...p1.value.items];
+      if (p2.status === 'fulfilled' && p2.value?.items) items = [...items, ...p2.value.items];
 
-      if (items.length === 0) return { status: false, items: [] };
+      if (items.length === 0) {
+        // Fallback to new updated if specific type returned 0
+        const fallback = await this.getNewUpdated(1, limit + 4).catch(() => null);
+        if (fallback?.items?.length) {
+          return { status: true, items: fallback.items.slice(0, limit) };
+        }
+        return { status: false, items: [] };
+      }
 
-      // Sort by views
-      const sorted = items
-        .filter((m, index, self) => self.findIndex(t => t.slug === m.slug) === index) // Unique
-        .sort((a, b) => (b.view || 0) - (a.view || 0));
-      
-      if (sorted[0]?.view === sorted[sorted.length - 1]?.view) {
-        // Fallback if APIs don't return view counts: 
-        // Pick from page 2 (index 20+) so it doesn't overlap with the start of page 1.
+      // Sort by views if views exist and vary
+      const uniqueItems = items.filter((m, index, self) => self.findIndex(t => t.slug === m.slug) === index);
+      const hasViews = uniqueItems.some((m) => (m.view || 0) > 0);
+
+      if (hasViews) {
+        const sorted = [...uniqueItems].sort((a, b) => (b.view || 0) - (a.view || 0));
         return {
           status: true,
-          items: items.slice(20, 20 + limit),
+          items: sorted.slice(0, limit),
         };
       }
 
+      // If view count is absent or uniform, return the top distinct items directly
       return {
         status: true,
-        items: sorted.slice(0, limit),
+        items: uniqueItems.slice(0, limit),
       };
     });
   },
@@ -852,30 +880,54 @@ export const movieApi = {
     const cacheKey = `theater:${source}:${page}:${limit}`;
 
     return cachedFetch(cacheKey, async () => {
+      let items: Movie[] = [];
+
       if (source === 'kkphim') {
         const raw = await fetchKKPhim<any>('v1/api/danh-sach/phim-chieu-rap', { page, limit });
-        return normalizeMovieList(raw, 'kkphim');
-      }
-      if (source === 'ophim') {
+        const res = normalizeMovieList(raw, 'kkphim');
+        if (res.items.length > 0) items = res.items;
+      } else if (source === 'ophim') {
         const raw = await fetchOPhim<any>('v1/api/danh-sach/phim-chieu-rap', { page, limit });
-        return normalizeMovieList(raw, 'ophim');
-      }
-      if (source === 'nguonc') {
+        const res = normalizeMovieList(raw, 'ophim');
+        if (res.items.length > 0) items = res.items;
+      } else if (source === 'nguonc') {
         const raw = await fetchNguonC<any>('films/danh-sach/phim-chieu-rap', { page });
-        return normalizeMovieList(raw, 'nguonc');
+        const res = normalizeMovieList(raw, 'nguonc');
+        if (res.items.length > 0) items = res.items;
+      } else {
+        const [kk, op, nc] = await Promise.allSettled([
+          fetchKKPhim<any>('v1/api/danh-sach/phim-chieu-rap', { page, limit }),
+          fetchOPhim<any>('v1/api/danh-sach/phim-chieu-rap', { page, limit }),
+          fetchNguonC<any>('films/danh-sach/phim-chieu-rap', { page }),
+        ]);
+        const kkList = kk.status === 'fulfilled' ? normalizeMovieList(kk.value, 'kkphim').items : [];
+        const opList = op.status === 'fulfilled' ? normalizeMovieList(op.value, 'ophim').items : [];
+        const ncList = nc.status === 'fulfilled' ? normalizeMovieList(nc.value, 'nguonc').items : [];
+        const map = new Map<string, Movie>();
+        for (const m of [...kkList, ...opList, ...ncList]) {
+          if (!map.has(m.slug)) map.set(m.slug, m);
+        }
+        items = Array.from(map.values());
       }
 
-      const [kk, op] = await Promise.allSettled([
-        fetchKKPhim<any>('v1/api/danh-sach/phim-chieu-rap', { page, limit }),
-        fetchOPhim<any>('v1/api/danh-sach/phim-chieu-rap', { page, limit }),
-      ]);
-      const kkList = kk.status === 'fulfilled' ? normalizeMovieList(kk.value, 'kkphim').items : [];
-      const opList = op.status === 'fulfilled' ? normalizeMovieList(op.value, 'ophim').items : [];
-      const map = new Map<string, Movie>();
-      for (const m of [...kkList, ...opList]) {
-        if (!map.has(m.slug)) map.set(m.slug, m);
+      // Robust fallback if upstream phim-chieu-rap endpoint returns empty
+      if (items.length === 0) {
+        const [singleRes, actionRes] = await Promise.allSettled([
+          this.getSingleMovies(page, limit, sourceOverride),
+          this.getByGenre('hanh-dong', page, limit, sourceOverride),
+        ]);
+        const sItems = singleRes.status === 'fulfilled' ? singleRes.value.items : [];
+        const aItems = actionRes.status === 'fulfilled' ? actionRes.value.items : [];
+        const combined = [...sItems, ...aItems];
+        const theaterMatches = combined.filter((m) => m.chieurap);
+        if (theaterMatches.length >= 4) {
+          items = theaterMatches.slice(0, limit);
+        } else if (sItems.length > 0) {
+          items = sItems.slice(0, limit);
+        }
       }
-      return { status: true, items: Array.from(map.values()) };
+
+      return { status: true, items: items.slice(0, limit) };
     });
   },
 

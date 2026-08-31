@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { motion } from 'motion/react';
 import { MangaChapter, MangaItem, getProxyImageUrl } from '../../services/mangaApi';
 import { mangaApi } from '../../services/mangaApi';
+import { getFullApiUrl } from '../../services/apiConfig';
 import { systemApiService } from '../../services/systemApiService';
 import { presenceService } from '../../services/presenceService';
 import { Account, UserProfile } from '../../types';
@@ -750,8 +752,12 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
   };
 
   const modalContent = (
-    <div
+    <motion.div
       ref={containerRef}
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
       className={`fixed inset-0 z-[99999] w-screen h-screen ${getBackgroundColorClass()} text-white flex flex-col select-none overflow-hidden transition-colors duration-300 isolate`}
       onClick={handleContainerClick}
       style={{ overscrollBehavior: 'none' }}
@@ -1220,7 +1226,7 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
       {showShortcutsModal && (
         <KeyboardShortcutsModal onClose={() => setShowShortcutsModal(false)} />
       )}
-    </div>
+    </motion.div>
   );
 
   return createPortal(modalContent, document.body);
@@ -1279,23 +1285,29 @@ const MangaReaderPageItem: React.FC<MangaReaderPageItemProps> = ({
 
   const handleError = () => {
     if (attempt === 0) {
-      // Step 1: Retry with cache-busting timestamp
+      // Step 1: Try wsrv.nl CDN proxy
       setAttempt(1);
-      const sep = currentSrc.includes('?') ? '&' : '?';
-      setCurrentSrc(`${getProxyImageUrl(pageUrl)}${sep}t=${Date.now()}`);
+      const rawUrl = pageUrl.includes('/api/proxy/image?url=')
+        ? decodeURIComponent(pageUrl.split('/api/proxy/image?url=')[1].split('&')[0])
+        : pageUrl;
+      if (rawUrl.startsWith('http')) {
+        setCurrentSrc(`https://wsrv.nl/?url=${encodeURIComponent(rawUrl)}&output=webp`);
+      } else {
+        const sep = currentSrc.includes('?') ? '&' : '?';
+        setCurrentSrc(`${pageUrl}${sep}t=${Date.now()}`);
+      }
     } else if (attempt === 1) {
-      // Step 2: Try unproxied or data-saver if MangaDex
+      // Step 2: Try backend proxy or data-saver if MangaDex
+      setAttempt(2);
       const rawUrl = pageUrl.includes('/api/proxy/image?url=')
         ? decodeURIComponent(pageUrl.split('/api/proxy/image?url=')[1].split('&')[0])
         : pageUrl;
       const mdMatch = rawUrl.match(/(?:mangadex\.network|uploads\.mangadex\.org)\/(data|data-saver)\/([a-f0-9]+)\/([^?#]+)/i);
       if (mdMatch) {
         const [, , hash, file] = mdMatch;
-        setAttempt(2);
-        setCurrentSrc(getProxyImageUrl(`https://uploads.mangadex.org/data-saver/${hash}/${file}`));
+        setCurrentSrc(getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(`https://uploads.mangadex.org/data-saver/${hash}/${file}`)}`));
       } else if (rawUrl.startsWith('http')) {
-        setAttempt(2);
-        setCurrentSrc(rawUrl);
+        setCurrentSrc(getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(rawUrl)}`));
       } else {
         setHasError(true);
         setIsLoaded(true);
@@ -1303,11 +1315,11 @@ const MangaReaderPageItem: React.FC<MangaReaderPageItemProps> = ({
       }
     } else if (attempt === 2) {
       // Step 3: Try raw URL if not already tried
+      setAttempt(3);
       const rawUrl = pageUrl.includes('/api/proxy/image?url=')
         ? decodeURIComponent(pageUrl.split('/api/proxy/image?url=')[1].split('&')[0])
         : pageUrl;
       if (rawUrl !== currentSrc && rawUrl.startsWith('http')) {
-        setAttempt(3);
         setCurrentSrc(rawUrl);
       } else {
         setHasError(true);
@@ -1327,7 +1339,7 @@ const MangaReaderPageItem: React.FC<MangaReaderPageItemProps> = ({
     setIsLoaded(false);
     setAttempt(0);
     const sep = pageUrl.includes('?') ? '&' : '?';
-    setCurrentSrc(`${getProxyImageUrl(pageUrl)}${sep}retry=${Date.now()}`);
+    setCurrentSrc(`${pageUrl}${sep}retry=${Date.now()}`);
   };
 
   if (hasError) {

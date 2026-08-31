@@ -1,7 +1,8 @@
-import React, { useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useRef, useEffect, useMemo, useCallback, useState } from 'react';
 import { Movie } from '../types';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { getImageUrl } from '../services/movieApi';
+import { smoothScrollHorizontal } from '../utils/scrollUtils';
 
 interface Top10CarouselProps {
   title: string;
@@ -10,98 +11,107 @@ interface Top10CarouselProps {
   onPlay: (movie: Movie) => void;
 }
 
-export const Top10Carousel: React.FC<Top10CarouselProps> = ({ title, movies, onOpenDetail, onPlay }) => {
+export const Top10Carousel: React.FC<Top10CarouselProps> = ({ title, movies, onOpenDetail }) => {
   const rowRef = useRef<HTMLDivElement>(null);
-  const setWidthRef = useRef(0);
-  const isScrollingRef = useRef(false);
-  const animRef = useRef<number | null>(null);
-  const top10Movies = movies.slice(0, 10);
+  const isDraggingRef = useRef(false);
+  const startXRef = useRef(0);
+  const scrollLeftStartRef = useRef(0);
+  const hasMovedRef = useRef(false);
 
-  const smoothScrollBy = useCallback((el: HTMLElement, delta: number) => {
-    if (animRef.current) cancelAnimationFrame(animRef.current);
-    const start = el.scrollLeft;
-    const target = start + delta;
-    const duration = 420;
-    const startTime = performance.now();
-    const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
-    isScrollingRef.current = true;
-    const step = (now: number) => {
-      const p = Math.min((now - startTime) / duration, 1);
-      el.scrollLeft = start + (target - start) * easeOutCubic(p);
-      if (p < 1) animRef.current = requestAnimationFrame(step);
-      else { isScrollingRef.current = false; animRef.current = null; }
-    };
-    animRef.current = requestAnimationFrame(step);
-  }, []);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(true);
 
-  const tripleMovies = useMemo(() => [...top10Movies, ...top10Movies, ...top10Movies], [top10Movies]);
+  const top10Movies = useMemo(() => movies.slice(0, 10), [movies]);
 
-  useEffect(() => {
-    const el = rowRef.current;
-    if (!el || !top10Movies.length) return;
-    const firstSet = top10Movies.length;
-    const children = Array.from(el.children) as HTMLElement[];
-    if (children.length < firstSet) return;
-
-    let totalWidth = 0;
-    for (let i = 0; i < firstSet; i++) {
-      totalWidth += children[i].offsetWidth;
-      if (i < firstSet - 1) {
-        const style = window.getComputedStyle(el);
-        totalWidth += parseFloat(style.gap) || 0;
-      }
-    }
-    setWidthRef.current = totalWidth;
-    el.scrollLeft = totalWidth;
-  }, [top10Movies]);
-
-  useEffect(() => {
+  const checkScrollBounds = useCallback(() => {
     const el = rowRef.current;
     if (!el) return;
-    let scrollTimer: ReturnType<typeof setTimeout> | null = null;
-    const onScroll = () => {
-      if (isScrollingRef.current) return;
-      if (scrollTimer) clearTimeout(scrollTimer);
-      scrollTimer = setTimeout(() => {
-        if (isScrollingRef.current) return;
-        const setWidth = setWidthRef.current;
-        if (setWidth <= 0) return;
-        const { scrollLeft, scrollWidth } = el;
-        const third = scrollWidth / 3;
-        const pos = el.scrollLeft;
-        if (pos < third * 0.2) { try { (el as any).scrollTo({ left: pos + setWidth, behavior: 'instant' }); } catch { el.scrollLeft = pos + setWidth; } }
-        else if (pos > third * 2.8) { try { (el as any).scrollTo({ left: pos - setWidth, behavior: 'instant' }); } catch { el.scrollLeft = pos - setWidth; } }
-      }, 90);
-    };
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => { el.removeEventListener('scroll', onScroll); if (scrollTimer) clearTimeout(scrollTimer); };
+    const { scrollLeft, scrollWidth, clientWidth } = el;
+    setCanScrollLeft(scrollLeft > 8);
+    setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 8);
   }, []);
 
-  const handleScroll = (direction: 'left' | 'right') => {
+  useEffect(() => {
+    checkScrollBounds();
+    const handleResize = () => checkScrollBounds();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [checkScrollBounds, top10Movies]);
+
+  const scrollAnimCancelRef = useRef<(() => void) | null>(null);
+
+  const handleScrollBtn = (direction: 'left' | 'right') => {
     const el = rowRef.current;
-    if (!el || isScrollingRef.current) return;
-    const scrollAmount = Math.round(el.clientWidth * 0.82);
-    smoothScrollBy(el, direction === 'left' ? -scrollAmount : scrollAmount);
+    if (!el) return;
+    if (scrollAnimCancelRef.current) {
+      scrollAnimCancelRef.current();
+    }
+    const scrollAmount = Math.round(el.clientWidth * 0.75);
+    const delta = direction === 'left' ? -scrollAmount : scrollAmount;
+    scrollAnimCancelRef.current = smoothScrollHorizontal(el, delta, 460, checkScrollBounds);
   };
 
+  const onMouseDown = (e: React.MouseEvent) => {
+    const el = rowRef.current;
+    if (!el) return;
+    isDraggingRef.current = true;
+    hasMovedRef.current = false;
+    startXRef.current = e.pageX - el.offsetLeft;
+    scrollLeftStartRef.current = el.scrollLeft;
+  };
+
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (!isDraggingRef.current) return;
+    const el = rowRef.current;
+    if (!el) return;
+    const x = e.pageX - el.offsetLeft;
+    const walk = (x - startXRef.current) * 1.3;
+    if (Math.abs(walk) > 5) {
+      hasMovedRef.current = true;
+    }
+    el.scrollLeft = scrollLeftStartRef.current - walk;
+  };
+
+  const onMouseUpOrLeave = () => {
+    isDraggingRef.current = false;
+    setTimeout(() => {
+      hasMovedRef.current = false;
+    }, 50);
+  };
+
+  const handleClickItem = (movie: Movie) => {
+    if (hasMovedRef.current) return;
+    onOpenDetail(movie);
+  };
+
+  if (!top10Movies.length) return null;
+
   return (
-    <div className="bg-black py-8 px-4 sm:px-8">
+    <div className="bg-black py-8 px-4 sm:px-8 select-none">
       <h2 className="text-white text-2xl font-bold mb-6">{title}</h2>
 
       <div className="relative group">
-        <button
-          className="absolute left-0 top-1/2 -translate-y-1/2 z-20 bg-black/50 p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition"
-          onClick={() => handleScroll('left')}
-        >
-          <ChevronLeft className="text-white w-5 h-5" />
-        </button>
+        {canScrollLeft && (
+          <button
+            className="absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95"
+            onClick={() => handleScrollBtn('left')}
+            aria-label="Cuộn sang trái"
+          >
+            <ChevronLeft className="w-5 h-5 hover:scale-110 transition-transform" />
+          </button>
+        )}
 
         <div
           ref={rowRef}
-          className="flex items-end overflow-x-auto scrollbar-none gap-0"
-          style={{ scrollbarWidth: 'none' }}
+          onScroll={checkScrollBounds}
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUpOrLeave}
+          onMouseLeave={onMouseUpOrLeave}
+          className="flex items-end overflow-x-auto scrollbar-none overscroll-x-contain gap-0 cursor-grab active:cursor-grabbing py-2"
+          style={{ WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}
         >
-          {tripleMovies.map((movie, index) => (
+          {top10Movies.map((movie, index) => (
             <div key={`${movie.slug || 'top10'}-${index}`} className="relative flex-shrink-0 w-64 h-80 flex items-end">
               <div className="absolute left-0 bottom-0 z-0 flex items-center justify-start h-full">
                 <span
@@ -111,18 +121,18 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({ title, movies, onO
                     textShadow: '0 0 24px rgba(37,99,235,0.5)',
                   }}
                 >
-                  {(index % top10Movies.length) + 1}
+                  {index + 1}
                 </span>
               </div>
 
               <div
                 className="relative z-10 ml-16 w-48 h-72 rounded-lg overflow-hidden cursor-pointer shadow-2xl transition-transform hover:scale-105"
-                onClick={() => onOpenDetail(movie)}
+                onClick={() => handleClickItem(movie)}
               >
                 <img
                   src={getImageUrl(movie.thumb_url || movie.poster_url)}
                   alt={movie.name}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover pointer-events-none"
                   loading="lazy"
                   decoding="async"
                 />
@@ -135,13 +145,17 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({ title, movies, onO
           ))}
         </div>
 
-        <button
-          className="absolute right-0 top-1/2 -translate-y-1/2 z-20 bg-black/50 p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition"
-          onClick={() => handleScroll('right')}
-        >
-          <ChevronRight className="text-white w-5 h-5" />
-        </button>
+        {canScrollRight && (
+          <button
+            className="absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95"
+            onClick={() => handleScrollBtn('right')}
+            aria-label="Cuộn sang phải"
+          >
+            <ChevronRight className="w-5 h-5 hover:scale-110 transition-transform" />
+          </button>
+        )}
       </div>
     </div>
   );
 };
+

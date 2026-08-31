@@ -80,7 +80,10 @@ export const FollowedRow: React.FC<FollowedRowProps> = ({ items, onOpenDetail, o
               <span>Có tập mới ({hasNew.length})</span>
             </h2>
           </div>
-          <div className="flex items-center gap-4 overflow-x-auto pb-3 scrollbar-none">
+          <div
+            className="flex items-center gap-4 overflow-x-auto pb-3 scrollbar-none overscroll-x-contain"
+            style={{ WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}
+          >
             {hasNew.map(it=> <Card key={it.slug} it={it} />)}
           </div>
         </>
@@ -93,7 +96,10 @@ export const FollowedRow: React.FC<FollowedRowProps> = ({ items, onOpenDetail, o
               <span>Đang theo dõi ({normal.length})</span>
             </h2>
           </div>
-          <div className="flex items-center gap-4 overflow-x-auto pb-3 scrollbar-none">
+          <div
+            className="flex items-center gap-4 overflow-x-auto pb-3 scrollbar-none overscroll-x-contain"
+            style={{ WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}
+          >
             {normal.map(it=> <Card key={it.slug} it={it} />)}
           </div>
         </>

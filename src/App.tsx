@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Account,
   EpisodeServer,
@@ -580,7 +581,11 @@ export default function App() {
       ]);
 
       const trendingItems = trendingAllRes?.items || [];
-      if (trendingItems.length) setMovieCollection('topHotAll', trendingItems);
+      if (trendingItems.length) {
+        setMovieCollection('topHotAll', trendingItems);
+      } else if (newRes?.items?.length) {
+        setMovieCollection('topHotAll', newRes.items.slice(0, 10));
+      }
 
       if (theaterRes?.items?.length) setMovieCollection('theaterList', theaterRes.items);
 
@@ -592,7 +597,7 @@ export default function App() {
           ...(topSingleRes?.items || []).map((m: any) => m.slug)
         ]);
         const filteredNew = newRes.items.filter((m: any) => !hotSlugs.has(m.slug));
-        setMovieCollection('newUpdated', filteredNew);
+        setMovieCollection('newUpdated', filteredNew.length > 0 ? filteredNew : newRes.items);
       }
 
       if (topSeriesRes?.items?.length) setMovieCollection('topSeries', topSeriesRes.items);
@@ -621,14 +626,31 @@ export default function App() {
         movieApi.getByCountry('han-quoc', 1, 16),
       ]);
 
-      if (seriesRes.status === 'fulfilled') setMovieCollection('seriesList', seriesRes.value.items?.slice(10) || []);
-      if (singleRes.status === 'fulfilled') setMovieCollection('singleList', singleRes.value.items?.slice(10) || []);
-      if (animeRes.status === 'fulfilled') setMovieCollection('animeList', animeRes.value.items || []);
-      if (actionRes.status === 'fulfilled') setMovieCollection('actionList', actionRes.value.items || []);
-      if (romanceRes.status === 'fulfilled') setMovieCollection('romanceList', romanceRes.value.items || []);
-      if (horrorRes.status === 'fulfilled') setMovieCollection('horrorList', horrorRes.value.items || []);
-      if (sciFiRes.status === 'fulfilled') setMovieCollection('sciFiList', sciFiRes.value.items || []);
-      if (koreanRes.status === 'fulfilled') setMovieCollection('koreanList', koreanRes.value.items || []);
+      if (seriesRes.status === 'fulfilled' && seriesRes.value.items?.length) {
+        const items = seriesRes.value.items;
+        setMovieCollection('seriesList', items.length > 10 ? items.slice(10) : items);
+        if (!topSeriesRes?.items?.length) {
+          setMovieCollection('topSeries', items.slice(0, 10));
+        }
+      }
+      if (singleRes.status === 'fulfilled' && singleRes.value.items?.length) {
+        const items = singleRes.value.items;
+        setMovieCollection('singleList', items.length > 10 ? items.slice(10) : items);
+        if (!topSingleRes?.items?.length) {
+          setMovieCollection('topSingle', items.slice(0, 10));
+        }
+      }
+      if (animeRes.status === 'fulfilled' && animeRes.value.items?.length) setMovieCollection('animeList', animeRes.value.items);
+      if (actionRes.status === 'fulfilled' && actionRes.value.items?.length) {
+        setMovieCollection('actionList', actionRes.value.items);
+        if (!theaterRes?.items?.length) {
+          setMovieCollection('theaterList', actionRes.value.items.slice(0, 10));
+        }
+      }
+      if (romanceRes.status === 'fulfilled' && romanceRes.value.items?.length) setMovieCollection('romanceList', romanceRes.value.items);
+      if (horrorRes.status === 'fulfilled' && horrorRes.value.items?.length) setMovieCollection('horrorList', horrorRes.value.items);
+      if (sciFiRes.status === 'fulfilled' && sciFiRes.value.items?.length) setMovieCollection('sciFiList', sciFiRes.value.items);
+      if (koreanRes.status === 'fulfilled' && koreanRes.value.items?.length) setMovieCollection('koreanList', koreanRes.value.items);
     } catch (e) {
       console.error('Failed to load initial movie data', e);
     } finally {
@@ -1146,38 +1168,52 @@ export default function App() {
     appContent = (
       <div className="min-h-screen bg-[#070b16] text-white font-sans selection:bg-blue-600 selection:text-white">
         {/* 1. Who's Watching Profile Selector Screen */}
-        {showProfileSelector && (
-        <ProfileSelector
-          currentAccount={currentAccount}
-          profiles={profiles}
-          onSelectProfile={handleSelectProfile}
-          onUpdateProfiles={handleUpdateProfiles}
-          onAddProfile={handleAddProfile}
-          onDeleteProfile={handleDeleteProfile}
-          onLogout={handleLogout}
-          onOpenAdminDashboard={
-            currentAccount.role === 'admin' ? openAdminDashboard : undefined
-          }
-          onShowToast={showToast}
-        />
-      )}
+        <AnimatePresence mode="wait">
+          {showProfileSelector && (
+            <motion.div
+              key="profile-selector-view"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+              className="w-full"
+            >
+              <ProfileSelector
+                currentAccount={currentAccount}
+                profiles={profiles}
+                onSelectProfile={handleSelectProfile}
+                onUpdateProfiles={handleUpdateProfiles}
+                onAddProfile={handleAddProfile}
+                onDeleteProfile={handleDeleteProfile}
+                onLogout={handleLogout}
+                onOpenAdminDashboard={
+                  currentAccount.role === 'admin' ? openAdminDashboard : undefined
+                }
+                onShowToast={showToast}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-      {/* 2. Fullscreen HLS Video Player (0 Ads) */}
-      {playingMovie && playingEpisode && playingServer && (
-        <SimplePlayer
-          movie={playingMovie}
-          currentEpisode={playingEpisode}
-          currentServer={playingServer}
-          allServers={allServers}
-          initialTime={initialResumeTime}
-          onBack={closePlayer}
-          onSelectEpisode={handleSelectEpisode}
-          onSaveProgress={handleSaveProgress}
-          onTimeUpdate={handlePlayerTimeUpdate}
-          currentAccount={currentAccount}
-          activeProfile={activeProfile}
-        />
-      )}
+        {/* 2. Fullscreen HLS Video Player (0 Ads) */}
+        <AnimatePresence mode="wait">
+          {playingMovie && playingEpisode && playingServer && (
+            <SimplePlayer
+              key={`player-${playingMovie.slug}-${playingEpisode.slug}`}
+              movie={playingMovie}
+              currentEpisode={playingEpisode}
+              currentServer={playingServer}
+              allServers={allServers}
+              initialTime={initialResumeTime}
+              onBack={closePlayer}
+              onSelectEpisode={handleSelectEpisode}
+              onSaveProgress={handleSaveProgress}
+              onTimeUpdate={handlePlayerTimeUpdate}
+              currentAccount={currentAccount}
+              activeProfile={activeProfile}
+            />
+          )}
+        </AnimatePresence>
 
       {/* 3. Main Navigation Header */}
       {!playingMovie && !showProfileSelector && (
@@ -1672,25 +1708,28 @@ export default function App() {
       )}
 
       {/* 5. Movie Detail Modal */}
-      {selectedMovieForDetail && !activeRoomId && (
-        <MovieDetailModal
-          movie={selectedMovieForDetail}
-          onClose={closeDetailModal}
-          onPlayMovie={handlePlayMovie}
-          onPlayEpisode={handlePlayEpisode}
-          onToggleMyList={handleToggleMyList}
-          isInMyList={isInMyList}
-          onSelectRelatedMovie={(m) => openDetailModal(m)}
-          onSearchSubmit={handleSearchSubmit}
-          currentAccount={currentAccount}
-          activeProfile={activeProfile}
-          activeRooms={activeRoomsForFilm}
-          userActiveRoomId={activeRoomId}
-          onCreateRoom={handleCreateRoom}
-          onJoinRoom={handleJoinRoom}
-          onShowToast={showToast}
-        />
-      )}
+      <AnimatePresence mode="wait">
+        {selectedMovieForDetail && !activeRoomId && (
+          <MovieDetailModal
+            key={`detail-${selectedMovieForDetail.slug}`}
+            movie={selectedMovieForDetail}
+            onClose={closeDetailModal}
+            onPlayMovie={handlePlayMovie}
+            onPlayEpisode={handlePlayEpisode}
+            onToggleMyList={handleToggleMyList}
+            isInMyList={isInMyList}
+            onSelectRelatedMovie={(m) => openDetailModal(m)}
+            onSearchSubmit={handleSearchSubmit}
+            currentAccount={currentAccount}
+            activeProfile={activeProfile}
+            activeRooms={activeRoomsForFilm}
+            userActiveRoomId={activeRoomId}
+            onCreateRoom={handleCreateRoom}
+            onJoinRoom={handleJoinRoom}
+            onShowToast={showToast}
+          />
+        )}
+      </AnimatePresence>
 
       {/* 5b. Watch Together Room */}
       {activeRoomId && !activeRoomData && currentAccount && (

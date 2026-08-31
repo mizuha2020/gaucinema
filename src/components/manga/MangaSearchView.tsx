@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { MangaItem, MangaSource, mangaApi, getProxyImageUrl } from '../../services/mangaApi';
+import { MangaItem, MangaSource, mangaApi, getFallbackMangaImageUrl } from '../../services/mangaApi';
 import { BookOpen, Search, ChevronLeft, ChevronRight, Sparkles, RefreshCw, Filter, TrendingUp, Clock, Star } from 'lucide-react';
 import { systemApiService } from '../../services/systemApiService';
 import { MangaSourceBadge } from './MangaSourceBadge';
@@ -263,7 +263,7 @@ export const MangaSearchView: React.FC<MangaSearchViewProps> = ({
             {mangas.map((manga, idx) => (
               <div key={`${manga.id || manga.slug}-${idx}`} onClick={() => onOpenDetail(manga)} className="group cursor-pointer flex flex-col">
                 <div className="relative aspect-[2/3] overflow-hidden rounded-2xl bg-white/5 border border-white/10 group-hover:border-fuchsia-500/40 transition-colors shadow-lg">
-                  <img src={manga.coverUrl} alt={manga.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" loading="lazy" onError={(e) => { const t=e.target as HTMLImageElement; if(!t.src.includes('/api/proxy/image') && manga.coverUrl.startsWith('http')) t.src=getProxyImageUrl(manga.coverUrl); else t.src='https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop'; }} />
+                  <img src={manga.coverUrl} alt={manga.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" loading="lazy" onError={(e) => { const t=e.target as HTMLImageElement; t.src=getFallbackMangaImageUrl(manga.coverUrl, t.src); }} />
                   <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-[2px]">
                     <div className="bg-fuchsia-600 text-white rounded-full p-3 shadow-xl shadow-fuchsia-600/30 translate-y-2 group-hover:translate-y-0 transition-transform"><BookOpen className="w-5 h-5" /></div>
                   </div>

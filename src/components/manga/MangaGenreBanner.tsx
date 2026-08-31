@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { MangaItem } from '../../services/mangaApi';
+import { MangaItem, getFallbackMangaImageUrl } from '../../services/mangaApi';
 import { ChevronLeft, ChevronRight, BookOpen, Sparkles } from 'lucide-react';
 import { MangaSourceBadge } from './MangaSourceBadge';
-import { getProxyImageUrl } from '../../services/mangaApi';
 
 interface MangaGenreBannerProps {
   mangas: MangaItem[];
@@ -130,11 +129,7 @@ export const MangaGenreBanner: React.FC<MangaGenreBannerProps> = ({ mangas, onOp
                 className="w-full h-full object-cover opacity-85 group-hover:opacity-100 group-hover:scale-110 transition-all duration-700"
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
-                  if (!target.src.includes('/api/proxy/image') && manga.coverUrl && manga.coverUrl.startsWith('http')) {
-                    target.src = getProxyImageUrl(manga.coverUrl);
-                  } else {
-                    target.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop';
-                  }
+                  target.src = getFallbackMangaImageUrl(manga.coverUrl, target.src);
                 }}
               />
 

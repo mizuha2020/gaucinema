@@ -360,17 +360,16 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   if (!movie || !currentData) return null;
 
   return (
-    <AnimatePresence>
-      <motion.div
-        ref={containerRef}
-        id="movie-detail-fullpage"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.2, ease: 'easeOut' }}
-        className="fixed inset-0 z-[60] bg-[#060a14] overflow-y-auto text-white flex flex-col selection:bg-blue-600 selection:text-white overscroll-contain"
-        style={{ WebkitOverflowScrolling: 'touch' }}
-      >
+    <motion.div
+      ref={containerRef}
+      id="movie-detail-fullpage"
+      initial={{ opacity: 0, scale: 0.98, y: 16 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.98, y: 16 }}
+      transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+      className="fixed inset-0 z-[60] bg-[#060a14] overflow-y-auto text-white flex flex-col selection:bg-blue-600 selection:text-white overscroll-contain"
+      style={{ WebkitOverflowScrolling: 'touch' }}
+    >
         {/* Top-Right Circular Close Button (Positioned safely below Mobile Status Bar / PWA Notch & Safe Area) */}
         <button
           id="detail-floating-close-btn"
@@ -1072,7 +1071,6 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
             </button>
           </footer>
         </main>
-      </motion.div>
 
       {/* Watch Together Modals */}
       {showCreateRoomModal && currentAccount && activeProfile && selectedEpisodeForRoom && currentData && (
@@ -1117,6 +1115,6 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
           }}
         />
       )}
-    </AnimatePresence>
+    </motion.div>
   );
 };

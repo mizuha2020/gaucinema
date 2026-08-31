@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { MangaItem, getProxyImageUrl } from '../../services/mangaApi';
+import { MangaItem, getFallbackMangaImageUrl } from '../../services/mangaApi';
 import { BookOpen, Info, Bookmark, Check, ChevronLeft, ChevronRight, Sparkles, Star, Flame, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MangaSourceBadge } from './MangaSourceBadge';
@@ -86,11 +86,7 @@ export const MangaHeroBanner: React.FC<MangaHeroBannerProps> = ({
             referrerPolicy="no-referrer"
             onError={(e) => {
               const t = e.target as HTMLImageElement;
-              if (!t.src.includes('/api/proxy/image') && current.coverUrl.startsWith('http')) {
-                t.src = getProxyImageUrl(current.coverUrl);
-              } else {
-                t.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop';
-              }
+              t.src = getFallbackMangaImageUrl(current.coverUrl, t.src);
             }}
           />
           {/* Cinematic gradients - purple theme */}

@@ -955,46 +955,124 @@ setTimeout(seedInitialCastIndex, 2000);
   }
 
   async function scrapeTruyenqqSearch(keyword: string) {
-    const formData = new URLSearchParams();
-    formData.append("search", keyword);
-    formData.append("type", "0");
-
-    const { html } = await fetchWithDomainFallback(
-      (base) => `${base}/frontend/search/search`,
-      { isPost: true, body: formData.toString() }
-    );
-
     const items: any[] = [];
-    const liBlocks = html.match(/<li>[\s\S]*?<\/li>/gi) || [];
-    for (const block of liBlocks) {
-      const slugMatch = block.match(/href="[^"]*\/truyen-tranh\/([^"]+)"/i);
-      const titleMatch = block.match(/<p class="name">([^<]+)<\/p>/i) || block.match(/<h3[^>]*>([^<]+)<\/h3>/i);
-      const altMatch = block.match(/<p class="name_other">([^<]+)<\/p>/i);
-      const imgMatch = block.match(/<img[^>]*src="([^"]+)"/i);
+    const cleanKw = keyword.trim();
+    if (!cleanKw) return { items: [], totalPages: 1 };
 
-      if (slugMatch && titleMatch) {
-        const slug = slugMatch[1].replace(/^\/|\/$/g, "");
-        const title = titleMatch[1].trim();
-        const altTitles = altMatch ? altMatch[1].split(";").map((s) => s.trim()) : [];
-        const coverUrl = imgMatch ? imgMatch[1] : "";
+    // 1. Try GET /tim-kiem/trang-1?q= (the official web search URL of TruyenQQ)
+    try {
+      const { html } = await fetchWithDomainFallback((base) => `${base}/tim-kiem/trang-1?q=${encodeURIComponent(cleanKw)}`);
+      if (html) {
+        // Try JSON-LD ItemList first
+        try {
+          const jsonLdMatch = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?"@type"\s*:\s*"ItemList"[\s\S]*?)<\/script>/i);
+          if (jsonLdMatch) {
+            const json = JSON.parse(jsonLdMatch[1]);
+            const elements = json.itemListElement || [];
+            for (const el of elements) {
+              const url: string = el.url || '';
+              const slugMatch = url.match(/\/truyen-tranh\/([^\/\?#]+)/);
+              if (slugMatch && el.name) {
+                const slug = slugMatch[1].replace(/^\/|\/$/g, '');
+                items.push({
+                  id: slug,
+                  slug,
+                  title: el.name.trim(),
+                  coverUrl: el.image || '',
+                  source: 'truyenqq',
+                  chapters: [],
+                  status: 'Đang cập nhật',
+                  altTitles: [],
+                });
+              }
+            }
+            if (items.length > 0) return { items, totalPages: 1 };
+          }
+        } catch {}
 
-        let lastChapter = "";
-        if (block.includes("Chương") || block.includes("Chapter")) {
-          const chm = block.match(/<p>(Chương\s*[\d.]+|Chapter\s*[\d.]+)<\/p>/i);
-          if (chm) lastChapter = chm[1];
+        const liBlocks = html.match(/<li[^>]*>[\s\S]*?(?:book_avatar|truyen-tranh)[\s\S]*?<\/li>/gi) || html.match(/<li[^>]*>[\s\S]*?<\/li>/gi) || [];
+        for (const block of liBlocks) {
+          const slugMatch = block.match(/href="[^"]*\/truyen-tranh\/([^"]+)"/i);
+          const titleMatch = block.match(/<h3[^>]*><a[^>]*title="([^"]+)"/i) || block.match(/<h3[^>]*><a[^>]*>([^<]+)<\/a>/i) || block.match(/alt="([^"]+)"/i) || block.match(/<p class="name">([^<]+)<\/p>/i);
+          const imgMatch = block.match(/<img[^>]*src="([^"]+)"/i) || block.match(/data-original="([^"]+)"/i);
+          const lastChapMatch = block.match(/class="last_chapter"[^>]*>[\s\S]*?<a[^>]*>([^<]+)<\/a>/i) || block.match(/<p>(Chương\s*[\d.]+|Chapter\s*[\d.]+)<\/p>/i);
+          const descMatch = block.match(/class="excerpt"[^>]*>([\s\S]*?)<\/div>/i);
+          const statusMatch = block.match(/Tình trạng:\s*([^<]+)<\/p>/i);
+          const otherTitleMatch = block.match(/Tên khác:\s*([^<]+)<\/div>/i);
+
+          if (slugMatch && titleMatch) {
+            const slug = slugMatch[1].replace(/^\/|\/$/g, "");
+            const title = titleMatch[1].trim();
+            const coverUrl = imgMatch ? imgMatch[1] : "";
+            const lastChapter = lastChapMatch ? lastChapMatch[1].trim() : "";
+            const description = descMatch ? descMatch[1].trim() : "";
+            const status = statusMatch ? statusMatch[1].trim() : "Đang cập nhật";
+            const altTitles = otherTitleMatch ? otherTitleMatch[1].split(";").map((s) => s.trim()) : [];
+
+            items.push({
+              id: slug,
+              slug,
+              title,
+              coverUrl,
+              lastChapter,
+              description,
+              status,
+              altTitles,
+              source: "truyenqq",
+              chapters: [],
+            });
+          }
         }
-
-        items.push({
-          id: slug,
-          slug,
-          title,
-          altTitles,
-          coverUrl,
-          lastChapter,
-          source: "truyenqq",
-          chapters: [],
-        });
+        if (items.length > 0) return { items, totalPages: 1 };
       }
+    } catch (e: any) {
+      console.warn("TruyenQQ GET search failed, attempting POST search fallback:", e?.message);
+    }
+
+    // 2. Secondary: Try POST /frontend/search/search
+    try {
+      const formData = new URLSearchParams();
+      formData.append("search", cleanKw);
+      formData.append("type", "0");
+
+      const { html } = await fetchWithDomainFallback(
+        (base) => `${base}/frontend/search/search`,
+        { isPost: true, body: formData.toString() }
+      );
+
+      const liBlocks = html.match(/<li>[\s\S]*?<\/li>/gi) || [];
+      for (const block of liBlocks) {
+        const slugMatch = block.match(/href="[^"]*\/truyen-tranh\/([^"]+)"/i);
+        const titleMatch = block.match(/<p class="name">([^<]+)<\/p>/i) || block.match(/<h3[^>]*>([^<]+)<\/h3>/i);
+        const altMatch = block.match(/<p class="name_other">([^<]+)<\/p>/i);
+        const imgMatch = block.match(/<img[^>]*src="([^"]+)"/i) || block.match(/data-original="([^"]+)"/i);
+
+        if (slugMatch && titleMatch) {
+          const slug = slugMatch[1].replace(/^\/|\/$/g, "");
+          const title = titleMatch[1].trim();
+          const altTitles = altMatch ? altMatch[1].split(";").map((s) => s.trim()) : [];
+          const coverUrl = imgMatch ? imgMatch[1] : "";
+
+          let lastChapter = "";
+          if (block.includes("Chương") || block.includes("Chapter")) {
+            const chm = block.match(/<p>(Chương\s*[\d.]+|Chapter\s*[\d.]+)<\/p>/i);
+            if (chm) lastChapter = chm[1];
+          }
+
+          items.push({
+            id: slug,
+            slug,
+            title,
+            altTitles,
+            coverUrl,
+            lastChapter,
+            source: "truyenqq",
+            chapters: [],
+          });
+        }
+      }
+    } catch (e: any) {
+      console.warn("TruyenQQ POST search failed:", e?.message);
     }
 
     return { items, totalPages: 1 };
