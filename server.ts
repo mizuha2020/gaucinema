@@ -884,6 +884,22 @@ setTimeout(seedInitialCastIndex, 2000);
     throw lastError || new Error("All TruyenQQ mirrors failed");
   }
 
+  function extractTruyenqqCoverUrl(block: string): string {
+    if (!block) return "";
+    const dataMatch = block.match(/data-original="([^"]+)"/i) || block.match(/data-src="([^"]+)"/i) || block.match(/data-fb="([^"]+)"/i);
+    if (dataMatch && dataMatch[1] && !dataMatch[1].includes("lazy.gif")) {
+      return dataMatch[1].trim();
+    }
+    const srcMatches = [...block.matchAll(/src="([^"]+)"/gi)];
+    for (const m of srcMatches) {
+      const s = m[1]?.trim();
+      if (s && !s.includes("lazy.gif") && !s.includes("logo") && !s.includes("icon")) {
+        return s;
+      }
+    }
+    return "";
+  }
+
   async function scrapeTruyenqqList(page = 1) {
     const { html } = await fetchWithDomainFallback((base) => `${base}/truyen-moi-cap-nhat/trang-${page}`);
 
@@ -903,7 +919,7 @@ setTimeout(seedInitialCastIndex, 2000);
     for (const block of liBlocks) {
       const slugMatch = block.match(/href="[^"]*\/truyen-tranh\/([^"]+)"/i);
       const titleMatch = block.match(/<h3[^>]*><a[^>]*title="([^"]+)"/i) || block.match(/<h3[^>]*><a[^>]*>([^<]+)<\/a>/i) || block.match(/alt="([^"]+)"/i) || block.match(/<p class="name">([^<]+)<\/p>/i);
-      const imgMatch = block.match(/<img[^>]*src="([^"]+)"/i) || block.match(/data-original="([^"]+)"/i) || block.match(/data-fb="([^"]+)"/i);
+      const rawCover = extractTruyenqqCoverUrl(block);
       const lastChapMatch = block.match(/class="last_chapter"[^>]*>[\s\S]*?<a[^>]*>([^<]+)<\/a>/i);
       const descMatch = block.match(/class="excerpt"[^>]*>([\s\S]*?)<\/div>/i);
       const statusMatch = block.match(/Tình trạng:\s*([^<]+)<\/p>/i);
@@ -912,7 +928,6 @@ setTimeout(seedInitialCastIndex, 2000);
       if (slugMatch && titleMatch) {
         const slug = slugMatch[1].replace(/^\/|\/$/g, "");
         const title = titleMatch[1].trim();
-        const rawCover = imgMatch ? imgMatch[1] : "";
         const coverUrl = rawCover.replace(/F80x105/gi, 'F190x247').replace(/80x105/gi, '190x247');
         const lastChapter = lastChapMatch ? lastChapMatch[1].trim() : "";
         const description = descMatch ? descMatch[1].trim() : "";
@@ -959,13 +974,12 @@ setTimeout(seedInitialCastIndex, 2000);
           const slugMatch = block.match(/href="[^"]*\/truyen-tranh\/([^"]+)"/i);
           const titleMatch = block.match(/<p class="name">([^<]+)<\/p>/i) || block.match(/<h3[^>]*>([^<]+)<\/h3>/i) || block.match(/alt="([^"]+)"/i);
           const altMatch = block.match(/<p class="name_other">([^<]+)<\/p>/i);
-          const imgMatch = block.match(/<img[^>]*src="([^"]+)"/i) || block.match(/data-original="([^"]+)"/i) || block.match(/data-fb="([^"]+)"/i);
+          const rawCover = extractTruyenqqCoverUrl(block);
 
           if (slugMatch && titleMatch) {
             const slug = slugMatch[1].replace(/^\/|\/$/g, "");
             const title = titleMatch[1].trim();
             const altTitles = altMatch ? altMatch[1].split(";").map((s) => s.trim()) : [];
-            const rawCover = imgMatch ? imgMatch[1] : "";
             const coverUrl = rawCover.replace(/F80x105/gi, 'F190x247').replace(/80x105/gi, '190x247');
 
             let lastChapter = "";
@@ -1002,8 +1016,7 @@ setTimeout(seedInitialCastIndex, 2000);
     const titleMatch = html.match(/<h1[^>]*itemprop="name"[^>]*>([^<]+)<\/h1>/i) || html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
     const title = titleMatch ? titleMatch[1].trim() : "Truyện Tranh";
 
-    const imgMatch = html.match(/<div class="block01"[\s\S]*?<img[^>]*src="([^"]+)"/i) || html.match(/<div class="book_avatar"[\s\S]*?<img[^>]*src="([^"]+)"/i);
-    const rawCover = imgMatch ? imgMatch[1] : "";
+    const rawCover = extractTruyenqqCoverUrl(html);
     const coverUrl = rawCover.replace(/F80x105/gi, 'F190x247').replace(/80x105/gi, '190x247');
 
     const altMatch = html.match(/<li class="othername[^>]*>[\s\S]*?<p class="other-name[^>]*>([^<]+)<\/p>/i);

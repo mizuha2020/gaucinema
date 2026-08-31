@@ -9,8 +9,7 @@ export const isNativeApp = (): boolean => {
     if ((window as any).Capacitor?.isNative) return true;
     const origin = window.location.origin || '';
     return (
-      origin.includes('capacitor://') ||
-      origin.includes('http://localhost') ||
+      origin.startsWith('capacitor://') ||
       window.location.protocol === 'file:'
     );
   } catch {

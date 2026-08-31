@@ -376,6 +376,22 @@ function upgradeTruyenqqImageUrl(url: string): string {
   return u;
 }
 
+function extractTruyenqqCoverUrl(block: string): string {
+  if (!block) return '';
+  const dataMatch = block.match(/data-original="([^"]+)"/i) || block.match(/data-src="([^"]+)"/i) || block.match(/data-fb="([^"]+)"/i);
+  if (dataMatch && dataMatch[1] && !dataMatch[1].includes('lazy.gif')) {
+    return dataMatch[1].trim();
+  }
+  const srcMatches = [...block.matchAll(/src="([^"]+)"/gi)];
+  for (const m of srcMatches) {
+    const s = m[1]?.trim();
+    if (s && !s.includes('lazy.gif') && !s.includes('logo') && !s.includes('icon')) {
+      return s;
+    }
+  }
+  return '';
+}
+
 function parseTruyenqqHtmlList(html: string): { items: MangaItem[]; totalPages: number } {
   const pageMatches = [...html.matchAll(/\/trang-(\d+)/g)];
   let maxPage = 1;
@@ -392,7 +408,7 @@ function parseTruyenqqHtmlList(html: string): { items: MangaItem[]; totalPages: 
   for (const block of liBlocks) {
     const slugMatch = block.match(/href="[^"]*\/truyen-tranh\/([^"]+)"/i);
     const titleMatch = block.match(/<h3[^>]*><a[^>]*title="([^"]+)"/i) || block.match(/<h3[^>]*><a[^>]*>([^<]+)<\/a>/i) || block.match(/alt="([^"]+)"/i) || block.match(/<p class="name">([^<]+)<\/p>/i);
-    const imgMatch = block.match(/<img[^>]*src="([^"]+)"/i) || block.match(/data-original="([^"]+)"/i) || block.match(/data-fb="([^"]+)"/i);
+    const rawCover = extractTruyenqqCoverUrl(block);
     const lastChapMatch = block.match(/class="last_chapter"[^>]*>[\s\S]*?<a[^>]*>([^<]+)<\/a>/i);
     const descMatch = block.match(/class="excerpt"[^>]*>([\s\S]*?)<\/div>/i);
     const statusMatch = block.match(/Tình trạng:\s*([^<]+)<\/p>/i);
@@ -401,7 +417,6 @@ function parseTruyenqqHtmlList(html: string): { items: MangaItem[]; totalPages: 
     if (slugMatch && titleMatch) {
       const slug = slugMatch[1].replace(/^\/|\/$/g, '');
       const title = titleMatch[1].trim();
-      const rawCover = imgMatch ? imgMatch[1] : '';
       const coverUrl = upgradeTruyenqqImageUrl(rawCover);
       const lastChapter = lastChapMatch ? lastChapMatch[1].trim() : '';
       const description = descMatch ? descMatch[1].trim() : '';
@@ -413,6 +428,7 @@ function parseTruyenqqHtmlList(html: string): { items: MangaItem[]; totalPages: 
         slug,
         title,
         coverUrl: getMangaImageUrl(coverUrl),
+        lastChapter,
         description,
         status,
         altTitles,
@@ -431,13 +447,12 @@ function parseTruyenqqSearchHtml(html: string): MangaItem[] {
     const slugMatch = block.match(/href="[^"]*\/truyen-tranh\/([^"]+)"/i);
     const titleMatch = block.match(/<p class="name">([^<]+)<\/p>/i) || block.match(/<h3[^>]*>([^<]+)<\/h3>/i) || block.match(/alt="([^"]+)"/i);
     const altMatch = block.match(/<p class="name_other">([^<]+)<\/p>/i);
-    const imgMatch = block.match(/<img[^>]*src="([^"]+)"/i) || block.match(/data-original="([^"]+)"/i) || block.match(/data-fb="([^"]+)"/i);
+    const rawCover = extractTruyenqqCoverUrl(block);
 
     if (slugMatch && titleMatch) {
       const slug = slugMatch[1].replace(/^\/|\/$/g, '');
       const title = titleMatch[1].trim();
       const altTitles = altMatch ? altMatch[1].split(';').map((s) => s.trim()) : [];
-      const rawCover = imgMatch ? imgMatch[1] : '';
       const coverUrl = upgradeTruyenqqImageUrl(rawCover);
 
       let lastChapter = '';
@@ -466,8 +481,7 @@ function parseTruyenqqDetailHtml(html: string, slug: string, base: string): Mang
   const titleMatch = html.match(/<h1[^>]*itemprop="name"[^>]*>([^<]+)<\/h1>/i) || html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
   const title = titleMatch ? titleMatch[1].trim() : 'Truyện Tranh';
 
-  const imgMatch = html.match(/<div class="block01"[\s\S]*?<img[^>]*src="([^"]+)"/i) || html.match(/<div class="book_avatar"[\s\S]*?<img[^>]*src="([^"]+)"/i);
-  const rawCover = imgMatch ? imgMatch[1] : '';
+  const rawCover = extractTruyenqqCoverUrl(html);
   const coverUrl = upgradeTruyenqqImageUrl(rawCover);
 
   const altMatch = html.match(/<li class="othername[^>]*>[\s\S]*?<p class="other-name[^>]*>([^<]+)<\/p>/i);
@@ -544,7 +558,7 @@ export const mangaApi = {
     if (!isMangaSourceEnabled(source)) return { items: [], totalPages: 1 };
     try {
       if (source === 'truyenqq') {
-        // A. Native Android APK Direct Fetch (CapacitorHttp with direct mirror access, zero CORS/cookie restrictions)
+        // A. Native Android APK Direct Fetch (CapacitorHttp with direct mirror access)
         if (isNativeApp()) {
           try {
             if (keyword) {
@@ -554,21 +568,13 @@ export const mangaApi = {
               );
               if (res?.html) {
                 const items = parseTruyenqqSearchHtml(res.html);
-                if (items.length > 0) {
-                  const b64Covers = await fetchImagesInBatches(items.map((i) => i.coverUrl), 6);
-                  items.forEach((it, idx) => { if (b64Covers[idx]) it.coverUrl = b64Covers[idx]; });
-                  return { items, totalPages: 1 };
-                }
+                if (items.length > 0) return { items, totalPages: 1 };
               }
             } else {
               const res = await fetchTruyenqqNative((base) => `${base}/truyen-moi-cap-nhat/trang-${page}`);
               if (res?.html) {
                 const parsed = parseTruyenqqHtmlList(res.html);
-                if (parsed.items.length > 0) {
-                  const b64Covers = await fetchImagesInBatches(parsed.items.map((i) => i.coverUrl), 6);
-                  parsed.items.forEach((it, idx) => { if (b64Covers[idx]) it.coverUrl = b64Covers[idx]; });
-                  return parsed;
-                }
+                if (parsed.items.length > 0) return parsed;
               }
             }
           } catch (nativeErr) {
@@ -583,27 +589,21 @@ export const mangaApi = {
             ? `/api/proxy/truyenqq/search?q=${encodeURIComponent(keyword)}`
             : `/api/proxy/truyenqq/list?page=${page}`;
           const data = await fetchMangaApi(baseProxy);
-          // If backend returned fallback (otruyen disguised as truyenqq), don't accept yet — try true TruyenQQ via direct CORS
           const isFallback = data && (data.isFallback || data.fallbackSource === 'otruyen');
           if (data && Array.isArray(data.items) && data.items.length > 0 && !isFallback) {
             const items: MangaItem[] = data.items.map((item: any) => ({
               id: item.slug || item.id,
               title: item.title,
               slug: item.slug,
-              coverUrl: getMangaImageUrl(upgradeTruyenqqImageUrl(item.coverUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop')),
+              coverUrl: getMangaImageUrl(upgradeTruyenqqImageUrl(item.coverUrl || '')),
               description: item.description,
               status: item.status,
               altTitles: item.altTitles,
               source: 'truyenqq' as MangaSource,
               chapters: []
             }));
-            if (isNativeApp()) {
-              const b64Covers = await fetchImagesInBatches(items.map((i) => i.coverUrl), 6);
-              items.forEach((it, idx) => { if (b64Covers[idx]) it.coverUrl = b64Covers[idx]; });
-            }
             return { items, totalPages: data.totalPages || 1 };
           }
-          // If backend returned fallback data, keep it as last resort but try direct first
           if (isFallback && data && Array.isArray(data.items) && data.items.length > 0) backendFallback = data;
         } catch (e: any) {
         }
@@ -1204,7 +1204,7 @@ export const mangaApi = {
             if (res?.html) {
               const pages = parseTruyenqqChapterHtml(res.html);
               if (pages.length > 0) {
-                return await fetchImagesInBatches(pages, 6);
+                return pages.map((p: string) => getProxyImageUrl(p));
               }
             }
           } catch (nativeErr) {
@@ -1217,9 +1217,6 @@ export const mangaApi = {
           const chapUrl = `/api/proxy/truyenqq/chapter?slug=${encodeURIComponent(cleanChapSlug)}`;
           const data = await fetchMangaApi(chapUrl);
           if (data && Array.isArray(data.pages) && data.pages.length > 0) {
-            if (isNativeApp()) {
-              return await fetchImagesInBatches(data.pages, 6);
-            }
             return data.pages.map((p: string) => getProxyImageUrl(p));
           }
         } catch (e: any) {
@@ -1388,10 +1385,18 @@ export function getFallbackMangaImageUrl(url: string, currentFailedSrc?: string)
  */
 export function handleMangaImageError(e: React.SyntheticEvent<HTMLImageElement, Event>, originalUrl: string) {
   const target = e.target as HTMLImageElement;
+  const fallbackImg = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
   if (!originalUrl) {
-    target.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
+    target.src = fallbackImg;
     return;
   }
+
+  const failedCount = parseInt(target.dataset.failedCount || '0', 10);
+  if (failedCount >= 2) {
+    target.src = fallbackImg;
+    return;
+  }
+  target.dataset.failedCount = String(failedCount + 1);
 
   let cleanUrl = originalUrl.trim();
   if (cleanUrl.startsWith('//')) cleanUrl = 'https:' + cleanUrl;
@@ -1402,25 +1407,23 @@ export function handleMangaImageError(e: React.SyntheticEvent<HTMLImageElement, 
     return;
   }
 
-  const failedCount = parseInt(target.dataset.failedCount || '0', 10);
-  if (failedCount >= 3) {
-    target.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
+  if (!target.src.includes('/api/proxy/image')) {
+    target.src = getProxyImageUrl(cleanUrl);
     return;
   }
-  target.dataset.failedCount = String(failedCount + 1);
 
   if (isNativeApp()) {
     fetchImageAsBase64Native(cleanUrl).then((b64) => {
       if (b64 && b64.startsWith('data:')) {
         target.src = b64;
       } else {
-        target.src = getFallbackMangaImageUrl(cleanUrl, target.src);
+        target.src = fallbackImg;
       }
     }).catch(() => {
-      target.src = getFallbackMangaImageUrl(cleanUrl, target.src);
+      target.src = fallbackImg;
     });
     return;
   }
 
-  target.src = getFallbackMangaImageUrl(cleanUrl, target.src);
+  target.src = fallbackImg;
 }
