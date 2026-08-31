@@ -777,8 +777,8 @@ setTimeout(seedInitialCastIndex, 2000);
 
     // Determine candidate referers based on image domain
     const candidateReferers: string[] = [];
-    if (imageUrl.includes("hinhhinh.com") || imageUrl.includes("truyenvua.com") || imageUrl.includes("truyenqq")) {
-      candidateReferers.push("https://truyenqqko.com/", "https://truyenqqno.com/", "https://truyenqqgo.com/", "");
+    if (imageUrl.includes("hinhhinh.com") || imageUrl.includes("truyenvua.com") || imageUrl.includes("tintruyen.com") || imageUrl.includes("truyenqq") || imageUrl.includes("st.truyenqq")) {
+      candidateReferers.push("https://truyenqqko.com/", "https://truyenqqno.com/", "https://truyenqqgo.com/", "https://truyenqqto.com/", "");
     } else if (imageUrl.includes("mangadex")) {
       candidateReferers.push("https://mangadex.org/", "");
     } else if (imageUrl.includes("otruyen")) {

@@ -1183,25 +1183,37 @@ export const mangaApi = {
 /**
  * Helper to generate direct, resilient and clean image URLs for Manga posters & pages
  */
+export function getProxyImageUrl(url: string): string {
+  if (!url) return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
+  let cleanUrl = url.trim();
+  if (cleanUrl.startsWith('//')) cleanUrl = 'https:' + cleanUrl;
+  if (cleanUrl.startsWith('http://')) cleanUrl = 'https://' + cleanUrl.slice(7);
+
+  if (cleanUrl.startsWith('/api/proxy/image')) return getFullApiUrl(cleanUrl);
+  if (cleanUrl.startsWith('/')) return getFullApiUrl(cleanUrl);
+
+  if (cleanUrl.includes('truyenvua.com') || cleanUrl.includes('hinhhinh.com') || cleanUrl.includes('tintruyen.com') || cleanUrl.includes('truyenqq') || cleanUrl.includes('80x105')) {
+    cleanUrl = upgradeTruyenqqImageUrl(cleanUrl);
+  }
+
+  return getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(cleanUrl)}`);
+}
+
 export function getMangaImageUrl(url: string): string {
   if (!url) return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
   let u = url.trim();
   if (u.startsWith('//')) u = 'https:' + u;
   if (u.startsWith('http://')) u = 'https://' + u.slice(7);
 
-  // If already relative /api/... path, resolve with getFullApiUrl
+  if (u.startsWith('/api/proxy/image')) return getFullApiUrl(u);
   if (u.startsWith('/')) return getFullApiUrl(u);
 
-  // Upgrade TruyenQQ images to highest quality and HTTPS
-  if (u.includes('truyenvua.com') || u.includes('hinhhinh.com') || u.includes('truyenqq') || u.includes('80x105')) {
-    return upgradeTruyenqqImageUrl(u);
+  // TruyenQQ CDNs (hinhhinh, truyenvua, tintruyen) block hotlinking, so route them through /api/proxy/image
+  if (u.includes('truyenvua.com') || u.includes('hinhhinh.com') || u.includes('tintruyen.com') || u.includes('truyenqq') || u.includes('80x105')) {
+    return getProxyImageUrl(u);
   }
 
   return u;
-}
-
-export function getProxyImageUrl(url: string): string {
-  return getMangaImageUrl(url);
 }
 
 /**
@@ -1213,18 +1225,13 @@ export function getFallbackMangaImageUrl(url: string, currentFailedSrc?: string)
   if (cleanUrl.startsWith('//')) cleanUrl = 'https:' + cleanUrl;
   if (cleanUrl.startsWith('http://')) cleanUrl = 'https://' + cleanUrl.slice(7);
 
-  // Stage 1: If direct load failed (often due to referrer or CDN block), try fast global image CDN proxy (wsrv.nl strips referer and caches WebP)
-  if (!currentFailedSrc || (!currentFailedSrc.includes('wsrv.nl') && !currentFailedSrc.includes('/api/proxy/image'))) {
+  // If initial direct load failed, route through our backend image proxy (which injects referrer headers)
+  if (!currentFailedSrc || !currentFailedSrc.includes('/api/proxy/image')) {
     if (cleanUrl.startsWith('http')) {
-      return `https://wsrv.nl/?url=${encodeURIComponent(cleanUrl)}&output=webp`;
+      return getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(cleanUrl)}`);
     }
   }
 
-  // Stage 2: If wsrv.nl failed or already attempted, try our backend proxy
-  if (currentFailedSrc && !currentFailedSrc.includes('/api/proxy/image') && cleanUrl.startsWith('http')) {
-    return getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(cleanUrl)}`);
-  }
-
-  // Stage 3: Default fallback
+  // Final fallback illustration
   return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
 }
