@@ -21,9 +21,9 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
 
   const [selectedSource, setSelectedSource] = useState<MangaSource>(() => {
     const endpoints = systemApiService.getActiveEndpointsForCategory('manga');
-    return (endpoints[0]?.id as MangaSource) || 'mangadex';
+    return (endpoints[0]?.id as MangaSource) || 'truyenqq';
   });
-  const [activeSources, setActiveSources] = useState<MangaSource[]>(['mangadex', 'otruyen', 'cuutruyen']);
+  const [activeSources, setActiveSources] = useState<MangaSource[]>(['truyenqq', 'mangadex', 'otruyen', 'cuutruyen']);
   const [mangaList, setMangaList] = useState<MangaItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [keyword, setKeyword] = useState<string>('');
@@ -93,7 +93,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
       const endpoints = systemApiService.getActiveEndpointsForCategory('manga');
       const sources = endpoints
         .map((e) => e.id)
-        .filter((id): id is MangaSource => id === 'otruyen' || id === 'mangadex' || id === 'cuutruyen');
+        .filter((id): id is MangaSource => id === 'truyenqq' || id === 'otruyen' || id === 'mangadex' || id === 'cuutruyen');
 
       if (sources.length > 0) {
         setActiveSources(sources);
@@ -150,10 +150,45 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
   const handleOpenDetail = async (item: MangaItem) => {
     setIsLoading(true);
     const sourceToUse = item.source || selectedSource;
-    const detail = await mangaApi.getMangaDetail(sourceToUse, item.id || item.slug);
+    let detail = await mangaApi.getMangaDetail(sourceToUse, item.id || item.slug);
+
+    // Fallback: If detail has 0 chapters, perform search across OTruyen using clean title
+    if (!detail || !detail.chapters || detail.chapters.length === 0) {
+      const cleanTitle = (item.title || item.slug || '').replace(/-\d+$/, '').replace(/-/g, ' ').trim();
+      if (cleanTitle) {
+        try {
+          const otRes = await mangaApi.getMangaList('otruyen', 1, cleanTitle);
+          if (otRes.items.length > 0) {
+            const matched = otRes.items[0];
+            const otDetail = await mangaApi.getMangaDetail('otruyen', matched.id || matched.slug);
+            if (otDetail && otDetail.chapters && otDetail.chapters.length > 0) {
+              detail = {
+                ...otDetail,
+                id: item.id || item.slug,
+                title: item.title || otDetail.title,
+                coverUrl: item.coverUrl || otDetail.coverUrl,
+                source: item.source || 'truyenqq'
+              };
+            }
+          }
+        } catch (e: any) {
+          console.warn('Fallback detail search failed:', e.message);
+        }
+      }
+    }
+
     setIsLoading(false);
-    const fullManga = detail || item;
+
+    const fullManga: MangaItem = {
+      ...item,
+      ...(detail || {}),
+      title: item.title || detail?.title || 'Truyện Tranh',
+      coverUrl: item.coverUrl || detail?.coverUrl || '',
+      chapters: (detail?.chapters && detail.chapters.length > 0) ? detail.chapters : (item.chapters || [])
+    };
+
     setSelectedManga(fullManga);
+    setIsLoading(false);
     setCurrentView('detail');
     window.history.pushState({ tab: 'manga', mangaView: 'detail', mangaId: item.id }, '');
   };
@@ -507,8 +542,9 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
               {activeSources.map((src) => {
                 const isActive = selectedSource === src;
                 const labels: Record<MangaSource, string> = {
-                  otruyen: 'OTruyen',
+                  truyenqq: 'TruyenQQ',
                   mangadex: 'MangaDex',
+                  otruyen: 'OTruyen',
                   cuutruyen: 'Cứu Truyện',
                 };
                 return (

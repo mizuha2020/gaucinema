@@ -372,30 +372,87 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     }
 
     const video = videoRef.current;
+    
+    // Fallback for Document Picture-in-Picture API (Chrome 116+ PWA & Desktop) when video is embed or standard PiP fails
+    if ((!video || useEmbed) && typeof window !== 'undefined' && 'documentPictureInPicture' in window && containerRef.current) {
+      try {
+        if ((window as any).pipWindowInstance) {
+          (window as any).pipWindowInstance.close();
+          (window as any).pipWindowInstance = null;
+          setIsPip(false);
+          return;
+        }
+        const pipWin = await (window as any).documentPictureInPicture.requestWindow({
+          width: 640,
+          height: 360,
+        });
+        (window as any).pipWindowInstance = pipWin;
+        setIsPip(true);
+        pipWin.addEventListener('pagehide', () => {
+          (window as any).pipWindowInstance = null;
+          setIsPip(false);
+        });
+        pipWin.document.body.appendChild(containerRef.current);
+        pipWin.document.body.style.margin = '0';
+        pipWin.document.body.style.backgroundColor = 'black';
+        return;
+      } catch (e) {
+        console.warn('[DocPiP] failed:', e);
+      }
+    }
+
     if (!video) return;
 
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
-      } else if (document.pictureInPictureEnabled) {
+      } else if (typeof video.requestPictureInPicture === 'function') {
+        // Direct call without checking document.pictureInPictureEnabled (which can be false/undefined in PWA)
         await video.requestPictureInPicture();
+      } else if ((video as any).webkitSupportsPresentationMode && typeof (video as any).webkitSetPresentationMode === 'function') {
+        const currentMode = (video as any).webkitPresentationMode;
+        (video as any).webkitSetPresentationMode(currentMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
+      } else if (typeof window !== 'undefined' && 'documentPictureInPicture' in window && containerRef.current) {
+        const pipWin = await (window as any).documentPictureInPicture.requestWindow({
+          width: 640,
+          height: 360,
+        });
+        (window as any).pipWindowInstance = pipWin;
+        setIsPip(true);
+        pipWin.addEventListener('pagehide', () => {
+          (window as any).pipWindowInstance = null;
+          setIsPip(false);
+        });
+        pipWin.document.body.appendChild(containerRef.current);
+        pipWin.document.body.style.margin = '0';
+        pipWin.document.body.style.backgroundColor = 'black';
       }
     } catch (err) {
       console.warn('[SimplePlayer] Lỗi chuyển đổi PiP:', err);
+      // Fallback for iOS WebKit Presentation Mode
+      if ((video as any).webkitSetPresentationMode && typeof (video as any).webkitSetPresentationMode === 'function') {
+        try {
+          const currentMode = (video as any).webkitPresentationMode;
+          (video as any).webkitSetPresentationMode(currentMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
+        } catch (e2) {}
+      }
     }
-  }, []);
+  }, [useEmbed]);
 
-  // Check PiP support on mount
+  // Check PiP support on mount and default to true on Web/PWA
   useEffect(() => {
-    const isWebPip = typeof document !== 'undefined' && 'pictureInPictureEnabled' in document && document.pictureInPictureEnabled;
     if (Capacitor.isNativePlatform()) {
-      checkNativePipSupported().then((sup) => setPipSupported(sup || isWebPip));
+      checkNativePipSupported().then((sup) => {
+        const isStandardPip = typeof document !== 'undefined' && ('pictureInPictureEnabled' in document || typeof HTMLVideoElement !== 'undefined');
+        setPipSupported(sup || isStandardPip);
+      });
     } else {
-      setPipSupported(isWebPip);
+      // Always enable PiP button on Web / PWA
+      setPipSupported(true);
     }
   }, []);
 
-  // PiP Event Listeners
+  // PiP Event Listeners - re-run when useEmbed or videoRef changes
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -406,9 +463,15 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
 
     const onEnterPip = () => setIsPip(true);
     const onLeavePip = () => setIsPip(false);
+    const onWebkitPresentationChange = () => {
+      if (video) {
+        setIsPip((video as any).webkitPresentationMode === 'picture-in-picture');
+      }
+    };
 
     video.addEventListener('enterpictureinpicture', onEnterPip);
     video.addEventListener('leavepictureinpicture', onLeavePip);
+    video.addEventListener('webkitpresentationmodechanged', onWebkitPresentationChange);
 
     const onNativePipChange = (e: any) => {
       setIsPip(!!e.detail?.isPip);
@@ -418,9 +481,10 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     return () => {
       video.removeEventListener('enterpictureinpicture', onEnterPip);
       video.removeEventListener('leavepictureinpicture', onLeavePip);
+      video.removeEventListener('webkitpresentationmodechanged', onWebkitPresentationChange);
       window.removeEventListener('native-pip-change', onNativePipChange);
     };
-  }, []);
+  }, [useEmbed]);
 
   // Auto PiP when exiting/leaving app or switching tabs while video is playing
   useEffect(() => {
@@ -432,9 +496,13 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
         if (video && !video.paused && !video.ended) {
           if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
             await enterNativePip();
-          } else if (document.pictureInPictureEnabled && !document.pictureInPictureElement) {
+          } else {
             try {
-              await video.requestPictureInPicture();
+              if (typeof video.requestPictureInPicture === 'function' && !document.pictureInPictureElement) {
+                await video.requestPictureInPicture();
+              } else if ((video as any).webkitSupportsPresentationMode && (video as any).webkitPresentationMode !== 'picture-in-picture') {
+                (video as any).webkitSetPresentationMode('picture-in-picture');
+              }
             } catch (e) {
               console.warn('[Auto-PiP] Notice:', e);
             }
@@ -468,6 +536,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
           },
         ],
       });
+      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
 
       try {
         navigator.mediaSession.setActionHandler('play', () => {
@@ -489,7 +558,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
         console.warn('[MediaSession] Warning:', e);
       }
     }
-  }, [movie, currentEpisode, currentServer, skip, togglePip]);
+  }, [movie, currentEpisode, currentServer, skip, togglePip, isPlaying]);
 
   const nextEpisode = useMemo(() => {
     const idx = currentServer.server_data.findIndex((e) => e.slug === currentEpisode.slug);
@@ -1063,7 +1132,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
             src={currentEpisode.link_embed}
             className="w-full h-full border-none"
             allowFullScreen
-            allow="autoplay; encrypted-media; fullscreen"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
             title={movie.name}
           />
           <button

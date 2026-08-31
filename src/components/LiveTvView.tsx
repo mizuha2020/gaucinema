@@ -143,13 +143,16 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
   const [isPip, setIsPip] = useState(false);
   const [pipSupported, setPipSupported] = useState(true);
 
-  // Check PiP support on mount
+  // Check PiP support on mount and default to true on Web/PWA
   useEffect(() => {
-    const isWebPip = typeof document !== 'undefined' && 'pictureInPictureEnabled' in document && document.pictureInPictureEnabled;
     if (Capacitor.isNativePlatform()) {
-      checkNativePipSupported().then((sup) => setPipSupported(sup || isWebPip));
+      checkNativePipSupported().then((sup) => {
+        const isStandardPip = typeof document !== 'undefined' && ('pictureInPictureEnabled' in document || typeof HTMLVideoElement !== 'undefined');
+        setPipSupported(sup || isStandardPip);
+      });
     } else {
-      setPipSupported(isWebPip);
+      // Always enable PiP on Web / PWA
+      setPipSupported(true);
     }
   }, []);
 
@@ -162,11 +165,21 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
       (video as any).autoPictureInPicture = true;
     } catch (e) {}
 
+    if (typeof (video as any).webkitSupportsPresentationMode === 'function' && (video as any).webkitSupportsPresentationMode('picture-in-picture')) {
+      setPipSupported(true);
+    }
+
     const onEnterPip = () => setIsPip(true);
     const onLeavePip = () => setIsPip(false);
+    const onWebkitPresentationChange = () => {
+      if (video) {
+        setIsPip((video as any).webkitPresentationMode === 'picture-in-picture');
+      }
+    };
 
     video.addEventListener('enterpictureinpicture', onEnterPip);
     video.addEventListener('leavepictureinpicture', onLeavePip);
+    video.addEventListener('webkitpresentationmodechanged', onWebkitPresentationChange);
 
     const onNativePipChange = (e: any) => {
       setIsPip(!!e.detail?.isPip);
@@ -176,6 +189,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     return () => {
       video.removeEventListener('enterpictureinpicture', onEnterPip);
       video.removeEventListener('leavepictureinpicture', onLeavePip);
+      video.removeEventListener('webkitpresentationmodechanged', onWebkitPresentationChange);
       window.removeEventListener('native-pip-change', onNativePipChange);
     };
   }, [activeChannel]);
@@ -190,9 +204,13 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         if (video && !video.paused && !video.ended && activeChannel) {
           if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
             await enterNativePip();
-          } else if (document.pictureInPictureEnabled && !document.pictureInPictureElement) {
+          } else {
             try {
-              await video.requestPictureInPicture();
+              if (typeof video.requestPictureInPicture === 'function' && !document.pictureInPictureElement) {
+                await video.requestPictureInPicture();
+              } else if ((video as any).webkitSupportsPresentationMode && (video as any).webkitPresentationMode !== 'picture-in-picture') {
+                (video as any).webkitSetPresentationMode('picture-in-picture');
+              }
             } catch (e) {
               console.warn('[Auto-PiP LiveTV] Warning:', e);
             }
@@ -917,11 +935,21 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
-      } else if (document.pictureInPictureEnabled) {
+      } else if (typeof video.requestPictureInPicture === 'function') {
+        // Direct call without checking document.pictureInPictureEnabled (falsy in PWA context)
         await video.requestPictureInPicture();
+      } else if ((video as any).webkitSupportsPresentationMode && typeof (video as any).webkitSetPresentationMode === 'function') {
+        const currentMode = (video as any).webkitPresentationMode;
+        (video as any).webkitSetPresentationMode(currentMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
       }
     } catch (e) {
       console.warn('[LiveTV PiP] Warning:', e);
+      if (video && (video as any).webkitSetPresentationMode && typeof (video as any).webkitSetPresentationMode === 'function') {
+        try {
+          const currentMode = (video as any).webkitPresentationMode;
+          (video as any).webkitSetPresentationMode(currentMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
+        } catch (e2) {}
+      }
     }
   };
 

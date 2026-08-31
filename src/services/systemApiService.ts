@@ -61,6 +61,21 @@ export const DEFAULT_SYSTEM_APIS: SystemApiEndpoint[] = [
 
   // 2. Manga APIs
   {
+    id: 'truyenqq',
+    name: 'TruyenQQ Manga',
+    category: 'manga',
+    baseUrl: 'https://truyenqqko.com',
+    testUrl: 'https://truyenqqko.com/truyen-moi-cap-nhat',
+    description: 'Kho truyện tranh cập nhật chương mới phong phú và tốc độ cao.',
+    enabled: true,
+    isDefault: true,
+    priority: 1,
+    lastStatus: 'live',
+    lastLatencyMs: 180,
+    lastStatusCode: 200,
+    lastChecked: Date.now(),
+  },
+  {
     id: 'otruyen',
     name: 'OTruyen Manga API',
     category: 'manga',
@@ -69,7 +84,7 @@ export const DEFAULT_SYSTEM_APIS: SystemApiEndpoint[] = [
     description: 'Kho truyện tranh tiếng Việt cập nhật liên tục từ các nhóm dịch hàng đầu.',
     enabled: true,
     isDefault: true,
-    priority: 1,
+    priority: 2,
     lastStatus: 'live',
     lastLatencyMs: 420,
     lastStatusCode: 200,
@@ -84,7 +99,7 @@ export const DEFAULT_SYSTEM_APIS: SystemApiEndpoint[] = [
     description: 'Nguồn truyện tranh quốc tế đa ngôn ngữ, lưu trữ đồ sộ và ổn định toàn cầu.',
     enabled: true,
     isDefault: true,
-    priority: 2,
+    priority: 3,
     lastStatus: 'live',
     lastLatencyMs: 380,
     lastStatusCode: 200,
@@ -99,7 +114,7 @@ export const DEFAULT_SYSTEM_APIS: SystemApiEndpoint[] = [
     description: 'Thư viện truyện scan bản dịch chọn lọc chất lượng cao và giao diện đọc mượt mà.',
     enabled: true,
     isDefault: true,
-    priority: 3,
+    priority: 4,
     lastStatus: 'live',
     lastLatencyMs: 290,
     lastStatusCode: 200,
@@ -156,7 +171,7 @@ export const DEFAULT_SYSTEM_APIS: SystemApiEndpoint[] = [
   },
 ];
 
-const LOCAL_STORAGE_KEY = 'qtb_system_apis_cache_v2';
+const LOCAL_STORAGE_KEY = 'qtb_system_apis_cache_v3';
 
 class SystemApiService {
   private inMemoryApis: SystemApiEndpoint[] = [];
@@ -172,7 +187,20 @@ class SystemApiService {
       if (cached) {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          this.inMemoryApis = parsed;
+          const existingIds = new Set(parsed.map((a: any) => a.id));
+          const merged = [...parsed];
+          let hasNew = false;
+          for (const def of DEFAULT_SYSTEM_APIS) {
+            if (!existingIds.has(def.id)) {
+              merged.push(def);
+              hasNew = true;
+            }
+          }
+          merged.sort((a, b) => (a.priority || 99) - (b.priority || 99));
+          this.inMemoryApis = merged;
+          if (hasNew) {
+            this.saveToLocalStorage(merged);
+          }
           return;
         }
       }
@@ -207,6 +235,19 @@ class SystemApiService {
 
       if (!snap.empty) {
         const list = snap.docs.map((d) => d.data() as SystemApiEndpoint);
+        
+        // Auto-merge any newly added system defaults (like truyenqq) into Firestore if missing
+        const existingIds = new Set(list.map((a) => a.id));
+        let hasNewDefault = false;
+        for (const defaultApi of DEFAULT_SYSTEM_APIS) {
+          if (!existingIds.has(defaultApi.id)) {
+            list.push(defaultApi);
+            hasNewDefault = true;
+            const docRef = doc(db, 'system_apis', defaultApi.id);
+            setDoc(docRef, sanitizeData(defaultApi)).catch(() => {});
+          }
+        }
+
         list.sort((a, b) => (a.priority || 99) - (b.priority || 99));
         this.saveToLocalStorage(list);
         this.isInitialized = true;
@@ -356,6 +397,9 @@ class SystemApiService {
     }
     if (baseUrl.includes('otruyen')) {
       return baseUrl.endsWith('/v1/api') ? `${baseUrl}/home` : `${baseUrl}/v1/api/home`;
+    }
+    if (baseUrl.includes('truyenqq')) {
+      return 'https://truyenqqko.com/truyen-moi-cap-nhat';
     }
     if (baseUrl.includes('mangadex.org')) {
       return 'https://api.mangadex.org/ping';

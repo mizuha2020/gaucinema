@@ -110,7 +110,15 @@ export const MangaDetailView: React.FC<MangaDetailViewProps> = ({
                 <Play className="w-4 h-4 fill-white" />
                 <span>Đọc từ đầu</span>
               </button>
-            ) : null}
+            ) : (
+              <button
+                disabled
+                className="px-7 py-3.5 bg-white/5 border border-white/10 text-gray-500 font-medium rounded-2xl text-sm flex items-center space-x-2 cursor-not-allowed opacity-60"
+              >
+                <Play className="w-4 h-4 fill-gray-500" />
+                <span>Đang cập nhật danh sách chương...</span>
+              </button>
+            )}
 
             {recentHistory && manga.chapters.length > 0 && (
               <button

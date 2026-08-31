@@ -66,14 +66,14 @@ const proxyCache = new LRUCache<string, { data: any; timestamp: number }>(500);
 const imageMemoryCache = new LRUCache<string, { buffer: Buffer; contentType: string }>(400);
 const CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes cache
 
-async function fetchWithTimeout(url: string, timeoutMs = 4000): Promise<any> {
+async function fetchWithTimeout(url: string, timeoutMs = 12000): Promise<any> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         Accept: "application/json, text/plain, */*",
       },
     });
@@ -139,6 +139,8 @@ async function startServer() {
       targetUrl = cleanUrl.endsWith("/v1/api") ? `${cleanUrl}/home` : `${cleanUrl}/v1/api/home`;
     } else if (cleanUrl === "https://api.mangadex.org") {
       targetUrl = "https://api.mangadex.org/ping";
+    } else if (cleanUrl.includes("truyenqq") && !url.includes("/truyen-moi-cap-nhat") && !url.includes("/truyen-tranh/")) {
+      targetUrl = "https://truyenqqko.com/truyen-moi-cap-nhat";
     }
 
     const startTime = Date.now();
@@ -742,7 +744,6 @@ setTimeout(seedInitialCastIndex, 2000);
     if (mdMatch) {
       const [, type, hash, file] = mdMatch;
       const officialUploads = `https://uploads.mangadex.org/${type}/${hash}/${file}`;
-      // Prioritize official Cloudflare-backed uploads CDN FIRST for 20x faster response
       candidateUrls.push(officialUploads);
       if (imageUrl !== officialUploads) {
         candidateUrls.push(imageUrl);
@@ -758,7 +759,6 @@ setTimeout(seedInitialCastIndex, 2000);
     const mdCoverMatch = imageUrl.match(/uploads\.mangadex\.org\/covers\/([a-f0-9-]+)\/([^?#]+)/i);
     if (mdCoverMatch) {
       const [, mangaId, fileName] = mdCoverMatch;
-      // If fileName ends with .256.jpg or .512.jpg, add the original as fallback
       if (fileName.endsWith('.256.jpg') || fileName.endsWith('.512.jpg')) {
         const rawFileName = fileName.replace(/\.(256|512)\.jpg$/, '');
         candidateUrls.push(`https://uploads.mangadex.org/covers/${mangaId}/${rawFileName}`);
@@ -769,44 +769,676 @@ setTimeout(seedInitialCastIndex, 2000);
     const cached = imageMemoryCache.get(imageUrl);
     if (cached) {
       res.setHeader("Content-Type", cached.contentType);
+      res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
       res.setHeader("X-Cache", "HIT");
       return res.send(cached.buffer);
     }
 
+    // Determine candidate referers based on image domain
+    const candidateReferers: string[] = [];
+    if (imageUrl.includes("hinhhinh.com") || imageUrl.includes("truyenvua.com") || imageUrl.includes("truyenqq")) {
+      candidateReferers.push("https://truyenqqko.com/", "https://truyenqqno.com/", "https://truyenqqgo.com/", "");
+    } else if (imageUrl.includes("mangadex")) {
+      candidateReferers.push("https://mangadex.org/", "");
+    } else if (imageUrl.includes("otruyen")) {
+      candidateReferers.push("https://otruyenapi.com/", "https://otruyen.cc/", "");
+    } else if (imageUrl.includes("cuutruyen")) {
+      candidateReferers.push("https://cuutruyen.net/", "");
+    } else {
+      candidateReferers.push("");
+    }
+
     for (const urlToFetch of candidateUrls) {
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 8000);
-        const upstream = await fetch(urlToFetch, {
-          signal: controller.signal,
-          headers: {
+      for (const referer of candidateReferers) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 12000);
+          const headers: Record<string, string> = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-            "Referer": "https://mangadex.org/",
-          },
-        });
-        clearTimeout(timer);
+          };
+          if (referer) {
+            headers["Referer"] = referer;
+          }
+          const upstream = await fetch(urlToFetch, {
+            signal: controller.signal,
+            headers,
+          });
+          clearTimeout(timer);
 
-        if (upstream.ok) {
-          const contentType = upstream.headers.get("content-type") || "image/jpeg";
-          const arrayBuffer = await upstream.arrayBuffer();
-          const buffer = Buffer.from(arrayBuffer);
+          if (upstream.ok) {
+            const contentType = upstream.headers.get("content-type") || "image/jpeg";
+            const arrayBuffer = await upstream.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
 
-          // Save to in-memory cache
-          imageMemoryCache.set(imageUrl, { buffer, contentType });
+            // Save to in-memory cache
+            imageMemoryCache.set(imageUrl, { buffer, contentType });
 
-          res.setHeader("Content-Type", contentType);
-          res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
-          res.setHeader("X-Cache", "MISS");
-          return res.send(buffer);
+            res.setHeader("Content-Type", contentType);
+            res.setHeader("Access-Control-Allow-Origin", "*");
+            res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+            res.setHeader("X-Cache", "MISS");
+            return res.send(buffer);
+          }
+        } catch (err: any) {
+          // Try next referer / url candidate
         }
-      } catch (err: any) {
-        // Continue to next candidate URL
       }
     }
 
     return res.status(502).send("Failed to fetch image upstream across all fallback sources");
+  });
+
+  // --- TRUYENQQ MANGA PROXY & SCRAPER ENGINE ---
+  const TRUYENQQ_MIRRORS = [
+    "https://truyenqqko.com",
+    "https://truyenqqno.com",
+    "https://truyenqqgo.com",
+    "https://truyenqqto.com",
+    "https://truyenqqviet.com",
+    "https://truyenvuainfo.com",
+    "https://truyenqqvn.com"
+  ];
+
+  async function fetchWithDomainFallback(pathBuilder: (base: string) => string, options: { method?: string; body?: any; isPost?: boolean } = {}) {
+    let lastError: any = null;
+    for (const base of TRUYENQQ_MIRRORS) {
+      try {
+        const url = pathBuilder(base);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 9000);
+        const headers: Record<string, string> = {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Referer": `${base}/`,
+        };
+        if (options.isPost) {
+          headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8";
+          headers["X-Requested-With"] = "XMLHttpRequest";
+        }
+        const res = await fetch(url, {
+          method: options.method || (options.isPost ? "POST" : "GET"),
+          headers,
+          body: options.body,
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          const html = await res.text();
+          if (html && html.length > 500) {
+            return { html, base };
+          }
+        }
+      } catch (err: any) {
+        lastError = err;
+      }
+    }
+    throw lastError || new Error("All TruyenQQ mirrors failed");
+  }
+
+  async function scrapeTruyenqqList(page = 1) {
+    const { html } = await fetchWithDomainFallback((base) => `${base}/truyen-moi-cap-nhat/trang-${page}`);
+
+    // Extract total pages
+    const pageMatches = [...html.matchAll(/\/trang-(\d+)/g)];
+    let maxPage = 1;
+    for (const pm of pageMatches) {
+      const p = parseInt(pm[1], 10);
+      if (p > maxPage && p < 10000) maxPage = p;
+    }
+
+    const items: any[] = [];
+    const liBlocks = html.match(/<li[^>]*>[\s\S]*?(?:book_avatar|truyen-tranh)[\s\S]*?<\/li>/gi) || html.match(/<li[^>]*>[\s\S]*?<\/li>/gi) || [];
+    for (const block of liBlocks) {
+      const slugMatch = block.match(/href="[^"]*\/truyen-tranh\/([^"]+)"/i);
+      const titleMatch = block.match(/<h3[^>]*><a[^>]*title="([^"]+)"/i) || block.match(/<h3[^>]*><a[^>]*>([^<]+)<\/a>/i) || block.match(/alt="([^"]+)"/i);
+      const imgMatch = block.match(/<img[^>]*src="([^"]+)"/i) || block.match(/data-original="([^"]+)"/i);
+      const lastChapMatch = block.match(/class="last_chapter"[^>]*>[\s\S]*?<a[^>]*>([^<]+)<\/a>/i);
+      const descMatch = block.match(/class="excerpt"[^>]*>([\s\S]*?)<\/div>/i);
+      const statusMatch = block.match(/Tình trạng:\s*([^<]+)<\/p>/i);
+      const otherTitleMatch = block.match(/Tên khác:\s*([^<]+)<\/div>/i);
+
+      if (slugMatch && titleMatch) {
+        const slug = slugMatch[1].replace(/^\/|\/$/g, "");
+        const title = titleMatch[1].trim();
+        const coverUrl = imgMatch ? imgMatch[1] : "";
+        const lastChapter = lastChapMatch ? lastChapMatch[1].trim() : "";
+        const description = descMatch ? descMatch[1].trim() : "";
+        const status = statusMatch ? statusMatch[1].trim() : "Đang cập nhật";
+        const altTitles = otherTitleMatch ? otherTitleMatch[1].split(";").map((s) => s.trim()) : [];
+
+        items.push({
+          id: slug,
+          slug,
+          title,
+          coverUrl,
+          lastChapter,
+          description,
+          status,
+          altTitles,
+          source: "truyenqq",
+          chapters: [],
+        });
+      }
+    }
+
+    return { items, totalPages: maxPage };
+  }
+
+  async function scrapeTruyenqqSearch(keyword: string) {
+    const formData = new URLSearchParams();
+    formData.append("search", keyword);
+    formData.append("type", "0");
+
+    const { html } = await fetchWithDomainFallback(
+      (base) => `${base}/frontend/search/search`,
+      { isPost: true, body: formData.toString() }
+    );
+
+    const items: any[] = [];
+    const liBlocks = html.match(/<li>[\s\S]*?<\/li>/gi) || [];
+    for (const block of liBlocks) {
+      const slugMatch = block.match(/href="[^"]*\/truyen-tranh\/([^"]+)"/i);
+      const titleMatch = block.match(/<p class="name">([^<]+)<\/p>/i) || block.match(/<h3[^>]*>([^<]+)<\/h3>/i);
+      const altMatch = block.match(/<p class="name_other">([^<]+)<\/p>/i);
+      const imgMatch = block.match(/<img[^>]*src="([^"]+)"/i);
+
+      if (slugMatch && titleMatch) {
+        const slug = slugMatch[1].replace(/^\/|\/$/g, "");
+        const title = titleMatch[1].trim();
+        const altTitles = altMatch ? altMatch[1].split(";").map((s) => s.trim()) : [];
+        const coverUrl = imgMatch ? imgMatch[1] : "";
+
+        let lastChapter = "";
+        if (block.includes("Chương") || block.includes("Chapter")) {
+          const chm = block.match(/<p>(Chương\s*[\d.]+|Chapter\s*[\d.]+)<\/p>/i);
+          if (chm) lastChapter = chm[1];
+        }
+
+        items.push({
+          id: slug,
+          slug,
+          title,
+          altTitles,
+          coverUrl,
+          lastChapter,
+          source: "truyenqq",
+          chapters: [],
+        });
+      }
+    }
+
+    return { items, totalPages: 1 };
+  }
+
+  async function scrapeTruyenqqDetail(slug: string) {
+    const cleanSlug = slug.replace(/^https?:\/\/[^/]+\/truyen-tranh\//i, "").replace(/^\/|\/$/g, "");
+    const { html, base } = await fetchWithDomainFallback((b) => `${b}/truyen-tranh/${cleanSlug}`);
+
+    const titleMatch = html.match(/<h1[^>]*itemprop="name"[^>]*>([^<]+)<\/h1>/i) || html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
+    const title = titleMatch ? titleMatch[1].trim() : "Truyện Tranh";
+
+    const imgMatch = html.match(/<div class="block01"[\s\S]*?<img[^>]*src="([^"]+)"/i) || html.match(/<div class="book_avatar"[\s\S]*?<img[^>]*src="([^"]+)"/i);
+    const coverUrl = imgMatch ? imgMatch[1] : "";
+
+    const altMatch = html.match(/<li class="othername[^>]*>[\s\S]*?<p class="other-name[^>]*>([^<]+)<\/p>/i);
+    const altTitles = altMatch ? altMatch[1].split(";").map((s) => s.trim()) : [];
+
+    const authorMatch = html.match(/<li class="author[^>]*>[\s\S]*?<a[^>]*>([^<]+)<\/a>/i);
+    const authors = authorMatch ? [authorMatch[1].trim()] : [];
+
+    const statusMatch = html.match(/<li class="status[^>]*>[\s\S]*?<p class="col-xs-9">([^<]+)<\/p>/i);
+    const status = statusMatch ? statusMatch[1].trim() : "Đang cập nhật";
+
+    const genreMatches = [...html.matchAll(/<ul class="list01">[\s\S]*?<\/ul>/gi)];
+    let genres: string[] = [];
+    if (genreMatches.length > 0) {
+      const gList = [...genreMatches[0][0].matchAll(/<a[^>]*>([^<]+)<\/a>/gi)];
+      genres = gList.map((g) => g[1].trim());
+    }
+
+    const descMatch = html.match(/<div class="story-detail-info[^>]*>([\s\S]*?)<\/div>/i) || html.match(/<p class="listing-excerpt">([\s\S]*?)<\/p>/i);
+    const description = descMatch ? descMatch[1].replace(/<[^>]+>/g, "").trim() : "";
+
+    const chapters: any[] = [];
+    const chapBlocks = [...html.matchAll(/<div class="works-chapter-item">[\s\S]*?<a[^>]*href="([^"]*\/truyen-tranh\/([^"]+))"[^>]*>([^<]+)<\/a>/gi)];
+
+    for (const cb of chapBlocks) {
+      const chapSlug = cb[2].replace(/^\/|\/$/g, "");
+      const chapTitle = cb[3].trim();
+      const numMatch = chapTitle.match(/(?:Chương|Chapter|Chap)\s*([\d.]+)/i) || chapSlug.match(/chap-([\d.]+)/i);
+      const chapterNumber = numMatch ? numMatch[1] : chapTitle;
+
+      chapters.push({
+        id: chapSlug,
+        slug: chapSlug,
+        title: chapTitle,
+        chapterNumber,
+        source: "truyenqq",
+        chapterApiUrl: `${base}/truyen-tranh/${chapSlug}`,
+      });
+    }
+
+    return {
+      id: cleanSlug,
+      slug: cleanSlug,
+      title,
+      altTitles,
+      coverUrl,
+      description,
+      status,
+      authors,
+      genres,
+      chapters,
+      source: "truyenqq",
+    };
+  }
+
+  async function scrapeTruyenqqChapter(chapSlug: string) {
+    const cleanChapSlug = chapSlug.replace(/^https?:\/\/[^/]+\/truyen-tranh\//i, "").replace(/^\/|\/$/g, "");
+    const { html } = await fetchWithDomainFallback((b) => `${b}/truyen-tranh/${cleanChapSlug}`);
+
+    const pages: string[] = [];
+    const imgMatches = [...html.matchAll(/<img[^>]*class="[^"]*lazy[^"]*"[^>]*src="([^"]+)"[^>]*data-original="([^"]+)"/gi)];
+
+    if (imgMatches.length > 0) {
+      for (const m of imgMatches) {
+        pages.push(m[2] || m[1]);
+      }
+    } else {
+      const directMatches = [...html.matchAll(/<div class="page-chapter"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/gi)];
+      for (const m of directMatches) {
+        pages.push(m[1]);
+      }
+    }
+
+    return pages;
+  }
+
+  // TruyenQQ API Endpoints with Automatic Backup Failover to OTruyen
+  app.get("/api/proxy/truyenqq/list", async (req, res) => {
+    const page = parseInt(String(req.query.page || "1"), 10) || 1;
+    const cacheKey = `truyenqq:list:page:${page}`;
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+
+    try {
+      const data = await scrapeTruyenqqList(page);
+      if (data && Array.isArray(data.items) && data.items.length > 0) {
+        proxyCache.set(cacheKey, { data, timestamp: Date.now() });
+        return res.json(data);
+      }
+    } catch (err: any) {
+      console.warn("TruyenQQ list scraper warning:", err.message);
+    }
+
+    // Fallback to OTruyen if TruyenQQ scraper is blocked on Cloud Run
+    try {
+      const otRes = await fetch(`https://otruyenapi.com/v1/api/danh-sach/truyen-moi?page=${page}`, {
+        headers: { "User-Agent": "Mozilla/5.0" }
+      });
+      if (otRes.ok) {
+        const otData = await otRes.json();
+        const rawItems = otData.data?.items || [];
+        const domainCdn = otData.data?.domain_cdn || "https://otruyenapi.com/uploads/comics";
+        const items = rawItems.map((item: any) => ({
+          id: item.slug || item._id,
+          slug: item.slug,
+          title: item.name,
+          coverUrl: item.thumb_url ? (item.thumb_url.startsWith("http") ? item.thumb_url : `${domainCdn}/${item.thumb_url}`) : "",
+          status: item.status || "Đang cập nhật",
+          source: "truyenqq",
+          chapters: []
+        }));
+        const totalItems = otData.data?.params?.pagination?.totalItems || rawItems.length * 16;
+        const totalPages = Math.max(1, Math.ceil(totalItems / 24));
+        const payload = { items, totalPages };
+        proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+        return res.json(payload);
+      }
+    } catch (e) {}
+
+    if (cached) return res.json(cached.data);
+    return res.json({ items: [], totalPages: 1 });
+  });
+
+  app.get("/api/proxy/truyenqq/search", async (req, res) => {
+    const query = String(req.query.q || req.query.keyword || "").trim();
+    if (!query) {
+      return res.json({ items: [], totalPages: 1 });
+    }
+
+    const cacheKey = `truyenqq:search:${query.toLowerCase()}`;
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+
+    try {
+      const data = await scrapeTruyenqqSearch(query);
+      if (data && Array.isArray(data.items) && data.items.length > 0) {
+        proxyCache.set(cacheKey, { data, timestamp: Date.now() });
+        return res.json(data);
+      }
+    } catch (err: any) {
+      console.warn("TruyenQQ search scraper warning:", err.message);
+    }
+
+    // Search Fallback to OTruyen
+    try {
+      const otRes = await fetch(`https://otruyenapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(query)}&page=1`, {
+        headers: { "User-Agent": "Mozilla/5.0" }
+      });
+      if (otRes.ok) {
+        const otData = await otRes.json();
+        const rawItems = otData.data?.items || [];
+        const domainCdn = otData.data?.domain_cdn || "https://otruyenapi.com/uploads/comics";
+        const items = rawItems.map((item: any) => ({
+          id: item.slug || item._id,
+          slug: item.slug,
+          title: item.name,
+          coverUrl: item.thumb_url ? (item.thumb_url.startsWith("http") ? item.thumb_url : `${domainCdn}/${item.thumb_url}`) : "",
+          source: "truyenqq",
+          chapters: []
+        }));
+        const payload = { items, totalPages: 1 };
+        proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+        return res.json(payload);
+      }
+    } catch (e) {}
+
+    if (cached) return res.json(cached.data);
+    return res.json({ items: [], totalPages: 1 });
+  });
+
+  app.get("/api/proxy/truyenqq/detail", async (req, res) => {
+    const slug = String(req.query.slug || req.query.id || "").trim();
+    if (!slug) {
+      return res.status(400).json({ error: "Missing manga slug/id" });
+    }
+
+    const cacheKey = `truyenqq:detail:${slug}`;
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+
+    // 1. Primary: Try TruyenQQ Scraper
+    try {
+      const data = await scrapeTruyenqqDetail(slug);
+      if (data && data.title && data.chapters && data.chapters.length > 0) {
+        proxyCache.set(cacheKey, { data, timestamp: Date.now() });
+        return res.json(data);
+      }
+    } catch (err: any) {
+      console.warn("TruyenQQ detail scraper warning:", err.message);
+    }
+
+    // Clean slug for fallback lookup (e.g., 'hay-khoc-va-cau-nguyen-di-15780' -> 'hay-khoc-va-cau-nguyen-di')
+    const cleanSlug = slug.replace(/-\d+$/, "").replace(/^https?:\/\/[^/]+\/truyen-tranh\//i, "").replace(/^\/|\/$/g, "");
+    const slugsToTry = Array.from(new Set([slug, cleanSlug]));
+
+    // 2. Secondary: Try OTruyen direct slug lookup
+    for (const s of slugsToTry) {
+      try {
+        const otRes = await fetch(`https://otruyenapi.com/v1/api/truyen-tranh/${encodeURIComponent(s)}`, {
+          headers: { "User-Agent": "Mozilla/5.0" }
+        });
+        if (otRes.ok) {
+          const otData = await otRes.json();
+          const item = otData.data?.item;
+          if (item) {
+            const domainCdn = otData.data?.domain_cdn || "https://otruyenapi.com/uploads/comics";
+            const coverUrl = item.thumb_url ? (item.thumb_url.startsWith("http") ? item.thumb_url : `${domainCdn}/${item.thumb_url}`) : "";
+            const rawChapters = item.chapters?.[0]?.server_data || [];
+            const chapters = rawChapters.map((ch: any) => ({
+              id: ch.chapter_api_data || ch.chapter_name,
+              chapterNumber: ch.chapter_name,
+              title: `Chapter ${ch.chapter_name}${ch.chapter_title ? `: ${ch.chapter_title}` : ''}`,
+              source: "truyenqq",
+              chapterApiUrl: ch.chapter_api_data
+            }));
+            if (chapters.length > 0) {
+              const payload = {
+                id: slug,
+                slug,
+                title: item.name,
+                altTitles: item.origin_name ? [item.origin_name] : [],
+                coverUrl,
+                description: item.content,
+                status: item.status,
+                authors: item.author || [],
+                genres: item.category?.map((c: any) => c.name) || [],
+                chapters,
+                source: "truyenqq"
+              };
+              proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+              return res.json(payload);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    // 3. Tertiary: Search OTruyen by title keyword
+    try {
+      const keyword = cleanSlug.replace(/-/g, " ");
+      const searchRes = await fetch(`https://otruyenapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(keyword)}&page=1`, {
+        headers: { "User-Agent": "Mozilla/5.0" }
+      });
+      if (searchRes.ok) {
+        const searchData = await searchRes.json();
+        const matchedItem = searchData.data?.items?.[0];
+        if (matchedItem && matchedItem.slug) {
+          const otRes = await fetch(`https://otruyenapi.com/v1/api/truyen-tranh/${encodeURIComponent(matchedItem.slug)}`, {
+            headers: { "User-Agent": "Mozilla/5.0" }
+          });
+          if (otRes.ok) {
+            const otData = await otRes.json();
+            const item = otData.data?.item;
+            if (item) {
+              const domainCdn = otData.data?.domain_cdn || "https://otruyenapi.com/uploads/comics";
+              const coverUrl = item.thumb_url ? (item.thumb_url.startsWith("http") ? item.thumb_url : `${domainCdn}/${item.thumb_url}`) : "";
+              const rawChapters = item.chapters?.[0]?.server_data || [];
+              const chapters = rawChapters.map((ch: any) => ({
+                id: ch.chapter_api_data || ch.chapter_name,
+                chapterNumber: ch.chapter_name,
+                title: `Chapter ${ch.chapter_name}${ch.chapter_title ? `: ${ch.chapter_title}` : ''}`,
+                source: "truyenqq",
+                chapterApiUrl: ch.chapter_api_data
+              }));
+              if (chapters.length > 0) {
+                const payload = {
+                  id: slug,
+                  slug,
+                  title: item.name || matchedItem.name,
+                  altTitles: item.origin_name ? [item.origin_name] : [],
+                  coverUrl,
+                  description: item.content,
+                  status: item.status,
+                  authors: item.author || [],
+                  genres: item.category?.map((c: any) => c.name) || [],
+                  chapters,
+                  source: "truyenqq"
+                };
+                proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+                return res.json(payload);
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 4. Quaternary: Search CuuTruyen by title keyword
+    try {
+      const keyword = cleanSlug.replace(/-/g, " ");
+      const ctSearchRes = await fetch(`https://cuutruyen.net/api/v2/mangas/recently_updated?query=${encodeURIComponent(keyword)}`, {
+        headers: { "User-Agent": "Mozilla/5.0" }
+      });
+      if (ctSearchRes.ok) {
+        const ctSearchData = await ctSearchRes.json();
+        const rawManga = ctSearchData.data?.[0];
+        if (rawManga && rawManga.id) {
+          const chapRes = await fetch(`https://cuutruyen.net/api/v2/mangas/${rawManga.id}/chapters`, {
+            headers: { "User-Agent": "Mozilla/5.0" }
+          });
+          if (chapRes.ok) {
+            const chapData = await chapRes.json();
+            const rawChaps = chapData.data || [];
+            const chapters = rawChaps.map((ch: any) => ({
+              id: String(ch.id),
+              chapterNumber: String(ch.number || ch.name || "1"),
+              title: ch.name ? `Chapter ${ch.number || ch.name}: ${ch.name}` : `Chapter ${ch.number || "1"}`,
+              source: "cuutruyen"
+            }));
+            if (chapters.length > 0) {
+              const payload = {
+                id: slug,
+                slug,
+                title: rawManga.name,
+                altTitles: [],
+                coverUrl: rawManga.cover_url || rawManga.cover_mobile_url || "",
+                description: rawManga.description || "",
+                status: rawManga.status || "Đang cập nhật",
+                authors: [],
+                genres: [],
+                chapters,
+                source: "truyenqq"
+              };
+              proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+              return res.json(payload);
+            }
+          }
+        }
+      }
+    } catch (e) {}
+
+    if (cached) return res.json(cached.data);
+    return res.status(404).json({ error: "Manga detail not found" });
+  });
+
+  app.get("/api/proxy/truyenqq/chapter", async (req, res) => {
+    const slug = String(req.query.slug || req.query.url || req.query.id || "").trim();
+    if (!slug) {
+      return res.status(400).json({ error: "Missing chapter slug/url" });
+    }
+
+    const cacheKey = `truyenqq:chapter:${slug}`;
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+
+    try {
+      const pages = await scrapeTruyenqqChapter(slug);
+      if (pages.length > 0) {
+        const data = { pages };
+        proxyCache.set(cacheKey, { data, timestamp: Date.now() });
+        return res.json(data);
+      }
+    } catch (err: any) {
+      console.warn("TruyenQQ chapter error:", err.message);
+    }
+
+    // Chapter pages fallback to OTruyen API if slug is an OTruyen chapter API URL
+    if (slug.includes("otruyenapi.com") || slug.startsWith("http")) {
+      try {
+        const otRes = await fetch(slug, { headers: { "User-Agent": "Mozilla/5.0" } });
+        if (otRes.ok) {
+          const otData = await otRes.json();
+          if (otData.status === "success" && otData.data?.item) {
+            const domainCdn = otData.data.domain_cdn || "https://otruyenapi.com/uploads/comics";
+            const chapterPath = otData.data.item.chapter_path;
+            const images = otData.data.item.chapter_image || [];
+            const pages = images.map((img: any) => `/api/proxy/image?url=${encodeURIComponent(`${domainCdn}/${chapterPath}/${img.image_file}`)}`);
+            const payload = { pages };
+            proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+            return res.json(payload);
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (cached) return res.json(cached.data);
+    return res.json({ pages: [] });
+  });
+
+  // MangaDex Proxy Endpoint (Bypasses CORS and rate limits with backend caching)
+  app.get("/api/proxy/mangadex/*", async (req, res) => {
+    const rawEndpoint = req.params[0] || "";
+    const cleanEndpoint = rawEndpoint.split("?")[0];
+    const rawQuery = req.url.includes("?") ? req.url.substring(req.url.indexOf("?") + 1) : "";
+    const targetUrl = `https://api.mangadex.org/${cleanEndpoint}${rawQuery ? `?${rawQuery}` : ""}`;
+    const cacheKey = `mangadex:${cleanEndpoint}?${rawQuery}`;
+
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+
+    try {
+      const data = await fetchWithTimeout(targetUrl, 15000);
+      proxyCache.set(cacheKey, { data, timestamp: Date.now() });
+      return res.json(data);
+    } catch (err: any) {
+      console.warn(`[MangaDex Proxy Warning] ${targetUrl}:`, err.message);
+      if (cached) return res.json(cached.data);
+      return res.status(502).json({ error: err.message });
+    }
+  });
+
+  // OTruyen Proxy Endpoint
+  app.get("/api/proxy/otruyen/*", async (req, res) => {
+    const rawEndpoint = req.params[0] || "";
+    const cleanEndpoint = rawEndpoint.split("?")[0];
+    const rawQuery = req.url.includes("?") ? req.url.substring(req.url.indexOf("?") + 1) : "";
+    const targetUrl = `https://otruyenapi.com/v1/api/${cleanEndpoint}${rawQuery ? `?${rawQuery}` : ""}`;
+    const cacheKey = `otruyen:${cleanEndpoint}?${rawQuery}`;
+
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+
+    try {
+      const data = await fetchWithTimeout(targetUrl, 10000);
+      proxyCache.set(cacheKey, { data, timestamp: Date.now() });
+      return res.json(data);
+    } catch (err: any) {
+      console.warn(`[OTruyen Proxy Warning] ${targetUrl}:`, err.message);
+      if (cached) return res.json(cached.data);
+      return res.status(502).json({ error: err.message });
+    }
+  });
+
+  // CuuTruyen Proxy Endpoint (v2)
+  app.get("/api/proxy/cuutruyen/*", async (req, res) => {
+    let rawEndpoint = req.params[0] || "";
+    let cleanEndpoint = rawEndpoint.split("?")[0];
+    if (cleanEndpoint === "mangas" || cleanEndpoint === "mangas/") {
+      cleanEndpoint = "mangas/recently_updated";
+    }
+    const rawQuery = req.url.includes("?") ? req.url.substring(req.url.indexOf("?") + 1) : "";
+    const targetUrl = `https://cuutruyen.net/api/v2/${cleanEndpoint}${rawQuery ? `?${rawQuery}` : ""}`;
+    const cacheKey = `cuutruyen:${cleanEndpoint}?${rawQuery}`;
+
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+
+    try {
+      const data = await fetchWithTimeout(targetUrl, 10000);
+      proxyCache.set(cacheKey, { data, timestamp: Date.now() });
+      return res.json(data);
+    } catch (err: any) {
+      console.warn(`[CuuTruyen Proxy Warning] ${targetUrl}:`, err.message);
+      if (cached) return res.json(cached.data);
+      return res.status(502).json({ error: err.message });
+    }
   });
 
   // 6. Default General Proxy with resilient multi-source failover and caching

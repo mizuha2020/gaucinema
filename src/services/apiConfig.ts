@@ -24,24 +24,33 @@ export const getApiBaseUrl = (): string => {
     } catch {}
   }
 
-  // 2. Check environment variable
-  const envUrl = (import.meta as any).env?.VITE_API_URL || (import.meta as any).env?.VITE_APP_URL;
-  if (envUrl && envUrl.trim() !== '') {
-    return envUrl.trim().replace(/\/$/, '');
-  }
-
-  // 3. In native Android APK (Capacitor), default to Cloud Backend URL
+  // 2. ONLY for native mobile app (Capacitor Android APK), use absolute backend URL
   if (isNativeApp()) {
+    const envUrl = (import.meta as any).env?.VITE_API_URL || (import.meta as any).env?.VITE_APP_URL;
+    if (envUrl && envUrl.trim() !== '') {
+      return envUrl.trim().replace(/\/$/, '');
+    }
     return CLOUD_BACKEND_URL;
   }
 
-  // 4. In web browser preview (non-native), relative path uses current host
+  // 3. For ALL web browsers (Preview, Published link, AI Studio iframe, local dev):
+  // MUST return empty string so relative URLs like `/api/proxy/...` are used directly
+  // on the current host origin without cross-origin redirects.
   return '';
 };
 
 export const API_BASE_URL = getApiBaseUrl();
 
 export const getFullApiUrl = (path: string): string => {
+  if (!path) return '';
+  if (
+    path.startsWith('http://') ||
+    path.startsWith('https://') ||
+    path.startsWith('blob:') ||
+    path.startsWith('data:')
+  ) {
+    return path;
+  }
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   const base = getApiBaseUrl();
   if (!base) {
