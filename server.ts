@@ -755,6 +755,17 @@ setTimeout(seedInitialCastIndex, 2000);
       candidateUrls.push(imageUrl);
     }
 
+    if (imageUrl.includes("hinhhinh.com") || imageUrl.includes("truyenvua.com") || imageUrl.includes("tintruyen.com") || imageUrl.includes("truyenqq")) {
+      const cleanSingle = imageUrl.replace(/(https?:\/\/[^\/]+)\/\/+/g, "$1/").replace(/(\d+\.)?tintruyen\.(net|com)/gi, "i.hinhhinh.com");
+      if (cleanSingle !== imageUrl && !candidateUrls.includes(cleanSingle)) candidateUrls.push(cleanSingle);
+
+      const hinhhinhAlt = cleanSingle.replace(/https?:\/\/[^\/]+/gi, "https://i.hinhhinh.com");
+      if (!candidateUrls.includes(hinhhinhAlt)) candidateUrls.push(hinhhinhAlt);
+
+      const truyenvuaAlt = cleanSingle.replace(/https?:\/\/[^\/]+/gi, "https://i178.truyenvua.com");
+      if (!candidateUrls.includes(truyenvuaAlt)) candidateUrls.push(truyenvuaAlt);
+    }
+
     // Check if this is a MangaDex cover URL
     const mdCoverMatch = imageUrl.match(/uploads\.mangadex\.org\/covers\/([a-f0-9-]+)\/([^?#]+)/i);
     if (mdCoverMatch) {
