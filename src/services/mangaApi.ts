@@ -358,9 +358,16 @@ function upgradeTruyenqqImageUrl(url: string): string {
   let u = url.trim();
   if (u.startsWith('//')) u = 'https:' + u;
   if (u.startsWith('http://')) u = 'https://' + u.slice(7);
-  // Fix chính: TruyenQQ dùng pattern F80x105 / 80x105 -> F190x247 (độ phân giải cao nét căng)
-  u = u.replace(/F80x105/gi, 'F190x247');
-  u = u.replace(/F\d+x\d+/gi, 'F190x247');
+
+  // Replace dead tintruyen domains with working i.hinhhinh.com
+  u = u.replace(/(\d+\.)?tintruyen\.(net|com)/gi, 'i.hinhhinh.com');
+
+  // Replace double slashes in paths e.g. https://domain.com//file.jpg -> https://domain.com/file.jpg
+  u = u.replace(/(https?:\/\/[^\/]+)\/\/+/g, '$1/');
+
+  // Fix chính: TruyenQQ dùng pattern F80x105 / 80x105 -> 190x247
+  u = u.replace(/F80x105/gi, '190x247');
+  u = u.replace(/F\d+x\d+/gi, '190x247');
   u = u.replace(/\/ebook\/F?\d+x\d+\//gi, '/ebook/190x247/');
   u = u.replace(/\/thumb\/F?\d+x\d+\//gi, '/thumb/190x247/');
   u = u.replace(/[-_]F?80x105\./gi, '-190x247.').replace(/[-_]F?90x\d+\./gi, '-190x247.');
@@ -378,17 +385,43 @@ function upgradeTruyenqqImageUrl(url: string): string {
 
 function extractTruyenqqCoverUrl(block: string): string {
   if (!block) return '';
-  const dataMatch = block.match(/data-original="([^"]+)"/i) || block.match(/data-src="([^"]+)"/i) || block.match(/data-fb="([^"]+)"/i);
-  if (dataMatch && dataMatch[1] && !dataMatch[1].includes('lazy.gif')) {
-    return dataMatch[1].trim();
+
+  // 1. Check primary src attribute first
+  const srcMatch = block.match(/<img[^>]*src="([^"]+)"/i);
+  if (srcMatch && srcMatch[1]) {
+    const s = srcMatch[1].trim();
+    if (!s.includes('lazy.gif') && !s.includes('no_image') && !s.includes('logo') && !s.includes('icon')) {
+      return upgradeTruyenqqImageUrl(s);
+    }
   }
+
+  // 2. Check data-original (lazy loading attribute)
+  const origMatch = block.match(/data-original="([^"]+)"/i);
+  if (origMatch && origMatch[1]) {
+    const s = origMatch[1].trim();
+    if (!s.includes('lazy.gif') && !s.includes('no_image') && !s.includes('logo')) {
+      return upgradeTruyenqqImageUrl(s);
+    }
+  }
+
+  // 3. Check data-src
+  const dataSrcMatch = block.match(/data-src="([^"]+)"/i);
+  if (dataSrcMatch && dataSrcMatch[1]) {
+    const s = dataSrcMatch[1].trim();
+    if (!s.includes('lazy.gif') && !s.includes('no_image') && !s.includes('logo')) {
+      return upgradeTruyenqqImageUrl(s);
+    }
+  }
+
+  // 4. Fallback: check any valid src attribute in block
   const srcMatches = [...block.matchAll(/src="([^"]+)"/gi)];
   for (const m of srcMatches) {
     const s = m[1]?.trim();
-    if (s && !s.includes('lazy.gif') && !s.includes('logo') && !s.includes('icon')) {
-      return s;
+    if (s && !s.includes('lazy.gif') && !s.includes('no_image') && !s.includes('logo') && !s.includes('icon')) {
+      return upgradeTruyenqqImageUrl(s);
     }
   }
+
   return '';
 }
 
