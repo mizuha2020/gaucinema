@@ -34,9 +34,27 @@ export const MovieRow: React.FC<MovieRowProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const setWidthRef = useRef(0);
   const isScrollingRef = useRef(false);
+  const animRef = useRef<number | null>(null);
   const [showLeftArrow, setShowLeftArrow] = useState(false);
   const [showRightArrow, setShowRightArrow] = useState(true);
   const isTv = useTvMode();
+
+  const smoothScrollBy = useCallback((el: HTMLElement, delta: number) => {
+    if (animRef.current) cancelAnimationFrame(animRef.current);
+    const start = el.scrollLeft;
+    const target = start + delta;
+    const duration = 420;
+    const startTime = performance.now();
+    const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+    isScrollingRef.current = true;
+    const step = (now: number) => {
+      const p = Math.min((now - startTime) / duration, 1);
+      el.scrollLeft = start + (target - start) * easeOutCubic(p);
+      if (p < 1) animRef.current = requestAnimationFrame(step);
+      else { isScrollingRef.current = false; animRef.current = null; }
+    };
+    animRef.current = requestAnimationFrame(step);
+  }, []);
 
   const [itemWidth, setItemWidth] = useState(isTop10 ? 224 : 208);
   const [gap, setGap] = useState(24);
@@ -171,10 +189,7 @@ export const MovieRow: React.FC<MovieRowProps> = ({
     const el = containerRef.current;
     if (!el || isScrollingRef.current) return;
     const scrollAmount = Math.round(el.clientWidth * 0.82);
-    isScrollingRef.current = true;
-    // Native compositor smooth = 60fps, no JS rAF layout thrash
-    el.scrollBy({ left: direction === 'left' ? -scrollAmount : scrollAmount, behavior: 'smooth' });
-    window.setTimeout(() => { isScrollingRef.current = false; }, 420);
+    smoothScrollBy(el, direction === 'left' ? -scrollAmount : scrollAmount);
   };
 
   return (

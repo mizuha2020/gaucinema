@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useMemo } from 'react';
+import React, { useRef, useEffect, useMemo, useCallback } from 'react';
 import { Movie } from '../types';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { getImageUrl } from '../services/movieApi';
@@ -14,7 +14,25 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({ title, movies, onO
   const rowRef = useRef<HTMLDivElement>(null);
   const setWidthRef = useRef(0);
   const isScrollingRef = useRef(false);
+  const animRef = useRef<number | null>(null);
   const top10Movies = movies.slice(0, 10);
+
+  const smoothScrollBy = useCallback((el: HTMLElement, delta: number) => {
+    if (animRef.current) cancelAnimationFrame(animRef.current);
+    const start = el.scrollLeft;
+    const target = start + delta;
+    const duration = 420;
+    const startTime = performance.now();
+    const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+    isScrollingRef.current = true;
+    const step = (now: number) => {
+      const p = Math.min((now - startTime) / duration, 1);
+      el.scrollLeft = start + (target - start) * easeOutCubic(p);
+      if (p < 1) animRef.current = requestAnimationFrame(step);
+      else { isScrollingRef.current = false; animRef.current = null; }
+    };
+    animRef.current = requestAnimationFrame(step);
+  }, []);
 
   const tripleMovies = useMemo(() => [...top10Movies, ...top10Movies, ...top10Movies], [top10Movies]);
 
@@ -63,9 +81,7 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({ title, movies, onO
     const el = rowRef.current;
     if (!el || isScrollingRef.current) return;
     const scrollAmount = Math.round(el.clientWidth * 0.82);
-    isScrollingRef.current = true;
-    el.scrollBy({ left: direction === 'left' ? -scrollAmount : scrollAmount, behavior: 'smooth' });
-    window.setTimeout(() => { isScrollingRef.current = false; }, 420);
+    smoothScrollBy(el, direction === 'left' ? -scrollAmount : scrollAmount);
   };
 
   return (
