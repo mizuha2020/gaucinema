@@ -401,6 +401,7 @@ function upgradeTruyenqqImageUrl(url: string): string {
 
   // Fix chính: TruyenQQ dùng pattern F80x105 / 80x105 -> 190x247
   u = u.replace(/F80x105/gi, '190x247');
+  u = u.replace(/F190x247/gi, '190x247');
   u = u.replace(/F\d+x\d+/gi, '190x247');
   u = u.replace(/\/ebook\/F?\d+x\d+\//gi, '/ebook/190x247/');
   u = u.replace(/\/thumb\/F?\d+x\d+\//gi, '/thumb/190x247/');

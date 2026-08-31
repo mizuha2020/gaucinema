@@ -907,8 +907,9 @@ setTimeout(seedInitialCastIndex, 2000);
     // Replace double slashes in paths e.g. https://domain.com//file.jpg -> https://domain.com/file.jpg
     u = u.replace(/(https?:\/\/[^\/]+)\/\/+/g, "$1/");
 
-    // Upgrade resolution to 190x247
+    // Upgrade resolution to high-res 190x247
     u = u.replace(/F80x105/gi, "190x247");
+    u = u.replace(/F190x247/gi, "190x247");
     u = u.replace(/F\d+x\d+/gi, "190x247");
     u = u.replace(/\/ebook\/F?\d+x\d+\//gi, "/ebook/190x247/");
     u = u.replace(/\/thumb\/F?\d+x\d+\//gi, "/thumb/190x247/");
@@ -988,7 +989,7 @@ setTimeout(seedInitialCastIndex, 2000);
       if (slugMatch && titleMatch) {
         const slug = slugMatch[1].replace(/^\/|\/$/g, "");
         const title = titleMatch[1].trim();
-        const coverUrl = rawCover.replace(/F80x105/gi, 'F190x247').replace(/80x105/gi, '190x247');
+        const coverUrl = cleanTruyenqqCoverUrl(rawCover);
         const lastChapter = lastChapMatch ? lastChapMatch[1].trim() : "";
         const description = descMatch ? descMatch[1].trim() : "";
         const status = statusMatch ? statusMatch[1].trim() : "Đang cập nhật";
@@ -1040,7 +1041,7 @@ setTimeout(seedInitialCastIndex, 2000);
             const slug = slugMatch[1].replace(/^\/|\/$/g, "");
             const title = titleMatch[1].trim();
             const altTitles = altMatch ? altMatch[1].split(";").map((s) => s.trim()) : [];
-            const coverUrl = rawCover.replace(/F80x105/gi, 'F190x247').replace(/80x105/gi, '190x247');
+            const coverUrl = cleanTruyenqqCoverUrl(rawCover);
 
             let lastChapter = "";
             if (block.includes("Chương") || block.includes("Chapter") || block.includes("Chap")) {
@@ -1077,7 +1078,7 @@ setTimeout(seedInitialCastIndex, 2000);
     const title = titleMatch ? titleMatch[1].trim() : "Truyện Tranh";
 
     const rawCover = extractTruyenqqCoverUrl(html);
-    const coverUrl = rawCover.replace(/F80x105/gi, 'F190x247').replace(/80x105/gi, '190x247');
+    const coverUrl = cleanTruyenqqCoverUrl(rawCover);
 
     const altMatch = html.match(/<li class="othername[^>]*>[\s\S]*?<p class="other-name[^>]*>([^<]+)<\/p>/i);
     const altTitles = altMatch ? altMatch[1].split(";").map((s) => s.trim()) : [];
