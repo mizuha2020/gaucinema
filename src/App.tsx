@@ -40,7 +40,7 @@ import { MobileBottomNav } from './components/MobileBottomNav';
 import { NotificationTickerBanner } from './components/NotificationTickerBanner';
 import { WatchTogetherRoom } from './components/watch-together/WatchTogetherRoom';
 import { JoinRoomModal } from './components/watch-together/JoinRoomModal';
-import { CustomDialog, ToastContainer } from './components/CustomDialog';
+import { CustomDialog, ConfirmDialog, ToastContainer } from './components/CustomDialog';
 import { watchTogetherService } from './services/watchTogetherService';
 import { offlineMovieService } from './services/offlineMovieService';
 import { followMovieService, FollowedMovie } from './services/followMovieService';
@@ -247,6 +247,19 @@ export default function App() {
 
   // Active Modals & Player State
   const [selectedMovieForDetail, setSelectedMovieForDetail] = useState<Movie | null>(null);
+  const [showExitConfirmModal, setShowExitConfirmModal] = useState<boolean>(false);
+
+  const handleExitApp = () => {
+    try {
+      if (typeof window !== 'undefined' && (window as any)?.Capacitor?.isNativePlatform?.()) {
+        CapApp.exitApp();
+      } else {
+        window.close();
+      }
+    } catch (e) {
+      console.error('Exit app error:', e);
+    }
+  };
 
   // Player State
   const [playingMovie, setPlayingMovie] = useState<Movie | null>(null);
@@ -824,7 +837,11 @@ export default function App() {
       } else if (e.state && e.state.tab) {
         setActiveTab(e.state.tab);
       } else if (!e.state) {
-        setActiveTab('home');
+        if (activeTab === 'home') {
+          setShowExitConfirmModal(true);
+        } else {
+          setActiveTab('home');
+        }
       }
     };
     window.addEventListener('popstate', handlePopState);
@@ -834,15 +851,15 @@ export default function App() {
     try {
       if (typeof window !== 'undefined' && (window as any)?.Capacitor?.isNativePlatform?.()) {
         CapApp.addListener('backButton', () => {
-          if (playingMovie || selectedMovieForDetail || showAdminDashboard || (showProfileSelector && currentAccount && activeProfile)) {
+          if (showExitConfirmModal) {
+            setShowExitConfirmModal(false);
+          } else if (playingMovie || selectedMovieForDetail || showAdminDashboard || (showProfileSelector && currentAccount && activeProfile)) {
             window.history.back();
           } else if (activeTab !== 'home') {
             setActiveTab('home');
             window.history.pushState({ tab: 'home' }, '', '');
-          } else if (window.history.state) {
-            window.history.back();
           } else {
-            CapApp.exitApp();
+            setShowExitConfirmModal(true);
           }
         }).then((l) => {
           backUnsub = () => l.remove();
@@ -856,7 +873,7 @@ export default function App() {
       window.removeEventListener('popstate', handlePopState);
       if (backUnsub) backUnsub();
     };
-  }, [playingMovie, selectedMovieForDetail, showAdminDashboard, showProfileSelector, currentAccount, activeProfile, refreshProfileData]);
+  }, [showExitConfirmModal, playingMovie, playingEpisode, playingServer, selectedMovieForDetail, showAdminDashboard, showProfileSelector, currentAccount, activeProfile, activeTab, refreshProfileData]);
 
   // Wrapper for state changes
   const handleTabChange = (tab: NavTab) => {
@@ -1905,6 +1922,16 @@ export default function App() {
           showCancel={dialog.showCancel}
         />
       )}
+      <ConfirmDialog
+        isOpen={showExitConfirmModal}
+        onClose={() => setShowExitConfirmModal(false)}
+        onConfirm={handleExitApp}
+        title="Thoát ứng dụng"
+        message="Bạn có chắc chắn muốn thoát ứng dụng không?"
+        confirmText="Thoát"
+        cancelText="Ở lại"
+        type="danger"
+      />
       <ToastContainer toasts={toasts} onRemove={() => {}} />
     </>
   );
