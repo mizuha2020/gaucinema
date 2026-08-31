@@ -2,13 +2,20 @@ import { Capacitor } from '@capacitor/core';
 
 export const isNativeApp = (): boolean => {
   if (typeof window === 'undefined') return false;
-  if (Capacitor.isNativePlatform()) return true;
-  if ((window as any).Capacitor?.isNative) return true;
-  const origin = window.location.origin || '';
-  return (
-    origin.includes('capacitor://') ||
-    window.location.protocol === 'file:'
-  );
+  try {
+    if (Capacitor.isNativePlatform()) return true;
+    const platform = Capacitor.getPlatform();
+    if (platform === 'android' || platform === 'ios') return true;
+    if ((window as any).Capacitor?.isNative) return true;
+    const origin = window.location.origin || '';
+    return (
+      origin.includes('capacitor://') ||
+      origin.includes('http://localhost') ||
+      window.location.protocol === 'file:'
+    );
+  } catch {
+    return false;
+  }
 };
 
 export const CLOUD_BACKEND_URL = 'https://ais-pre-vnvd2uudmu6l2atxxr7h75-18391378124.asia-southeast1.run.app';

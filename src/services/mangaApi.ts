@@ -87,7 +87,7 @@ const nativeImageCache = new Map<string, string>();
  * Bypasses WebView CORS & Referer restrictions by sending custom Referer header
  * directly via native Android OkHttp/HttpURLConnection and returning a base64 Data URL.
  */
-async function fetchImageAsBase64Native(imageUrl: string, refererHost?: string): Promise<string> {
+export async function fetchImageAsBase64Native(imageUrl: string, refererHost?: string): Promise<string> {
   if (!imageUrl) return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
 
   let cleanUrl = imageUrl.trim();
@@ -96,7 +96,9 @@ async function fetchImageAsBase64Native(imageUrl: string, refererHost?: string):
   if (cleanUrl.startsWith('http://')) cleanUrl = 'https://' + cleanUrl.slice(7);
   if (!cleanUrl.startsWith('http')) return cleanUrl;
 
-  cleanUrl = upgradeTruyenqqImageUrl(cleanUrl);
+  if (cleanUrl.includes('truyenvua.com') || cleanUrl.includes('hinhhinh.com') || cleanUrl.includes('tintruyen.com') || cleanUrl.includes('truyenqq') || cleanUrl.includes('80x105')) {
+    cleanUrl = upgradeTruyenqqImageUrl(cleanUrl);
+  }
 
   if (nativeImageCache.has(cleanUrl)) {
     return nativeImageCache.get(cleanUrl)!;
@@ -115,42 +117,50 @@ async function fetchImageAsBase64Native(imageUrl: string, refererHost?: string):
     const res = await CapacitorHttp.get({
       url: cleanUrl,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
         'Referer': referer,
+        'referer': referer,
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
       },
       responseType: 'arraybuffer',
-      connectTimeout: 8000,
-      readTimeout: 8000,
+      connectTimeout: 10000,
+      readTimeout: 10000,
     });
 
     if (res.status >= 200 && res.status < 400 && res.data) {
       let b64Data = '';
       if (typeof res.data === 'string') {
         b64Data = res.data.trim();
-      } else if (res.data instanceof ArrayBuffer) {
-        const bytes = new Uint8Array(res.data);
-        let binary = '';
-        const len = bytes.byteLength;
-        for (let i = 0; i < len; i++) {
-          binary += String.fromCharCode(bytes[i]);
+      } else if (res.data && typeof res.data === 'object') {
+        if (res.data instanceof ArrayBuffer) {
+          const bytes = new Uint8Array(res.data);
+          let binary = '';
+          const len = bytes.byteLength;
+          for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          b64Data = window.btoa(binary);
+        } else if (typeof (res.data as any).data === 'string') {
+          b64Data = String((res.data as any).data).trim();
         }
-        b64Data = window.btoa(binary);
       }
 
       b64Data = b64Data.replace(/\s+/g, '');
 
-      if (b64Data && !b64Data.startsWith('data:')) {
-        let mimeType = 'image/jpeg';
-        if (cleanUrl.toLowerCase().endsWith('.png')) mimeType = 'image/png';
-        else if (cleanUrl.toLowerCase().endsWith('.webp')) mimeType = 'image/webp';
-        else if (cleanUrl.toLowerCase().endsWith('.gif')) mimeType = 'image/gif';
+      if (b64Data) {
+        if (!b64Data.startsWith('data:')) {
+          let mimeType = 'image/jpeg';
+          if (cleanUrl.toLowerCase().includes('.png')) mimeType = 'image/png';
+          else if (cleanUrl.toLowerCase().includes('.webp')) mimeType = 'image/webp';
+          else if (cleanUrl.toLowerCase().includes('.gif')) mimeType = 'image/gif';
 
-        b64Data = `data:${mimeType};base64,${b64Data}`;
-      }
+          b64Data = `data:${mimeType};base64,${b64Data}`;
+        }
 
-      if (b64Data.length > 100) {
-        nativeImageCache.set(cleanUrl, b64Data);
-        return b64Data;
+        if (b64Data.length > 80) {
+          nativeImageCache.set(cleanUrl, b64Data);
+          return b64Data;
+        }
       }
     }
   } catch (e) {
@@ -1300,6 +1310,10 @@ export function getProxyImageUrl(url: string): string {
   if (cleanUrl.startsWith('//')) cleanUrl = 'https:' + cleanUrl;
   if (cleanUrl.startsWith('http://')) cleanUrl = 'https://' + cleanUrl.slice(7);
 
+  if (cleanUrl.includes('truyenvua.com') || cleanUrl.includes('hinhhinh.com') || cleanUrl.includes('tintruyen.com') || cleanUrl.includes('truyenqq') || cleanUrl.includes('80x105')) {
+    cleanUrl = upgradeTruyenqqImageUrl(cleanUrl);
+  }
+
   if (nativeImageCache.has(cleanUrl)) {
     return nativeImageCache.get(cleanUrl)!;
   }
@@ -1307,12 +1321,9 @@ export function getProxyImageUrl(url: string): string {
   if (cleanUrl.startsWith('/api/proxy/image')) return getFullApiUrl(cleanUrl);
   if (cleanUrl.startsWith('/')) return getFullApiUrl(cleanUrl);
 
-  if (cleanUrl.includes('truyenvua.com') || cleanUrl.includes('hinhhinh.com') || cleanUrl.includes('tintruyen.com') || cleanUrl.includes('truyenqq') || cleanUrl.includes('80x105')) {
-    cleanUrl = upgradeTruyenqqImageUrl(cleanUrl);
-  }
-
-  if (nativeImageCache.has(cleanUrl)) {
-    return nativeImageCache.get(cleanUrl)!;
+  // If running on web browser, relative path /api/proxy/image hits active same-origin backend
+  if (typeof window !== 'undefined' && window.location?.origin && !isNativeApp()) {
+    return `/api/proxy/image?url=${encodeURIComponent(cleanUrl)}`;
   }
 
   return getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(cleanUrl)}`);
@@ -1354,7 +1365,14 @@ export function getFallbackMangaImageUrl(url: string, currentFailedSrc?: string)
     return nativeImageCache.get(cleanUrl)!;
   }
 
-  // If initial direct load failed, route through our backend image proxy (which injects referrer headers)
+  // If on web, try relative proxy first
+  if (typeof window !== 'undefined' && window.location?.origin && !isNativeApp()) {
+    if (!currentFailedSrc || !currentFailedSrc.includes('/api/proxy/image')) {
+      return `/api/proxy/image?url=${encodeURIComponent(cleanUrl)}`;
+    }
+  }
+
+  // If initial direct load failed, route through backend image proxy
   if (!currentFailedSrc || !currentFailedSrc.includes('/api/proxy/image')) {
     if (cleanUrl.startsWith('http')) {
       return getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(cleanUrl)}`);
@@ -1363,4 +1381,46 @@ export function getFallbackMangaImageUrl(url: string, currentFailedSrc?: string)
 
   // Final fallback illustration
   return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
+}
+
+/**
+ * Universal React image onError handler for Manga posters & pages
+ */
+export function handleMangaImageError(e: React.SyntheticEvent<HTMLImageElement, Event>, originalUrl: string) {
+  const target = e.target as HTMLImageElement;
+  if (!originalUrl) {
+    target.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
+    return;
+  }
+
+  let cleanUrl = originalUrl.trim();
+  if (cleanUrl.startsWith('//')) cleanUrl = 'https:' + cleanUrl;
+  if (cleanUrl.startsWith('http://')) cleanUrl = 'https://' + cleanUrl.slice(7);
+
+  if (nativeImageCache.has(cleanUrl)) {
+    target.src = nativeImageCache.get(cleanUrl)!;
+    return;
+  }
+
+  const failedCount = parseInt(target.dataset.failedCount || '0', 10);
+  if (failedCount >= 3) {
+    target.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
+    return;
+  }
+  target.dataset.failedCount = String(failedCount + 1);
+
+  if (isNativeApp()) {
+    fetchImageAsBase64Native(cleanUrl).then((b64) => {
+      if (b64 && b64.startsWith('data:')) {
+        target.src = b64;
+      } else {
+        target.src = getFallbackMangaImageUrl(cleanUrl, target.src);
+      }
+    }).catch(() => {
+      target.src = getFallbackMangaImageUrl(cleanUrl, target.src);
+    });
+    return;
+  }
+
+  target.src = getFallbackMangaImageUrl(cleanUrl, target.src);
 }

@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useEffect, useState } from 'react';
-import { MangaItem, getFallbackMangaImageUrl } from '../../services/mangaApi';
+import { MangaItem, getFallbackMangaImageUrl, handleMangaImageError } from '../../services/mangaApi';
 import { ChevronLeft, ChevronRight, BookOpen } from 'lucide-react';
 import { MangaSourceBadge } from './MangaSourceBadge';
 import { smoothScrollHorizontal } from '../../utils/scrollUtils';
@@ -129,10 +129,7 @@ export const MangaRow: React.FC<MangaRowProps> = ({ title, mangas, onOpenDetail,
                   referrerPolicy="no-referrer"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 pointer-events-none"
                   loading="lazy"
-                  onError={(e) => {
-                    const target = e.target as HTMLImageElement;
-                    target.src = getFallbackMangaImageUrl(manga.coverUrl, target.src);
-                  }}
+                  onError={(e) => handleMangaImageError(e, manga.coverUrl)}
                 />
                 <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center backdrop-blur-[2px]">
                   <div className="bg-purple-600 text-white rounded-full p-3 transform translate-y-4 group-hover:translate-y-0 transition-all duration-300 shadow-xl shadow-purple-600/40">

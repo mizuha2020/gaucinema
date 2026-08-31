@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MangaItem, MangaSource, mangaApi, MangaChapter, MangaHistoryItem, getProxyImageUrl } from '../../services/mangaApi';
+import { MangaItem, MangaSource, mangaApi, MangaChapter, MangaHistoryItem, getProxyImageUrl, handleMangaImageError } from '../../services/mangaApi';
 import { getFullApiUrl } from '../../services/apiConfig';
 import { systemApiService } from '../../services/systemApiService';
 import { firestoreStorage } from '../../services/firestoreStorage';
@@ -562,7 +562,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
                   {mangaList.slice(0, 20).map((manga, idx) => (
                     <div key={`${manga.id}-${idx}`} onClick={() => handleOpenDetail(manga)} className="group flex items-center gap-4 p-3 rounded-2xl bg-white/[0.03] border border-white/10 hover:border-fuchsia-500/30 hover:bg-white/[0.05] cursor-pointer transition-colors">
                       <span className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm shrink-0 ${idx < 3 ? 'bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-lg' : 'bg-white/5 text-white/60 border border-white/10'}`}>{idx + 1}</span>
-                      <img src={getFullApiUrl(manga.coverUrl)} alt={manga.title} className="w-12 h-16 object-cover rounded-xl border border-white/10 shrink-0" referrerPolicy="no-referrer" onError={(e)=>{ const t=e.target as HTMLImageElement; if(!t.src.includes('/api/proxy/image') && manga.coverUrl.startsWith('http')) t.src=getProxyImageUrl(manga.coverUrl); else (t.src='https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop'); }} />
+                      <img src={manga.coverUrl} alt={manga.title} className="w-12 h-16 object-cover rounded-xl border border-white/10 shrink-0" referrerPolicy="no-referrer" onError={(e)=> handleMangaImageError(e, manga.coverUrl)} />
                       <div className="flex-1 min-w-0">
                         <h3 className="font-bold text-sm sm:text-base text-white truncate group-hover:text-fuchsia-300">{manga.title}</h3>
                         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
@@ -603,7 +603,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
                     return (
                       <div key={`${manga.id}-${idx}`} onClick={() => { if(!active){ setDisabledSourceAlert(`Nguồn "${manga.source.toUpperCase()}" đang tạm khóa.`); return; } handleOpenDetail(manga); }} className={`group bg-white/[0.03] rounded-2xl overflow-hidden border border-white/10 hover:border-fuchsia-500/40 transition flex flex-col cursor-pointer hover:-translate-y-1 ${!active ? 'opacity-50 grayscale' : ''}`}>
                         <div className="relative aspect-[3/4] overflow-hidden bg-black">
-                          <img src={getFullApiUrl(manga.coverUrl)} alt={manga.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition duration-500" onError={(e)=>{ const t=e.target as HTMLImageElement; if(!t.src.includes('/api/proxy/image') && manga.coverUrl.startsWith('http')) t.src=getProxyImageUrl(manga.coverUrl); else t.src='https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop'; }} />
+                          <img src={manga.coverUrl} alt={manga.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition duration-500" onError={(e)=> handleMangaImageError(e, manga.coverUrl)} />
                           {!active && <div className="absolute inset-0 bg-black/70 flex items-center justify-center"><span className="bg-red-600/90 text-white text-[10px] font-bold px-2 py-1 rounded">Tạm khóa</span></div>}
                         </div>
                         <div className="p-3 flex-1 flex flex-col gap-1">
@@ -657,7 +657,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
                         if(found){ window.history.pushState({ tab: 'manga', mangaView: 'reader', chapterId: found.id }, ''); setActiveReadingSession({ manga: full as MangaItem, chapter: found, pageIndex: item.pageIndex || 0 }); }
                       }} className={`bg-white/[0.03] hover:bg-white/[0.06] border border-white/10 rounded-2xl p-4 flex items-center justify-between cursor-pointer transition ${!active ? 'opacity-50 grayscale' : ''}`}>
                         <div className="flex items-center gap-4 min-w-0">
-                          <img src={getFullApiUrl(item.coverUrl)} alt={item.title} referrerPolicy="no-referrer" className="w-12 h-16 object-cover rounded-xl border border-white/10 shrink-0" onError={(e)=>{ const t=e.target as HTMLImageElement; if(!t.src.includes('/api/proxy/image') && item.coverUrl.startsWith('http')) t.src=getProxyImageUrl(item.coverUrl); else t.src='https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop'; }} />
+                          <img src={item.coverUrl} alt={item.title} referrerPolicy="no-referrer" className="w-12 h-16 object-cover rounded-xl border border-white/10 shrink-0" onError={(e)=> handleMangaImageError(e, item.coverUrl || '')} />
                           <div className="min-w-0">
                             <h3 className="font-bold text-sm sm:text-base text-white truncate">{item.title}</h3>
                             <p className="text-xs text-fuchsia-400 font-medium truncate">{item.chapterTitle} • <span className="uppercase text-white/30">{item.source}</span></p>
@@ -725,7 +725,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
                         if(ch) { window.history.pushState({ tab: 'manga', mangaView: 'reader', chapterId: ch.id }, ''); setActiveReadingSession({ manga: full as MangaItem, chapter: ch, pageIndex: item.pageIndex || 0 }); }
                       }} className="group relative w-36 sm:w-40 shrink-0 bg-[#0f0f14] rounded-2xl overflow-hidden border border-white/10 hover:border-fuchsia-500/40 cursor-pointer hover:scale-[1.02] transition-all flex flex-col">
                         <div className="relative aspect-[3/4] overflow-hidden bg-black">
-                          <img src={getFullApiUrl(item.coverUrl)} alt={item.title} className="w-full h-full object-cover object-top group-hover:scale-105 transition" referrerPolicy="no-referrer" loading="lazy" onError={(e)=>{ const t=e.target as HTMLImageElement; if(!t.src.includes('/api/proxy/image') && item.coverUrl.startsWith('http')) t.src=getProxyImageUrl(item.coverUrl); else t.src='https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop'; }} />
+                          <img src={item.coverUrl} alt={item.title} className="w-full h-full object-cover object-top group-hover:scale-105 transition" referrerPolicy="no-referrer" loading="lazy" onError={(e)=> handleMangaImageError(e, item.coverUrl || '')} />
                           <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition flex items-center justify-center"><span className="bg-fuchsia-600 text-white px-3 py-1 rounded-full text-xs font-bold shadow-lg">Đọc tiếp</span></div>
                           <div className="absolute top-2 left-2 bg-black/70 backdrop-blur text-white text-[10px] font-bold px-2 py-1 rounded-full border border-white/10 line-clamp-1 max-w-[90%]">{item.chapterTitle}</div>
                         </div>
@@ -770,7 +770,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
                         {mangaList.map((manga, idx)=>(
                           <div key={`${manga.id}-${idx}`} onClick={()=> handleOpenDetail(manga)} className="group cursor-pointer">
                             <div className="relative aspect-[2/3] overflow-hidden rounded-2xl bg-white/5 border border-white/10 group-hover:border-fuchsia-500/40">
-                              <img src={manga.coverUrl} alt={manga.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition duration-500" loading="lazy" onError={(e)=>{ const t=e.target as HTMLImageElement; if(!t.src.includes('/api/proxy/image') && manga.coverUrl.startsWith('http')) t.src=getProxyImageUrl(manga.coverUrl); else t.src='https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop'; }} />
+                              <img src={manga.coverUrl} alt={manga.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition duration-500" loading="lazy" onError={(e)=> handleMangaImageError(e, manga.coverUrl)} />
                               <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition flex items-center justify-center"><div className="bg-fuchsia-600 text-white p-2.5 rounded-full shadow-xl"><BookOpen className="w-5 h-5" /></div></div>
                               <div className="absolute top-2 left-2 right-2 flex justify-end"><MangaSourceBadge source={manga.source} size="xs" /></div>
                             </div>

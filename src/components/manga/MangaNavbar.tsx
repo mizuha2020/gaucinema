@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { UserProfile, Account } from '../../types';
-import { MangaItem, mangaApi, MangaSource, getProxyImageUrl } from '../../services/mangaApi';
+import { MangaItem, mangaApi, MangaSource, getProxyImageUrl, handleMangaImageError } from '../../services/mangaApi';
 import { Search, ChevronDown, Check, X, Layers, User, Clock, Bookmark, LayoutGrid, Tv, Home, Shield, Settings, LogOut, Lock, BookOpen, Trophy, Compass, Library, History as HistoryIcon, HardDrive, Flame } from 'lucide-react';
 import appLogo from '../../assets/images/app_logo.jpg';
 import { motion, AnimatePresence } from 'motion/react';
@@ -296,7 +296,7 @@ export const MangaNavbar: React.FC<MangaNavbarProps> = ({
                           className="group flex items-center gap-3 p-3 hover:bg-white/[0.04] cursor-pointer transition-colors"
                         >
                           <div className="w-10 h-14 rounded-lg overflow-hidden bg-white/5 shrink-0 border border-white/10">
-                            <img src={m.coverUrl} alt={m.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform" referrerPolicy="no-referrer" onError={(e) => { (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200&auto=format&fit=crop'; }} />
+                            <img src={m.coverUrl} alt={m.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform" referrerPolicy="no-referrer" onError={(e) => handleMangaImageError(e, m.coverUrl)} />
                           </div>
                           <div className="flex-1 min-w-0">
                             <h4 className="text-sm font-semibold text-white truncate group-hover:text-fuchsia-300">{m.title}</h4>
@@ -451,7 +451,7 @@ export const MangaNavbar: React.FC<MangaNavbarProps> = ({
               {searchResults.length > 0 ? (
                 searchResults.map((m, idx) => (
                   <div key={`${m.id}-${idx}`} onClick={() => { if (onSelectManga) onSelectManga(m); else onSearchSubmit?.(m.title); handleCloseSearch(); }} className="flex items-center gap-3 p-2.5 rounded-xl active:bg-white/5 cursor-pointer">
-                    <img src={m.coverUrl} alt={m.title} className="w-12 h-16 object-cover rounded-lg shrink-0 bg-white/5" referrerPolicy="no-referrer" onError={(e) => { (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200&auto=format&fit=crop'; }} />
+                    <img src={m.coverUrl} alt={m.title} className="w-12 h-16 object-cover rounded-lg shrink-0 bg-white/5" referrerPolicy="no-referrer" onError={(e) => handleMangaImageError(e, m.coverUrl)} />
                     <div className="flex-1 min-w-0">
                       <h4 className="text-sm font-semibold text-white truncate">{m.title}</h4>
                       <p className="text-xs text-white/40 truncate">{m.source?.toUpperCase()} {m.status ? `• ${m.status}` : ''}</p>

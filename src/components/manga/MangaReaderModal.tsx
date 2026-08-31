@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
-import { MangaChapter, MangaItem, getProxyImageUrl } from '../../services/mangaApi';
+import { MangaChapter, MangaItem, getProxyImageUrl, fetchImageAsBase64Native } from '../../services/mangaApi';
 import { mangaApi } from '../../services/mangaApi';
-import { getFullApiUrl } from '../../services/apiConfig';
+import { getFullApiUrl, isNativeApp } from '../../services/apiConfig';
 import { systemApiService } from '../../services/systemApiService';
 import { presenceService } from '../../services/presenceService';
 import { Account, UserProfile } from '../../types';
@@ -1284,29 +1284,36 @@ const MangaReaderPageItem: React.FC<MangaReaderPageItemProps> = ({
   }, [currentSrc]);
 
   const handleError = () => {
+    const rawUrl = pageUrl.includes('/api/proxy/image?url=')
+      ? decodeURIComponent(pageUrl.split('/api/proxy/image?url=')[1].split('&')[0])
+      : pageUrl;
+
     if (attempt === 0) {
-      // Step 1: Try wsrv.nl CDN proxy
       setAttempt(1);
-      const rawUrl = pageUrl.includes('/api/proxy/image?url=')
-        ? decodeURIComponent(pageUrl.split('/api/proxy/image?url=')[1].split('&')[0])
-        : pageUrl;
+      // Native APK Direct Downloader
+      if (isNativeApp() && rawUrl.startsWith('http')) {
+        fetchImageAsBase64Native(rawUrl).then((b64) => {
+          if (b64 && b64.startsWith('data:')) {
+            setCurrentSrc(b64);
+          } else {
+            setCurrentSrc(`/api/proxy/image?url=${encodeURIComponent(rawUrl)}`);
+          }
+        }).catch(() => {
+          setCurrentSrc(`/api/proxy/image?url=${encodeURIComponent(rawUrl)}`);
+        });
+        return;
+      }
+
+      // Web: Relative proxy path first (hits same-origin active backend)
       if (rawUrl.startsWith('http')) {
-        setCurrentSrc(`https://wsrv.nl/?url=${encodeURIComponent(rawUrl)}&output=webp`);
+        setCurrentSrc(`/api/proxy/image?url=${encodeURIComponent(rawUrl)}`);
       } else {
         const sep = currentSrc.includes('?') ? '&' : '?';
         setCurrentSrc(`${pageUrl}${sep}t=${Date.now()}`);
       }
     } else if (attempt === 1) {
-      // Step 2: Try backend proxy or data-saver if MangaDex
       setAttempt(2);
-      const rawUrl = pageUrl.includes('/api/proxy/image?url=')
-        ? decodeURIComponent(pageUrl.split('/api/proxy/image?url=')[1].split('&')[0])
-        : pageUrl;
-      const mdMatch = rawUrl.match(/(?:mangadex\.network|uploads\.mangadex\.org)\/(data|data-saver)\/([a-f0-9]+)\/([^?#]+)/i);
-      if (mdMatch) {
-        const [, , hash, file] = mdMatch;
-        setCurrentSrc(getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(`https://uploads.mangadex.org/data-saver/${hash}/${file}`)}`));
-      } else if (rawUrl.startsWith('http')) {
+      if (rawUrl.startsWith('http')) {
         setCurrentSrc(getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(rawUrl)}`));
       } else {
         setHasError(true);
@@ -1314,11 +1321,7 @@ const MangaReaderPageItem: React.FC<MangaReaderPageItemProps> = ({
         onLoaded?.();
       }
     } else if (attempt === 2) {
-      // Step 3: Try raw URL if not already tried
       setAttempt(3);
-      const rawUrl = pageUrl.includes('/api/proxy/image?url=')
-        ? decodeURIComponent(pageUrl.split('/api/proxy/image?url=')[1].split('&')[0])
-        : pageUrl;
       if (rawUrl !== currentSrc && rawUrl.startsWith('http')) {
         setCurrentSrc(rawUrl);
       } else {
