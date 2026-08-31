@@ -80,6 +80,96 @@ async function parseJsonResponseSafe(res: Response): Promise<any> {
   return JSON.parse(text);
 }
 
+const nativeImageCache = new Map<string, string>();
+
+/**
+ * Direct native image downloader for Android APK using CapacitorHttp.
+ * Bypasses WebView CORS & Referer restrictions by sending custom Referer header
+ * directly via native Android OkHttp/HttpURLConnection and returning a base64 Data URL.
+ */
+async function fetchImageAsBase64Native(imageUrl: string, refererHost?: string): Promise<string> {
+  if (!imageUrl) return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
+
+  let cleanUrl = imageUrl.trim();
+  if (cleanUrl.startsWith('data:')) return cleanUrl;
+  if (cleanUrl.startsWith('//')) cleanUrl = 'https:' + cleanUrl;
+  if (cleanUrl.startsWith('http://')) cleanUrl = 'https://' + cleanUrl.slice(7);
+  if (!cleanUrl.startsWith('http')) return cleanUrl;
+
+  cleanUrl = upgradeTruyenqqImageUrl(cleanUrl);
+
+  if (nativeImageCache.has(cleanUrl)) {
+    return nativeImageCache.get(cleanUrl)!;
+  }
+
+  let referer = refererHost || 'https://truyenqqko.com/';
+  if (cleanUrl.includes('truyenvua') || cleanUrl.includes('hinhhinh') || cleanUrl.includes('tintruyen') || cleanUrl.includes('truyenqq')) {
+    referer = 'https://truyenqqko.com/';
+  } else if (cleanUrl.includes('mangadex')) {
+    referer = 'https://mangadex.org/';
+  } else if (cleanUrl.includes('otruyen')) {
+    referer = 'https://otruyenapi.com/';
+  }
+
+  try {
+    const res = await CapacitorHttp.get({
+      url: cleanUrl,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+        'Referer': referer,
+      },
+      responseType: 'arraybuffer',
+      connectTimeout: 8000,
+      readTimeout: 8000,
+    });
+
+    if (res.status >= 200 && res.status < 400 && res.data) {
+      let b64Data = '';
+      if (typeof res.data === 'string') {
+        b64Data = res.data.trim();
+      } else if (res.data instanceof ArrayBuffer) {
+        const bytes = new Uint8Array(res.data);
+        let binary = '';
+        const len = bytes.byteLength;
+        for (let i = 0; i < len; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        b64Data = window.btoa(binary);
+      }
+
+      b64Data = b64Data.replace(/\s+/g, '');
+
+      if (b64Data && !b64Data.startsWith('data:')) {
+        let mimeType = 'image/jpeg';
+        if (cleanUrl.toLowerCase().endsWith('.png')) mimeType = 'image/png';
+        else if (cleanUrl.toLowerCase().endsWith('.webp')) mimeType = 'image/webp';
+        else if (cleanUrl.toLowerCase().endsWith('.gif')) mimeType = 'image/gif';
+
+        b64Data = `data:${mimeType};base64,${b64Data}`;
+      }
+
+      if (b64Data.length > 100) {
+        nativeImageCache.set(cleanUrl, b64Data);
+        return b64Data;
+      }
+    }
+  } catch (e) {
+    console.warn('Native image download error for:', cleanUrl, e);
+  }
+
+  return cleanUrl;
+}
+
+async function fetchImagesInBatches(urls: string[], batchSize = 6): Promise<string[]> {
+  const results: string[] = [];
+  for (let i = 0; i < urls.length; i += batchSize) {
+    const chunk = urls.slice(i, i + batchSize);
+    const chunkResults = await Promise.all(chunk.map((u) => fetchImageAsBase64Native(u)));
+    results.push(...chunkResults);
+  }
+  return results;
+}
+
 /**
  * Direct Native Android Fetch for TruyenQQ via CapacitorHttp (Bypasses WebView CORS & Cookies)
  */
@@ -454,13 +544,21 @@ export const mangaApi = {
               );
               if (res?.html) {
                 const items = parseTruyenqqSearchHtml(res.html);
-                if (items.length > 0) return { items, totalPages: 1 };
+                if (items.length > 0) {
+                  const b64Covers = await fetchImagesInBatches(items.map((i) => i.coverUrl), 6);
+                  items.forEach((it, idx) => { if (b64Covers[idx]) it.coverUrl = b64Covers[idx]; });
+                  return { items, totalPages: 1 };
+                }
               }
             } else {
               const res = await fetchTruyenqqNative((base) => `${base}/truyen-moi-cap-nhat/trang-${page}`);
               if (res?.html) {
                 const parsed = parseTruyenqqHtmlList(res.html);
-                if (parsed.items.length > 0) return parsed;
+                if (parsed.items.length > 0) {
+                  const b64Covers = await fetchImagesInBatches(parsed.items.map((i) => i.coverUrl), 6);
+                  parsed.items.forEach((it, idx) => { if (b64Covers[idx]) it.coverUrl = b64Covers[idx]; });
+                  return parsed;
+                }
               }
             }
           } catch (nativeErr) {
@@ -489,6 +587,10 @@ export const mangaApi = {
               source: 'truyenqq' as MangaSource,
               chapters: []
             }));
+            if (isNativeApp()) {
+              const b64Covers = await fetchImagesInBatches(items.map((i) => i.coverUrl), 6);
+              items.forEach((it, idx) => { if (b64Covers[idx]) it.coverUrl = b64Covers[idx]; });
+            }
             return { items, totalPages: data.totalPages || 1 };
           }
           // If backend returned fallback data, keep it as last resort but try direct first
@@ -812,6 +914,9 @@ export const mangaApi = {
             if (res?.html) {
               const detail = parseTruyenqqDetailHtml(res.html, cleanSlug, res.base);
               if (detail && detail.chapters && detail.chapters.length > 0) {
+                if (detail.coverUrl) {
+                  detail.coverUrl = await fetchImageAsBase64Native(detail.coverUrl);
+                }
                 return detail;
               }
             }
@@ -834,12 +939,14 @@ export const mangaApi = {
             }));
 
             if (chapters.length > 0) {
+              const rawCover = data.coverUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
+              const coverUrl = isNativeApp() ? await fetchImageAsBase64Native(rawCover) : getMangaImageUrl(rawCover);
               return {
                 id: data.id || cleanSlug,
                 title: data.title || 'Truyện Tranh',
                 altTitles: data.altTitles || [],
                 slug: data.slug || cleanSlug,
-                coverUrl: getMangaImageUrl(data.coverUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop'),
+                coverUrl,
                 description: data.description || '',
                 status: data.status || 'Đang cập nhật',
                 authors: data.authors || [],
@@ -1087,7 +1194,7 @@ export const mangaApi = {
             if (res?.html) {
               const pages = parseTruyenqqChapterHtml(res.html);
               if (pages.length > 0) {
-                return pages.map((p: string) => getProxyImageUrl(p));
+                return await fetchImagesInBatches(pages, 6);
               }
             }
           } catch (nativeErr) {
@@ -1100,6 +1207,9 @@ export const mangaApi = {
           const chapUrl = `/api/proxy/truyenqq/chapter?slug=${encodeURIComponent(cleanChapSlug)}`;
           const data = await fetchMangaApi(chapUrl);
           if (data && Array.isArray(data.pages) && data.pages.length > 0) {
+            if (isNativeApp()) {
+              return await fetchImagesInBatches(data.pages, 6);
+            }
             return data.pages.map((p: string) => getProxyImageUrl(p));
           }
         } catch (e: any) {
@@ -1186,8 +1296,13 @@ export const mangaApi = {
 export function getProxyImageUrl(url: string): string {
   if (!url) return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
   let cleanUrl = url.trim();
+  if (cleanUrl.startsWith('data:')) return cleanUrl;
   if (cleanUrl.startsWith('//')) cleanUrl = 'https:' + cleanUrl;
   if (cleanUrl.startsWith('http://')) cleanUrl = 'https://' + cleanUrl.slice(7);
+
+  if (nativeImageCache.has(cleanUrl)) {
+    return nativeImageCache.get(cleanUrl)!;
+  }
 
   if (cleanUrl.startsWith('/api/proxy/image')) return getFullApiUrl(cleanUrl);
   if (cleanUrl.startsWith('/')) return getFullApiUrl(cleanUrl);
@@ -1196,14 +1311,23 @@ export function getProxyImageUrl(url: string): string {
     cleanUrl = upgradeTruyenqqImageUrl(cleanUrl);
   }
 
+  if (nativeImageCache.has(cleanUrl)) {
+    return nativeImageCache.get(cleanUrl)!;
+  }
+
   return getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(cleanUrl)}`);
 }
 
 export function getMangaImageUrl(url: string): string {
   if (!url) return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
   let u = url.trim();
+  if (u.startsWith('data:')) return u;
   if (u.startsWith('//')) u = 'https:' + u;
   if (u.startsWith('http://')) u = 'https://' + u.slice(7);
+
+  if (nativeImageCache.has(u)) {
+    return nativeImageCache.get(u)!;
+  }
 
   if (u.startsWith('/api/proxy/image')) return getFullApiUrl(u);
   if (u.startsWith('/')) return getFullApiUrl(u);
@@ -1222,8 +1346,13 @@ export function getMangaImageUrl(url: string): string {
 export function getFallbackMangaImageUrl(url: string, currentFailedSrc?: string): string {
   if (!url) return 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
   let cleanUrl = url.trim();
+  if (cleanUrl.startsWith('data:')) return cleanUrl;
   if (cleanUrl.startsWith('//')) cleanUrl = 'https:' + cleanUrl;
   if (cleanUrl.startsWith('http://')) cleanUrl = 'https://' + cleanUrl.slice(7);
+
+  if (nativeImageCache.has(cleanUrl)) {
+    return nativeImageCache.get(cleanUrl)!;
+  }
 
   // If initial direct load failed, route through our backend image proxy (which injects referrer headers)
   if (!currentFailedSrc || !currentFailedSrc.includes('/api/proxy/image')) {
