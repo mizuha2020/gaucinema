@@ -2,6 +2,14 @@ import { Movie, MovieDetailResponse, MovieListResponse, EpisodeServer, ApiSource
 import { getFullApiUrl } from './apiConfig';
 import { systemApiService } from './systemApiService';
 
+function isMovieSourceEnabled(id: ApiSource): boolean {
+  try {
+    const active = systemApiService.getActiveEndpointsForCategory('movie');
+    if (!active || active.length === 0) return true;
+    return active.some(e => e.id === id);
+  } catch { return true; }
+}
+
 export interface SourceOption {
   id: ApiSource;
   name: string;
@@ -165,8 +173,9 @@ async function cachedFetch<T>(key: string, fetcher: () => Promise<T>): Promise<T
   }
 }
 
-// Base Fetcher for each source with safe error catching
+// Base Fetcher for each source with safe error catching — respects admin disable toggle
 async function fetchKKPhim<T>(endpoint: string, params?: Record<string, any>): Promise<T> {
+  if (!isMovieSourceEnabled('kkphim')) return { status: false, items: [], msg: 'KKPhim disabled' } as unknown as T;
   const clean = endpoint.replace(/^\//, '');
   const query = params ? '?' + new URLSearchParams(params as any).toString() : '';
 
@@ -192,6 +201,7 @@ async function fetchKKPhim<T>(endpoint: string, params?: Record<string, any>): P
 }
 
 async function fetchOPhim<T>(endpoint: string, params?: Record<string, any>): Promise<T> {
+  if (!isMovieSourceEnabled('ophim')) return { status: false, items: [], msg: 'OPhim disabled' } as unknown as T;
   const clean = endpoint.replace(/^\//, '');
   const query = params ? '?' + new URLSearchParams(params as any).toString() : '';
 
@@ -217,6 +227,7 @@ async function fetchOPhim<T>(endpoint: string, params?: Record<string, any>): Pr
 }
 
 async function fetchNguonC<T>(endpoint: string, params?: Record<string, any>): Promise<T> {
+  if (!isMovieSourceEnabled('nguonc')) return { status: 'error', items: [], msg: 'NguonC disabled' } as unknown as T;
   const clean = endpoint.replace(/^\//, '');
   const query = params ? '?' + new URLSearchParams(params as any).toString() : '';
 
@@ -662,10 +673,29 @@ export const movieApi = {
   async search(keyword: string, page = 1, limit = 24, sourceOverride?: ApiSource): Promise<MovieListResponse> {
     if (!keyword.trim()) return { status: true, items: [] };
     const kw = keyword.trim();
-    const source = sourceOverride || getActiveApiSource();
+    let source = sourceOverride || getActiveApiSource();
+    // Nếu nguồn được chọn đã bị admin disable, tự động fallback về 'all' (đã lọc)
+    if (source !== 'all' && !isMovieSourceEnabled(source)) {
+      source = 'all';
+    }
     const cacheKey = `search:${kw}:${source}:${page}:${limit}`;
 
-    return cachedFetch(cacheKey, async () => {
+    const applyEnabledFilter = (items: Movie[]): Movie[] => {
+      try {
+        const active = systemApiService.getActiveEndpointsForCategory('movie');
+        if (!active || active.length === 0) return items;
+        const enabledSet = new Set(active.map((e) => e.id));
+        return items.filter((m) => {
+          const src = (m as any).source as string | undefined;
+          if (!src) return true;
+          return enabledSet.has(src);
+        });
+      } catch {
+        return items;
+      }
+    };
+
+    const rawResult = await cachedFetch(cacheKey, async () => {
       // If a specific source is selected, try it first
       if (source !== 'all') {
         let singleResult: MovieListResponse | null = null;
@@ -743,6 +773,25 @@ export const movieApi = {
         },
       };
     });
+
+    // Hậu xử lý: luôn lọc bỏ các nguồn đã bị disable (quan trọng khi cache hit hoặc server vẫn trả về ophim)
+    if (rawResult && Array.isArray((rawResult as any).items)) {
+      const filteredItems = applyEnabledFilter((rawResult as any).items);
+      // Nếu đang filter theo source cụ thể mà sau khi lọc disabled còn rỗng, giữ nguyên để tránh mất kết quả actor fallback
+      if (filteredItems.length !== (rawResult as any).items.length) {
+        return {
+          ...(rawResult as any),
+          items: filteredItems,
+          pagination: {
+            totalItems: filteredItems.length,
+            totalItemsPerPage: limit,
+            currentPage: 1,
+            totalPages: Math.max(1, Math.ceil(filteredItems.length / limit)),
+          },
+        };
+      }
+    }
+    return rawResult;
   },
 
   // 9. Top Trending (Movies with most views)

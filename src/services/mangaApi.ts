@@ -47,6 +47,15 @@ const getOtruyenBase = () => '/api/proxy/otruyen';
 const getMangadexBase = () => '/api/proxy/mangadex';
 const getCuutruyenBase = () => '/api/proxy/cuutruyen';
 
+function isMangaSourceEnabled(id: MangaSource): boolean {
+  try {
+    const active = systemApiService.getActiveEndpointsForCategory('manga');
+    // If not yet initialized (empty), assume enabled to avoid blocking initial load
+    if (!active || active.length === 0) return true;
+    return active.some(e => e.id === id);
+  } catch { return true; }
+}
+
 /**
  * Validates whether a response is actual JSON data rather than an HTML auth gate or error page.
  */
@@ -154,38 +163,23 @@ async function fetchMangaApi(url: string): Promise<any> {
       }
     } catch (e) {}
 
-    // Public Web Proxies
-    const publicProxies = [
-      (u: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-      (u: string) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-      (u: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
-    ];
-
-    for (const proxyGen of publicProxies) {
-      try {
-        const publicProxyUrl = proxyGen(url);
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 8000);
-        const res = await fetch(publicProxyUrl, { signal: controller.signal });
-        clearTimeout(timer);
-        if (res.ok) {
-          const data = await parseJsonResponseSafe(res);
-          if (data) return data;
-        }
-      } catch (e) {}
-    }
+    // NOTE: Removed public CORS proxies (corsproxy.io now returns 401 Unauthorized,
+    // codetabs is dead). Backend /api/proxy/* is the primary source.
+    // Fallback to direct upstream APIs is handled above; TruyenQQ will
+    // failover to OTruyen in getMangaList() instead.
   }
 
   throw new Error(`Failed to fetch manga data from ${url}`);
 }
 
-// Client-side fallback scraper for TruyenQQ when backend is inaccessible on public domain
+// Client-side fallback scraper for TruyenQQ when backend is inaccessible
+// Uses working CORS proxy (cors.eu.org) — corsproxy.io now returns 401
 async function fetchTruyenqqViaPublicCORS(path: string): Promise<string> {
-  const mirrors = ['https://truyenqqko.com', 'https://truyenqqno.com', 'https://truyenqqgo.com'];
+  const mirrors = ['https://truyenqqko.com', 'https://truyenqqgo.com', 'https://truyenqqno.com'];
+  // cors.eu.org tested working 2026-08, allorigins as backup
   const publicProxies = [
-    (u: string) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+    (u: string) => `https://cors.eu.org/${u}`,
     (u: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    (u: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
   ];
 
   for (const mirror of mirrors) {
@@ -209,6 +203,32 @@ async function fetchTruyenqqViaPublicCORS(path: string): Promise<string> {
   return '';
 }
 
+function upgradeTruyenqqImageUrl(url: string): string {
+  if (!url) return url;
+  let u = url.trim();
+  // Fix chính: TruyenQQ dùng pattern F80x105 / 80x105 -> F190x247 (bạn confirm chỉ cần thay F80x105 thành F190x247 là nét)
+  // Ví dụ: .../ebook/80x105/conan_...jpg -> .../ebook/190x247/conan_...jpg
+  //        .../F80x105/conan_...jpg -> .../F190x247/conan_...jpg
+  u = u.replace(/F80x105/gi, 'F190x247');
+  u = u.replace(/F\d+x\d+/gi, 'F190x247');
+  u = u.replace(/\/ebook\/F?\d+x\d+\//gi, '/ebook/190x247/');
+  u = u.replace(/\/thumb\/F?\d+x\d+\//gi, '/thumb/190x247/');
+  // Một số mirror dùng -80x105.jpg hoặc _80x105.
+  u = u.replace(/[-_]F?80x105\./gi, '-190x247.').replace(/[-_]F?90x\d+\./gi, '-190x247.');
+  // Fallback: bất kỳ 80x105 còn sót thì đổi thẳng
+  u = u.replace(/80x105/gi, '190x247');
+  // Nếu URL có tham số w/h nhỏ, xóa để lấy gốc hoặc tăng
+  if (u.includes('?')) {
+    try {
+      const urlObj = new URL(u);
+      const w = parseInt(urlObj.searchParams.get('w') || '0', 10);
+      if (w && w < 400) { urlObj.searchParams.delete('w'); urlObj.searchParams.delete('h'); urlObj.searchParams.delete('resize'); u = urlObj.toString(); }
+    } catch {}
+  }
+  u = u.replace(/\/thumb\//gi, '/').replace(/_thumb\./gi, '.').replace(/-thumb\./gi, '.');
+  return u;
+}
+
 function parseTruyenqqHtmlList(html: string): { items: MangaItem[]; totalPages: number } {
   const pageMatches = [...html.matchAll(/\/trang-(\d+)/g)];
   let maxPage = 1;
@@ -218,11 +238,40 @@ function parseTruyenqqHtmlList(html: string): { items: MangaItem[]; totalPages: 
   }
 
   const items: MangaItem[] = [];
+
+  // 1. Try JSON-LD ItemList (most stable, added 2024) — faster and not dependent on li layout
+  try {
+    const jsonLdMatch = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?"@type"\s*:\s*"ItemList"[\s\S]*?)<\/script>/i);
+    if (jsonLdMatch) {
+      const json = JSON.parse(jsonLdMatch[1]);
+      const elements = json.itemListElement || [];
+      for (const el of elements) {
+        const url: string = el.url || '';
+        const slugMatch = url.match(/\/truyen-tranh\/([^\/\?#]+)/);
+        if (slugMatch && el.name) {
+          const slug = slugMatch[1].replace(/^\/|\/$/g, '');
+          items.push({
+            id: slug,
+            slug,
+            title: el.name.trim(),
+            coverUrl: getMangaImageUrl(upgradeTruyenqqImageUrl(el.image || '')),
+            description: '',
+            status: 'Đang cập nhật',
+            altTitles: [],
+            source: 'truyenqq',
+            chapters: [],
+          });
+        }
+      }
+      if (items.length > 0) return { items, totalPages: maxPage };
+    }
+  } catch {}
+
   const liBlocks = html.match(/<li>[\s\S]*?<div class="book_avatar">[\s\S]*?<\/li>/gi) || [];
   for (const block of liBlocks) {
     const slugMatch = block.match(/href="[^"]*\/truyen-tranh\/([^"]+)"/i);
     const titleMatch = block.match(/<h3[^>]*><a[^>]*title="([^"]+)"/i) || block.match(/<h3[^>]*><a[^>]*>([^<]+)<\/a>/i) || block.match(/alt="([^"]+)"/i);
-    const imgMatch = block.match(/<img[^>]*src="([^"]+)"/i) || block.match(/data-original="([^"]+)"/i);
+    const imgMatch = block.match(/<img[^>]*data-original="([^"]+)"/i) || block.match(/<img[^>]*src="([^"]+)"/i);
     const descMatch = block.match(/class="excerpt"[^>]*>([\s\S]*?)<\/div>/i);
     const statusMatch = block.match(/Tình trạng:\s*([^<]+)<\/p>/i);
     const otherTitleMatch = block.match(/Tên khác:\s*([^<]+)<\/div>/i);
@@ -230,7 +279,8 @@ function parseTruyenqqHtmlList(html: string): { items: MangaItem[]; totalPages: 
     if (slugMatch && titleMatch) {
       const slug = slugMatch[1].replace(/^\/|\/$/g, '');
       const title = titleMatch[1].trim();
-      const coverUrl = imgMatch ? imgMatch[1] : '';
+      const rawCover = imgMatch ? imgMatch[1] : '';
+      const coverUrl = upgradeTruyenqqImageUrl(rawCover);
       const description = descMatch ? descMatch[1].trim() : '';
       const status = statusMatch ? statusMatch[1].trim() : 'Đang cập nhật';
       const altTitles = otherTitleMatch ? otherTitleMatch[1].split(';').map((s) => s.trim()) : [];
@@ -254,19 +304,23 @@ function parseTruyenqqHtmlList(html: string): { items: MangaItem[]; totalPages: 
 export const mangaApi = {
   // 1. Get List / Home from selected source
   async getMangaList(source: MangaSource, page = 1, keyword = ''): Promise<{ items: MangaItem[]; totalPages: number }> {
+    if (!isMangaSourceEnabled(source)) return { items: [], totalPages: 1 };
     try {
       if (source === 'truyenqq') {
+        let backendFallback: any = null;
         try {
           const baseProxy = keyword
             ? `/api/proxy/truyenqq/search?q=${encodeURIComponent(keyword)}`
             : `/api/proxy/truyenqq/list?page=${page}`;
           const data = await fetchMangaApi(baseProxy);
-          if (data && Array.isArray(data.items) && data.items.length > 0) {
+          // If backend returned fallback (otruyen disguised as truyenqq), don't accept yet — try true TruyenQQ via direct CORS
+          const isFallback = data && (data.isFallback || data.fallbackSource === 'otruyen');
+          if (data && Array.isArray(data.items) && data.items.length > 0 && !isFallback) {
             const items: MangaItem[] = data.items.map((item: any) => ({
               id: item.slug || item.id,
               title: item.title,
               slug: item.slug,
-              coverUrl: getMangaImageUrl(item.coverUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop'),
+              coverUrl: getMangaImageUrl(upgradeTruyenqqImageUrl(item.coverUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop')),
               description: item.description,
               status: item.status,
               altTitles: item.altTitles,
@@ -275,6 +329,8 @@ export const mangaApi = {
             }));
             return { items, totalPages: data.totalPages || 1 };
           }
+          // If backend returned fallback data, keep it as last resort but try direct first
+          if (isFallback && data && Array.isArray(data.items) && data.items.length > 0) backendFallback = data;
         } catch (e: any) {
         }
 
@@ -293,16 +349,34 @@ export const mangaApi = {
         } catch (e: any) {
         }
 
-        // Failover to OTruyen if TruyenQQ is blocked on network
-        try {
-          const otResult = await this.getMangaList('otruyen', page, keyword);
-          if (otResult.items.length > 0) {
-            return {
-              items: otResult.items.map(i => ({ ...i, source: 'truyenqq' as MangaSource })),
-              totalPages: otResult.totalPages
-            };
+        // If direct CORS failed but backend had fallback (otruyen), use it before fresh OTruyen fetch — only if otruuyen still enabled
+        if (backendFallback && isMangaSourceEnabled('otruyen')) {
+          const items: MangaItem[] = backendFallback.items.map((item: any) => ({
+            id: item.slug || item.id,
+            title: item.title,
+            slug: item.slug,
+            coverUrl: getMangaImageUrl(upgradeTruyenqqImageUrl(item.coverUrl || '')),
+            description: item.description,
+            status: item.status,
+            altTitles: item.altTitles,
+            source: 'truyenqq' as MangaSource,
+            chapters: []
+          }));
+          if (items.length > 0) return { items, totalPages: backendFallback.totalPages || 1 };
+        }
+
+        // Failover to OTruyen if TruyenQQ is blocked — respect disabled toggle
+        if (isMangaSourceEnabled('otruyen')) {
+          try {
+            const otResult = await this.getMangaList('otruyen', page, keyword);
+            if (otResult.items.length > 0) {
+              return {
+                items: otResult.items.map(i => ({ ...i, source: 'truyenqq' as MangaSource })),
+                totalPages: otResult.totalPages
+              };
+            }
+          } catch (e: any) {
           }
-        } catch (e: any) {
         }
 
         return { items: [], totalPages: 1 };
@@ -339,16 +413,18 @@ export const mangaApi = {
           console.warn('OTruyen API error, trying CuuTruyen failover:', e);
         }
 
-        // Failover to CuuTruyen
-        try {
-          const ctResult = await this.getMangaList('cuutruyen', page, keyword);
-          if (ctResult.items.length > 0) {
-            return {
-              items: ctResult.items.map(i => ({ ...i, source: 'otruyen' as MangaSource })),
-              totalPages: ctResult.totalPages
-            };
-          }
-        } catch (e) {}
+        // Failover to CuuTruyen — only if enabled
+        if (isMangaSourceEnabled('cuutruyen')) {
+          try {
+            const ctResult = await this.getMangaList('cuutruyen', page, keyword);
+            if (ctResult.items.length > 0) {
+              return {
+                items: ctResult.items.map(i => ({ ...i, source: 'otruyen' as MangaSource })),
+                totalPages: ctResult.totalPages
+              };
+            }
+          } catch (e) {}
+        }
 
         return { items: [], totalPages: 1 };
       } else if (source === 'mangadex') {
@@ -368,7 +444,7 @@ export const mangaApi = {
               const authorRel = rels.find((r: any) => r.type === 'author');
               const coverFileName = coverRel?.attributes?.fileName;
               const coverUrl = coverFileName
-                ? `https://uploads.mangadex.org/covers/${manga.id}/${coverFileName}.256.jpg`
+                ? `https://uploads.mangadex.org/covers/${manga.id}/${coverFileName}.512.jpg`
                 : 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop';
               
               const titleObj = manga.attributes.title || {};
@@ -401,16 +477,18 @@ export const mangaApi = {
           console.warn('MangaDex API network error, trying OTruyen failover:', e);
         }
 
-        // Failover to OTruyen
-        try {
-          const otResult = await this.getMangaList('otruyen', page, keyword);
-          if (otResult.items.length > 0) {
-            return {
-              items: otResult.items.map(i => ({ ...i, source: 'mangadex' as MangaSource })),
-              totalPages: otResult.totalPages
-            };
-          }
-        } catch (e) {}
+        // Failover to OTruyen — only if enabled
+        if (isMangaSourceEnabled('otruyen')) {
+          try {
+            const otResult = await this.getMangaList('otruyen', page, keyword);
+            if (otResult.items.length > 0) {
+              return {
+                items: otResult.items.map(i => ({ ...i, source: 'mangadex' as MangaSource })),
+                totalPages: otResult.totalPages
+              };
+            }
+          } catch (e) {}
+        }
 
         return { items: [], totalPages: 1 };
       } else if (source === 'cuutruyen') {
@@ -435,16 +513,18 @@ export const mangaApi = {
           console.warn('CuuTruyen API error, trying OTruyen failover:', e);
         }
 
-        // Failover to OTruyen
-        try {
-          const otResult = await this.getMangaList('otruyen', page, keyword);
-          if (otResult.items.length > 0) {
-            return {
-              items: otResult.items.map(i => ({ ...i, source: 'cuutruyen' as MangaSource })),
-              totalPages: otResult.totalPages
-            };
-          }
-        } catch (e) {}
+        // Failover to OTruyen — only if enabled
+        if (isMangaSourceEnabled('otruyen')) {
+          try {
+            const otResult = await this.getMangaList('otruyen', page, keyword);
+            if (otResult.items.length > 0) {
+              return {
+                items: otResult.items.map(i => ({ ...i, source: 'cuutruyen' as MangaSource })),
+                totalPages: otResult.totalPages
+              };
+            }
+          } catch (e) {}
+        }
 
         return { items: [], totalPages: 1 };
       }
@@ -455,8 +535,94 @@ export const mangaApi = {
     }
   },
 
+  // 1b. Mixed list - gộp 4 nguồn, ưu tiên MangaDex 70%, loại nguồn bị admin tắt
+  async getMixedMangaList(page = 1, keyword = ''): Promise<{ items: MangaItem[]; totalPages: number }> {
+    const enabledSources = (() => {
+      try {
+        const active = systemApiService.getActiveEndpointsForCategory('manga');
+        if (!active || active.length === 0) return ['mangadex','truyenqq','otruyen','cuutruyen'] as MangaSource[];
+        return active.map(e=>e.id).filter((id):id is MangaSource => ['truyenqq','otruyen','mangadex','cuutruyen'].includes(id));
+      } catch { return ['mangadex','truyenqq','otruyen','cuutruyen'] as MangaSource[]; }
+    })();
+    if (enabledSources.length === 0) return { items: [], totalPages: 1 };
+
+    // Fetch tất cả nguồn song song, mỗi nguồn lấy riêng page
+    const results = await Promise.allSettled(
+      enabledSources.map(src => this.getMangaList(src, page, keyword).catch(()=> ({ items: [] as MangaItem[], totalPages: 1 })))
+    );
+    const perSource: Record<string, MangaItem[]> = {};
+    let maxTotalPages = 1;
+    results.forEach((r, idx) => {
+      if (r.status === 'fulfilled' && r.value?.items) {
+        const src = enabledSources[idx];
+        perSource[src] = r.value.items;
+        if (r.value.totalPages > maxTotalPages) maxTotalPages = r.value.totalPages;
+      }
+    });
+
+    const mangadexItems = perSource['mangadex'] || [];
+    const otherSources = enabledSources.filter(s => s !== 'mangadex');
+    const otherItems: MangaItem[] = [];
+    otherSources.forEach(src => {
+      (perSource[src] || []).forEach(it => otherItems.push(it));
+    });
+
+    // Dedupe theo slug/title chuẩn hoá
+    const seen = new Set<string>();
+    const dedupe = (arr: MangaItem[]) => {
+      const out: MangaItem[] = [];
+      for (const it of arr) {
+        const key = (it.slug || it.id || it.title || '').toLowerCase().trim();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(it);
+      }
+      return out;
+    };
+    const dedupedDex = dedupe(mangadexItems);
+    const dedupedOther = dedupe(otherItems);
+
+    // Mix 70% MangaDex, 30% còn lại xen kẽ
+    const targetTotal = 24;
+    const dexCount = Math.min(dedupedDex.length, Math.round(targetTotal * 0.7));
+    const otherCount = Math.min(dedupedOther.length, targetTotal - dexCount);
+    // Nếu thiếu thì bù
+    const finalDexCount = dedupedDex.length < dexCount ? dedupedDex.length : dexCount;
+    const finalOtherCount = dedupedOther.length < otherCount ? dedupedOther.length : otherCount;
+    // Fill thêm nếu còn slot
+    let extraDex = 0, extraOther = 0;
+    if (finalDexCount + finalOtherCount < targetTotal) {
+      const remain = targetTotal - (finalDexCount + finalOtherCount);
+      const availDex = dedupedDex.length - finalDexCount;
+      const availOther = dedupedOther.length - finalOtherCount;
+      if (availDex > 0 || availOther > 0) {
+        // ưu tiên vẫn 70/30 cho phần còn lại
+        extraDex = Math.min(availDex, Math.round(remain * 0.7));
+        extraOther = Math.min(availOther, remain - extraDex);
+        if (extraDex + extraOther < remain) {
+          extraOther = Math.min(availOther - extraOther, remain - extraDex - extraOther);
+        }
+      }
+    }
+    const pickedDex = dedupedDex.slice(0, finalDexCount + extraDex);
+    const pickedOther = dedupedOther.slice(0, finalOtherCount + extraOther);
+
+    // Xen kẽ: cứ 7 MangaDex thì 3 Other (tỉ lệ 70/30) -> pattern 3-1 lặp
+    const mixed: MangaItem[] = [];
+    let di = 0, oi = 0;
+    while (di < pickedDex.length || oi < pickedOther.length) {
+      for (let k=0; k<3 && di < pickedDex.length; k++) mixed.push(pickedDex[di++]);
+      if (oi < pickedOther.length) mixed.push(pickedOther[oi++]);
+    }
+
+    // Nếu keyword search và All: giữ nguyên thứ tự mix đã dedupe, không cần cắt 24 nữa nếu ít hơn
+    const items = mixed.length > 0 ? mixed : [...dedupedDex, ...dedupedOther].slice(0, targetTotal);
+    return { items: items.slice(0, targetTotal), totalPages: maxTotalPages };
+  },
+
   // 2. Get Manga Detail & Chapters
   async getMangaDetail(source: MangaSource, idOrSlug: string): Promise<MangaItem | null> {
+    if (!isMangaSourceEnabled(source)) return null;
     try {
       // Auto-detect source if ID format unambiguously identifies the platform
       let effectiveSource: MangaSource = source;
@@ -503,23 +669,25 @@ export const mangaApi = {
           console.warn('TruyenQQ detail fetch error:', e);
         }
 
-        // Try OTruyen fallback search if TruyenQQ returned 0 chapters
-        try {
-          const cleanTitle = idOrSlug.replace(/-\d+$/, '').replace(/-/g, ' ');
-          const otResult = await this.getMangaList('otruyen', 1, cleanTitle);
-          if (otResult.items.length > 0) {
-            const matched = otResult.items[0];
-            const otDetail = await this.getMangaDetail('otruyen', matched.id || matched.slug);
-            if (otDetail && otDetail.chapters && otDetail.chapters.length > 0) {
-              return {
-                ...otDetail,
-                id: idOrSlug,
-                slug: idOrSlug,
-                source: 'truyenqq'
-              };
+        // Try OTruyen fallback search if TruyenQQ returned 0 chapters — only if otruuyen enabled
+        if (isMangaSourceEnabled('otruyen')) {
+          try {
+            const cleanTitle = idOrSlug.replace(/-\d+$/, '').replace(/-/g, ' ');
+            const otResult = await this.getMangaList('otruyen', 1, cleanTitle);
+            if (otResult.items.length > 0) {
+              const matched = otResult.items[0];
+              const otDetail = await this.getMangaDetail('otruyen', matched.id || matched.slug);
+              if (otDetail && otDetail.chapters && otDetail.chapters.length > 0) {
+                return {
+                  ...otDetail,
+                  id: idOrSlug,
+                  slug: idOrSlug,
+                  source: 'truyenqq'
+                };
+              }
             }
-          }
-        } catch (e) {}
+          } catch (e) {}
+        }
 
         return {
           id: idOrSlug,
@@ -796,7 +964,8 @@ export function getMangaImageUrl(url: string): string {
 
 export function getProxyImageUrl(url: string): string {
   if (!url) return '';
-  if (url.includes('/api/proxy/image?url=')) return url;
+  // Nếu đã là proxy URL (dù relative hay absolute) thì đảm bảo trả về absolute cho APK
+  if (url.includes('/api/proxy/image?url=')) return getFullApiUrl(url);
   if (!url.startsWith('http')) return url;
-  return `/api/proxy/image?url=${encodeURIComponent(url)}`;
+  return getFullApiUrl(`/api/proxy/image?url=${encodeURIComponent(url)}`);
 }

@@ -12,7 +12,6 @@ html {
   -webkit-text-size-adjust: 100%;
   -moz-text-size-adjust: 100%;
   text-size-adjust: 100%;
-  scroll-behavior: smooth;
   background-color: #070b16;
   min-height: 100%;
   overflow-x: hidden;
@@ -83,6 +82,12 @@ input, select, textarea {
 .scrollbar-none {
   -ms-overflow-style: none;
   scrollbar-width: none;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  transform: translateZ(0);
+  will-change: scroll-position;
+  backface-visibility: hidden;
 }
 .scrollbar-none::-webkit-scrollbar {
   display: none;

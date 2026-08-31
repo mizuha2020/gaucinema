@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { MangaItem } from '../../services/mangaApi';
 import { ChevronLeft, ChevronRight, BookOpen, Sparkles } from 'lucide-react';
+import { MangaSourceBadge } from './MangaSourceBadge';
+import { getProxyImageUrl } from '../../services/mangaApi';
 
 interface MangaGenreBannerProps {
   mangas: MangaItem[];
@@ -119,7 +121,7 @@ export const MangaGenreBanner: React.FC<MangaGenreBannerProps> = ({ mangas, onOp
             <div
               key={`${manga.id}-${idx}`}
               onClick={() => onOpenDetail(manga)}
-              className={`group relative rounded-3xl overflow-hidden cursor-pointer transition-all duration-500 shadow-2xl border border-white/15 bg-black/60 aspect-[16/10] sm:aspect-[4/3] ${slantClass} hover:border-purple-500 hover:shadow-purple-500/30 ${mobileVisibilityClass}`}
+              className={`group relative rounded-3xl overflow-hidden cursor-pointer transition-all duration-500 shadow-2xl border border-white/15 bg-black/60 aspect-[3/4] sm:aspect-[3/4] ${slantClass} hover:border-purple-500 hover:shadow-purple-500/30 ${mobileVisibilityClass}`}
             >
               <img
                 src={manga.coverUrl}
@@ -129,7 +131,7 @@ export const MangaGenreBanner: React.FC<MangaGenreBannerProps> = ({ mangas, onOp
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
                   if (!target.src.includes('/api/proxy/image') && manga.coverUrl && manga.coverUrl.startsWith('http')) {
-                    target.src = `/api/proxy/image?url=${encodeURIComponent(manga.coverUrl)}`;
+                    target.src = getProxyImageUrl(manga.coverUrl);
                   } else {
                     target.src = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop';
                   }
@@ -139,10 +141,13 @@ export const MangaGenreBanner: React.FC<MangaGenreBannerProps> = ({ mangas, onOp
               {/* Gradient Overlay */}
               <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent opacity-90 group-hover:opacity-80 transition-opacity" />
 
-              {/* Top Badge */}
-              <div className="absolute top-3 left-3 flex items-center space-x-1.5 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/10">
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-                <span className="text-[10px] font-bold text-white uppercase">{currentGenre.name} #{idx + 1}</span>
+              {/* Top Badges */}
+              <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2">
+                <div className="flex items-center space-x-1.5 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-xl border border-white/10">
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                  <span className="text-[10px] font-bold text-white uppercase">{currentGenre.name} #{idx + 1}</span>
+                </div>
+                <MangaSourceBadge source={manga.source} size="xs" />
               </div>
 
               {/* Content info at bottom */}
@@ -151,7 +156,7 @@ export const MangaGenreBanner: React.FC<MangaGenreBannerProps> = ({ mangas, onOp
                   {manga.title}
                 </h3>
                 <p className="text-[11px] text-gray-300 font-medium mt-0.5 line-clamp-1">
-                  Cập nhật chương mới • <span className="text-purple-400 uppercase">{manga.source}</span>
+                  Cập nhật chương mới
                 </p>
               </div>
 

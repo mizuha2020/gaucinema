@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback, useEffect } from 'react';
+import React, { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { Movie } from '../types';
 import { MovieCard } from './MovieCard';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
@@ -32,10 +32,12 @@ export const MovieRow: React.FC<MovieRowProps> = ({
   subtitle,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const setWidthRef = useRef(0);
+  const isScrollingRef = useRef(false);
   const [showLeftArrow, setShowLeftArrow] = useState(false);
   const [showRightArrow, setShowRightArrow] = useState(true);
   const isTv = useTvMode();
-  
+
   const [itemWidth, setItemWidth] = useState(isTop10 ? 224 : 208);
   const [gap, setGap] = useState(24);
 
@@ -44,14 +46,14 @@ export const MovieRow: React.FC<MovieRowProps> = ({
       const isMobile = window.innerWidth < 640;
       const isTablet = window.innerWidth >= 640 && window.innerWidth < 768;
       const isTvScreen = window.innerWidth >= 1920 || document.documentElement.classList.contains('tv-mode');
-      
+
       if (isTvScreen) {
         setGap(28);
         setItemWidth(isTop10 ? 280 : 260);
         return;
       }
       setGap(isMobile ? 16 : 24);
-      
+
       if (isTop10) {
         setItemWidth(isMobile ? 176 : 224);
       } else {
@@ -65,20 +67,89 @@ export const MovieRow: React.FC<MovieRowProps> = ({
     return () => window.removeEventListener('resize', updateDimensions);
   }, [isTop10]);
 
-  // Use a sensible default height for the row container (TV larger)
   const rowHeightClass = isTv ? (isTop10 ? 'h-[380px]' : 'h-[400px]') : (isTop10 ? 'h-[300px] sm:h-[360px]' : 'h-[250px] sm:h-[330px] md:h-[360px]');
 
-  useEffect(() => {
-    if (containerRef.current) {
-      setShowRightArrow(containerRef.current.scrollWidth > containerRef.current.clientWidth);
-    }
-  }, [movies]);
+  const tripleMovies = useMemo(() => [...movies, ...movies, ...movies], [movies]);
 
-  const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const el = e.currentTarget;
-    setShowLeftArrow(el.scrollLeft > 20);
-    setShowRightArrow(el.scrollLeft < el.scrollWidth - el.clientWidth - 20);
-  };
+  // Measure one set width & scroll to middle (instant)
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !movies.length) return;
+    const firstSet = movies.length;
+    const children = Array.from(el.children) as HTMLElement[];
+    if (children.length < firstSet) return;
+
+    let totalWidth = 0;
+    for (let i = 0; i < firstSet; i++) {
+      totalWidth += children[i].offsetWidth;
+      if (i < firstSet - 1) totalWidth += gap;
+    }
+    setWidthRef.current = totalWidth;
+    el.scrollLeft = totalWidth;
+  }, [movies, gap]);
+
+  // Scroll handler: throttled via rAF + avoid React re-render storm
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    let ticking = false;
+    let scrollTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastLeft = false;
+    let lastRight = true;
+
+    const update = () => {
+      ticking = false;
+      const setWidth = setWidthRef.current;
+      if (setWidth <= 0) return;
+      const { scrollLeft, scrollWidth, clientWidth } = el;
+      const third = scrollWidth / 3;
+      let nextLeft: boolean;
+      let nextRight: boolean;
+      const inMiddleZone = scrollLeft > third * 0.1 && scrollLeft < third * 2.9;
+      if (inMiddleZone) {
+        nextLeft = scrollLeft > third + 20;
+        nextRight = scrollLeft < third * 2 - clientWidth - 20;
+      } else {
+        nextLeft = scrollLeft > 20;
+        nextRight = scrollLeft < scrollWidth - clientWidth - 20;
+      }
+      if (nextLeft !== lastLeft) { lastLeft = nextLeft; setShowLeftArrow(nextLeft); }
+      if (nextRight !== lastRight) { lastRight = nextRight; setShowRightArrow(nextRight); }
+    };
+
+    const onScroll = () => {
+      if (!ticking) {
+        ticking = true;
+        requestAnimationFrame(update);
+      }
+      // Infinity teleport: debounce until scroll idle ~90ms, skip while smooth animating
+      if (isScrollingRef.current) return;
+      if (scrollTimer) clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(() => {
+        if (isScrollingRef.current) return;
+        const setWidth = setWidthRef.current;
+        if (setWidth <= 0) return;
+        const { scrollLeft, scrollWidth } = el;
+        const third = scrollWidth / 3;
+        const pos = el.scrollLeft;
+        if (pos < third * 0.2) {
+          // instant teleport without smooth
+          try { (el as any).scrollTo({ left: pos + setWidth, behavior: 'instant' }); } catch { el.scrollLeft = pos + setWidth; }
+        } else if (pos > third * 2.8) {
+          try { (el as any).scrollTo({ left: pos - setWidth, behavior: 'instant' }); } catch { el.scrollLeft = pos - setWidth; }
+        }
+      }, 90);
+    };
+
+    el.addEventListener('scroll', onScroll, { passive: true });
+    // initial arrow state
+    requestAnimationFrame(update);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      if (scrollTimer) clearTimeout(scrollTimer);
+    };
+  }, []);
 
   const handlePlay = useCallback((movie: Movie) => {
     if (onPlay) onPlay(movie);
@@ -97,20 +168,13 @@ export const MovieRow: React.FC<MovieRowProps> = ({
   if (!movies || movies.length === 0) return null;
 
   const handleScrollBtn = (direction: 'left' | 'right') => {
-    if (containerRef.current) {
-      const { scrollLeft, clientWidth, scrollWidth } = containerRef.current;
-      const scrollAmount = clientWidth * 0.75;
-      
-      if (direction === 'right' && scrollLeft + clientWidth >= scrollWidth - 10) {
-        containerRef.current.scrollTo({ left: 0, behavior: 'smooth' });
-      } else {
-        const newScrollLeft = direction === 'left' ? scrollLeft - scrollAmount : scrollLeft + scrollAmount;
-        containerRef.current.scrollTo({
-          left: newScrollLeft,
-          behavior: 'smooth',
-        });
-      }
-    }
+    const el = containerRef.current;
+    if (!el || isScrollingRef.current) return;
+    const scrollAmount = Math.round(el.clientWidth * 0.82);
+    isScrollingRef.current = true;
+    // Native compositor smooth = 60fps, no JS rAF layout thrash
+    el.scrollBy({ left: direction === 'left' ? -scrollAmount : scrollAmount, behavior: 'smooth' });
+    window.setTimeout(() => { isScrollingRef.current = false; }, 420);
   };
 
   return (
@@ -133,25 +197,24 @@ export const MovieRow: React.FC<MovieRowProps> = ({
 
       {/* Row Carousel Area */}
       <div className="relative -mx-2 px-2">
-        {/* Left Scroll Arrow - always visible on TV */}
+        {/* Left Scroll Arrow */}
         {(showLeftArrow || isTv) && (
           <button
             onClick={() => handleScrollBtn('left')}
-            className={`absolute -left-3 sm:-left-5 top-0 bottom-0 z-30 w-10 sm:w-12 ${isTv ? 'w-14' : ''} bg-[#0b1329]/80 hover:bg-blue-600 text-white flex items-center justify-center transition-all ${isTv ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100'} backdrop-blur-md rounded-r-xl border border-slate-700/80 shadow-lg cursor-pointer focus:opacity-100 focus:ring-4 focus:ring-blue-500`}
+            className={`absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-7 sm:w-8 ${isTv ? 'w-10' : ''} h-14 sm:h-16 ${isTv ? 'h-20' : ''} bg-[#0b1329]/80 hover:bg-blue-600 text-white flex items-center justify-center transition-all ${isTv ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100'} backdrop-blur-md rounded-full border border-slate-700/80 shadow-lg cursor-pointer focus:opacity-100 focus:ring-2 focus:ring-blue-500`}
             aria-label="Cuộn sang trái"
           >
-            <ChevronLeft className={`${isTv ? 'w-9 h-9' : 'w-7 h-7'} hover:scale-125 transition-transform`} />
+            <ChevronLeft className={`${isTv ? 'w-5 h-5' : 'w-4 h-4'} hover:scale-125 transition-transform`} />
           </button>
         )}
 
-        {/* Native Horizontal Scroll Container */}
+        {/* Infinity Scroll Container */}
         <div
           ref={containerRef}
-          onScroll={onScroll}
-          className={`flex w-full overflow-x-auto scrollbar-none scroll-smooth ${rowHeightClass} py-4`}
+          className={`flex w-full overflow-x-auto scrollbar-none ${rowHeightClass} py-4`}
           style={{ WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none', gap: `${gap}px` }}
         >
-          {movies.map((movie, index) => (
+          {tripleMovies.map((movie, index) => (
             <div
               key={`${movie.slug || movie._id || 'movie'}-${index}`}
               className="flex-shrink-0 h-full"
@@ -159,7 +222,7 @@ export const MovieRow: React.FC<MovieRowProps> = ({
             >
               <MovieCard
                 movie={movie}
-                rank={isTop10 ? index + 1 : undefined}
+                rank={isTop10 ? (index % movies.length) + 1 : undefined}
                 isTop10={isTop10}
                 onPlay={handlePlay}
                 onOpenDetail={handleOpenDetail}
@@ -170,18 +233,17 @@ export const MovieRow: React.FC<MovieRowProps> = ({
           ))}
         </div>
 
-        {/* Right Scroll Arrow - always visible on TV */}
+        {/* Right Scroll Arrow */}
         {(showRightArrow || isTv) && (
           <button
             onClick={() => handleScrollBtn('right')}
-            className={`absolute -right-3 sm:-right-5 top-0 bottom-0 z-30 w-10 sm:w-12 ${isTv ? 'w-14' : ''} bg-[#0b1329]/80 hover:bg-blue-600 text-white flex items-center justify-center transition-all ${isTv ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100'} backdrop-blur-md rounded-l-xl border border-slate-700/80 shadow-lg cursor-pointer focus:opacity-100 focus:ring-4 focus:ring-blue-500`}
+            className={`absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-7 sm:w-8 ${isTv ? 'w-10' : ''} h-14 sm:h-16 ${isTv ? 'h-20' : ''} bg-[#0b1329]/80 hover:bg-blue-600 text-white flex items-center justify-center transition-all ${isTv ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100'} backdrop-blur-md rounded-full border border-slate-700/80 shadow-lg cursor-pointer focus:opacity-100 focus:ring-2 focus:ring-blue-500`}
             aria-label="Cuộn sang phải"
           >
-            <ChevronRight className={`${isTv ? 'w-9 h-9' : 'w-7 h-7'} hover:scale-125 transition-transform`} />
+            <ChevronRight className={`${isTv ? 'w-5 h-5' : 'w-4 h-4'} hover:scale-125 transition-transform`} />
           </button>
         )}
       </div>
     </div>
   );
 };
-

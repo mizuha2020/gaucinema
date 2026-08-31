@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Account, UserProfile } from '../types';
 import { MangaView } from '../components/manga/MangaView';
-import { MangaNavbar } from '../components/manga/MangaNavbar';
 
 interface MangaAppWrapperProps {
   currentAccount: Account | null;
@@ -25,17 +24,18 @@ export const MangaAppWrapper: React.FC<MangaAppWrapperProps> = ({
   onLogout
 }) => {
   const [resetKey, setResetKey] = useState(0);
-
   const handleLogoClick = () => {
+    try { localStorage.setItem('gau_manga_active_view', 'home'); } catch {}
     setResetKey(prev => prev + 1);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
     <div className="min-h-screen bg-[#0b0c16] text-white font-sans selection:bg-purple-600 selection:text-white">
-      <MangaNavbar
-        currentAccount={currentAccount}
+      <MangaView
+        key={resetKey}
         activeProfile={activeProfile}
+        currentAccount={currentAccount}
         profiles={profiles}
         onSelectProfile={onSelectProfile}
         onSwitchApp={onSwitchApp}
@@ -44,10 +44,6 @@ export const MangaAppWrapper: React.FC<MangaAppWrapperProps> = ({
         onLogout={onLogout}
         onLogoClick={handleLogoClick}
       />
-      
-      <main className="relative min-h-[calc(100vh-160px)] pb-24 md:pb-16 pt-4">
-        <MangaView key={resetKey} activeProfile={activeProfile} currentAccount={currentAccount} />
-      </main>
     </div>
   );
 };

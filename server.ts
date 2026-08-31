@@ -865,7 +865,8 @@ setTimeout(seedInitialCastIndex, 2000);
         clearTimeout(timer);
         if (res.ok) {
           const html = await res.text();
-          if (html && html.length > 500) {
+          // Validate real TruyenQQ page, not Cloudflare challenge / block page
+          if (html && html.length > 500 && (html.includes('truyen-tranh') || html.includes('book_avatar') || html.includes('ItemList'))) {
             return { html, base };
           }
         }
@@ -888,6 +889,34 @@ setTimeout(seedInitialCastIndex, 2000);
     }
 
     const items: any[] = [];
+
+    // 1. Prefer JSON-LD ItemList (stable, not affected by theme HTML changes)
+    try {
+      const jsonLdMatch = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?"@type"\s*:\s*"ItemList"[\s\S]*?)<\/script>/i);
+      if (jsonLdMatch) {
+        const json = JSON.parse(jsonLdMatch[1]);
+        const elements = json.itemListElement || [];
+        for (const el of elements) {
+          const url: string = el.url || '';
+          const slugMatch = url.match(/\/truyen-tranh\/([^\/\?#]+)/);
+          if (slugMatch && el.name) {
+            const slug = slugMatch[1].replace(/^\/|\/$/g, '');
+            items.push({
+              id: slug,
+              slug,
+              title: el.name.trim(),
+              coverUrl: el.image || '',
+              source: 'truyenqq',
+              chapters: [],
+              status: 'Đang cập nhật',
+              altTitles: [],
+            });
+          }
+        }
+        if (items.length > 0) return { items, totalPages: maxPage };
+      }
+    } catch {}
+
     const liBlocks = html.match(/<li[^>]*>[\s\S]*?(?:book_avatar|truyen-tranh)[\s\S]*?<\/li>/gi) || html.match(/<li[^>]*>[\s\S]*?<\/li>/gi) || [];
     for (const block of liBlocks) {
       const slugMatch = block.match(/href="[^"]*\/truyen-tranh\/([^"]+)"/i);
@@ -1094,7 +1123,7 @@ setTimeout(seedInitialCastIndex, 2000);
         }));
         const totalItems = otData.data?.params?.pagination?.totalItems || rawItems.length * 16;
         const totalPages = Math.max(1, Math.ceil(totalItems / 24));
-        const payload = { items, totalPages };
+        const payload = { items, totalPages, isFallback: true, fallbackSource: "otruyen" };
         proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
         return res.json(payload);
       }
@@ -1143,7 +1172,7 @@ setTimeout(seedInitialCastIndex, 2000);
           source: "truyenqq",
           chapters: []
         }));
-        const payload = { items, totalPages: 1 };
+        const payload = { items, totalPages: 1, isFallback: true, fallbackSource: "otruyen" };
         proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
         return res.json(payload);
       }
@@ -3334,7 +3363,7 @@ setTimeout(seedInitialCastIndex, 2000);
   
   if (!isProd) {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: "spa",
     });
     app.use(vite.middlewares);

@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { Movie, MovieListPagination, ApiSource } from '../types';
 import { COUNTRIES, GENRES, YEARS, movieApi, API_SOURCES } from '../services/movieApi';
+import { systemApiService } from '../services/systemApiService';
 import { MovieCard } from './MovieCard';
 import { Filter, Search, ChevronLeft, ChevronRight, Sparkles, RefreshCw, Database, Server } from 'lucide-react';
 
@@ -42,9 +43,60 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
   const [pagination, setPagination] = useState<MovieListPagination | undefined>();
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [enabledVersion, setEnabledVersion] = useState(0);
 
   const handlePlay = onPlay || onPlayMovie || (() => {});
   const handleOpenDetail = onOpenDetail || onSelectMovie || (() => {});
+
+  const isSourceEnabled = (id: ApiSource): boolean => {
+    if (id === 'all') return true;
+    try {
+      const active = systemApiService.getActiveEndpointsForCategory('movie');
+      if (!active || active.length === 0) return true;
+      return active.some((e) => e.id === id);
+    } catch {
+      return true;
+    }
+  };
+
+  const visibleSources = useMemo(() => {
+    // depend on enabledVersion to recompute when system apis change
+    void enabledVersion;
+    return API_SOURCES.filter((s) => isSourceEnabled(s.id));
+  }, [enabledVersion]);
+
+  // Subscribe to system api changes + init fallback for disabled source
+  useEffect(() => {
+    const syncEnabled = () => setEnabledVersion((v) => v + 1);
+    // If current selectedSource is disabled (e.g. ophim disabled but still selected), fallback to 'all'
+    if (!isSourceEnabled(selectedSource)) {
+      setSelectedSource('all');
+      movieApi.setSource('all');
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('qtb_system_apis_changed', syncEnabled);
+      // also listen for direct storage changes
+      const onStorage = (e: StorageEvent) => {
+        if (e.key === 'qtb_system_apis_cache_v3') syncEnabled();
+      };
+      window.addEventListener('storage', onStorage);
+      return () => {
+        window.removeEventListener('qtb_system_apis_changed', syncEnabled);
+        window.removeEventListener('storage', onStorage);
+      };
+    }
+    return () => {};
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Re-validate selectedSource whenever enabled list changes
+  useEffect(() => {
+    if (!isSourceEnabled(selectedSource)) {
+      setSelectedSource('all');
+      movieApi.setSource('all');
+      setCurrentPage(1);
+    }
+  }, [enabledVersion, selectedSource]);
 
   const checkIsInMyList = (slug: string) =>
     typeof isInMyList === 'function' ? isInMyList(slug) : Boolean(isInMyList);
@@ -78,6 +130,53 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
         let res;
         if (keyword.trim()) {
           res = await movieApi.search(keyword.trim(), currentPage, 24, selectedSource);
+          // Khi đang tìm kiếm, vẫn tôn trọng bộ lọc thể loại / quốc gia / định dạng bằng cách lọc client-side
+          // vì API search không hỗ trợ filter kết hợp
+          if (res && Array.isArray(res.items) && (selectedGenre || selectedCountry || (movieType && movieType !== 'all'))) {
+            const before = res.items;
+            let filtered = before;
+            if (selectedGenre) {
+              filtered = filtered.filter((m: any) => {
+                const cats = (m.category || m.categories || []) as any[];
+                return cats.some((c: any) => {
+                  const slug = typeof c === 'string' ? c : c.slug || c.id || '';
+                  const name = typeof c === 'string' ? c : c.name || '';
+                  return slug === selectedGenre || name === selectedGenre;
+                });
+              });
+            }
+            if (selectedCountry) {
+              filtered = filtered.filter((m: any) => {
+                const countries = (m.country || m.countries || []) as any[];
+                return countries.some((c: any) => {
+                  const slug = typeof c === 'string' ? c : c.slug || c.id || '';
+                  const name = typeof c === 'string' ? c : c.name || '';
+                  return slug === selectedCountry || name === selectedCountry;
+                });
+              });
+            }
+            if (movieType && movieType !== 'all') {
+              filtered = filtered.filter((m: any) => {
+                const t = (m.type || '').toString().toLowerCase();
+                if (movieType === 'series') return t === 'series' || t === 'phim bo' || t.includes('series');
+                if (movieType === 'single') return t === 'single' || t === 'phim le' || t.includes('single');
+                if (movieType === 'anime') return t === 'hoat-hinh' || t === 'anime' || (Array.isArray(m.category) && m.category.some((c: any) => (c.slug || c.name || '').toLowerCase().includes('hoạt hình') || (c.slug || '').toLowerCase().includes('anime')));
+                if (movieType === 'tv-shows') return t === 'tvshows' || t === 'tv-shows' || t.includes('tv');
+                return true;
+              });
+            }
+            const total = filtered.length;
+            res = {
+              ...res,
+              items: filtered,
+              pagination: {
+                totalItems: total,
+                totalItemsPerPage: 24,
+                currentPage: 1,
+                totalPages: Math.max(1, Math.ceil(total / 24)),
+              },
+            };
+          }
         } else if (selectedGenre) {
           res = await movieApi.getByGenre(selectedGenre, currentPage, 24, selectedSource);
         } else if (selectedCountry) {
@@ -170,7 +269,7 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
           <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">Chọn Nguồn Phim Vietsub:</span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-          {API_SOURCES.map((source) => {
+          {visibleSources.map((source) => {
             const isSelected = selectedSource === source.id;
             return (
               <button
