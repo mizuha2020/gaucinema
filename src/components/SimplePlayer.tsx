@@ -28,6 +28,7 @@ import {
 import { EpisodeServer, Movie, MovieEpisode, Account, UserProfile } from '../types';
 import { presenceService } from '../services/presenceService';
 import { watchHistoryService } from '../services/watchHistoryService';
+import { offlineMovieService } from '../services/offlineMovieService';
 import { enterNativePip, setNativeVideoPlaying, checkNativePipSupported } from '../utils/nativeVideoPlayer';
 import { Capacitor } from '@capacitor/core';
 import { useTvMode } from '../hooks/useTvMode';
@@ -108,6 +109,8 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
   const [isEpisodesOpen, setIsEpisodesOpen] = useState(false);
   const [isPip, setIsPip] = useState(false);
   const [pipSupported, setPipSupported] = useState(true);
+  const [localVideoUrl, setLocalVideoUrl] = useState<string | null>(null);
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
 
   // Thumbnail preview state (hover/drag/keyboard)
   const previewVideoRef = useRef<HTMLVideoElement>(null);
@@ -440,6 +443,43 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     }
   }, [useEmbed]);
 
+  // Offline file check (Filesystem) — only mobile
+  useEffect(() => {
+    let cancelled = false;
+    const checkLocal = async () => {
+      if (!Capacitor.isNativePlatform() || !currentAccount || !activeProfile) {
+        if (!cancelled) { setLocalVideoUrl(null); setIsOfflineMode(false); }
+        return;
+      }
+      const offline = !navigator.onLine;
+      setIsOfflineMode(offline);
+      try {
+        const uri = await offlineMovieService.getEpisodeLocalUri(
+          currentAccount.id || currentAccount.username || 'user',
+          activeProfile.id,
+          movie.slug,
+          currentEpisode.slug
+        );
+        if (!cancelled) setLocalVideoUrl(uri);
+        if (uri) setIsOfflineMode(true); // has local file, treat as offline capable
+        if (offline && !uri) {
+          setErrorMsg('Bạn đang offline và tập này chưa được tải về. Vui lòng tải trước khi xem offline.');
+        }
+      } catch {
+        if (!cancelled) setLocalVideoUrl(null);
+      }
+    };
+    checkLocal();
+    const onOnline = () => setIsOfflineMode(!navigator.onLine);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOnline);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOnline);
+    };
+  }, [movie.slug, currentEpisode.slug, currentAccount, activeProfile]);
+
   // Check PiP support on mount and default to true on Web/PWA
   useEffect(() => {
     if (Capacitor.isNativePlatform()) {
@@ -646,10 +686,59 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     };
   }, []);
 
-  // Khởi tạo HLS (giống như cũ)
+  // Khởi tạo HLS — ưu tiên file offline local (Filesystem) nếu có
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !currentEpisode.link_m3u8 || useEmbed) return;
+    // If offline file exists, allow playback even without remote link
+    const hasLocal = !!localVideoUrl;
+    if (!video || (!currentEpisode.link_m3u8 && !hasLocal) || useEmbed) return;
+
+    // If offline mode and has local, use local file
+    if (hasLocal && localVideoUrl) {
+      setIsLoading(true);
+      setErrorMsg(null);
+      setQualityLevels([]);
+      setCurrentQuality(-1);
+      hasSkippedAdRef.current = false;
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      const isLocalHls = localVideoUrl.includes('.m3u8');
+      if (isLocalHls && Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          backBufferLength: 30,
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
+          maxBufferSize: 30 * 1000 * 1000,
+          manifestLoadingTimeOut: 10000,
+          levelLoadingTimeOut: 10000,
+          fragLoadingTimeOut: 20000,
+          startLevel: -1,
+          capLevelToPlayerSize: true,
+        });
+        hlsRef.current = hls;
+        hls.loadSource(localVideoUrl);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          setIsLoading(false);
+          if (initialTime > 5) video.currentTime = initialTime;
+          video.play().catch(() => {});
+        });
+        hls.on(Hls.Events.ERROR, (_, data) => {
+          if (data.fatal) setErrorMsg('Lỗi phát file offline. Thử tải lại.');
+        });
+      } else {
+        video.src = localVideoUrl;
+        video.load();
+        const onLoaded = () => {
+          setIsLoading(false);
+          if (initialTime > 5) video.currentTime = initialTime;
+          video.play().catch(() => {});
+        };
+        video.addEventListener('loadedmetadata', onLoaded, { once: true });
+        video.addEventListener('error', () => setErrorMsg('Không thể phát file offline'), { once: true });
+      }
+      return;
+    }
 
     setIsLoading(true);
     setErrorMsg(null);
@@ -758,7 +847,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
         hlsRef.current = null;
       }
     };
-  }, [currentEpisode.link_m3u8, useEmbed, allServers, currentServer, initialTime, onSelectEpisode]);
+  }, [currentEpisode.link_m3u8, useEmbed, allServers, currentServer, initialTime, onSelectEpisode, localVideoUrl]);
 
   // Preview video HLS setup (thumbnail)
   useEffect(() => {
@@ -1237,13 +1326,16 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
             {/* Top Bar Header - TV overscan safe */}
             <div className="tv-player-top flex items-center justify-between gap-3 pointer-events-auto shrink-0">
               <div className="flex flex-col min-w-0 pr-2">
-                <h2 className="text-white text-base sm:text-lg font-bold drop-shadow-md truncate">
-                  {movie.name}
+                <h2 className="text-white text-base sm:text-lg font-bold drop-shadow-md truncate flex items-center gap-2">
+                  <span>{movie.name}</span>
+                  {localVideoUrl && (
+                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-emerald-600 text-white border border-emerald-500">OFFLINE</span>
+                  )}
                 </h2>
                 <span className="text-gray-300 text-xs sm:text-sm font-medium drop-shadow-md truncate">
                   {currentEpisode.name.startsWith('Tập')
                     ? currentEpisode.name
-                    : `Tập ${currentEpisode.name}`}
+                    : `Tập ${currentEpisode.name}`} {localVideoUrl && '• Đã tải'}
                 </span>
               </div>
               <button

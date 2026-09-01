@@ -25,6 +25,9 @@ import {
   Eye,
   Sliders,
   Sparkles,
+  Music,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import {
   MangaReaderSettings,
@@ -32,6 +35,15 @@ import {
   MangaReaderSettingsModal,
   KeyboardShortcutsModal,
 } from './MangaReaderSettingsModal';
+
+export const MANGA_READER_MUSIC_TRACKS = [
+  { id: 'off', label: 'Tắt nhạc', subLabel: 'Không phát nhạc nền', src: '', icon: '🔇' },
+  { id: 'du-duong', label: 'Nhạc du dương', subLabel: 'Nhạc nhẹ thư giãn khi đọc (7.5 phút, loop)', src: '/sounds/music_du_duong.mp3', icon: '🎵' },
+  { id: 'mua', label: 'Tiếng mưa', subLabel: 'Tiếng mưa rơi êm dịu (18.6 phút, loop)', src: '/sounds/music_mua.mp3', icon: '🌧️' },
+  { id: 'lofi', label: 'Nhạc Lofi', subLabel: 'Lofi chill thư giãn (19 phút, loop)', src: '/sounds/music_lofi.mp3', icon: '🎧' },
+] as const;
+
+export type MangaMusicTrackId = (typeof MANGA_READER_MUSIC_TRACKS)[number]['id'];
 
 interface MangaReaderModalProps {
   manga: MangaItem;
@@ -67,6 +79,32 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [restoredToastMsg, setRestoredToastMsg] = useState<string | null>(null);
   const [sourceWarning, setSourceWarning] = useState<string | null>(null);
+  const [showMusicSettings, setShowMusicSettings] = useState<boolean>(false);
+  const [musicTrack, setMusicTrack] = useState<MangaMusicTrackId>(() => {
+    try {
+      const saved = localStorage.getItem('manga_reader_music_track') as MangaMusicTrackId | null;
+      if (saved && MANGA_READER_MUSIC_TRACKS.some((t) => t.id === saved)) return saved;
+    } catch {}
+    return 'off';
+  });
+  const [musicVolume, setMusicVolume] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem('manga_reader_music_volume');
+      if (v !== null) {
+        const n = parseFloat(v);
+        if (!isNaN(n) && n >= 0 && n <= 1) return n;
+      }
+    } catch {}
+    return 0.5;
+  });
+  const [isMusicPlaying, setIsMusicPlaying] = useState<boolean>(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Sync chapter khi parent đổi chap (do key giờ chỉ theo manga, giữ nhạc liền mạch)
+  useEffect(() => {
+    setCurrentChapter(initialChapter);
+    setCurrentPageIndex(initialPageIndex || 0);
+  }, [initialChapter.id, initialPageIndex]);
 
   // Monitor if active source gets disabled by admin while reading
   useEffect(() => {
@@ -126,6 +164,94 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
     } catch (e) {}
   };
 
+  // Background music: persist track & volume, handle audio element
+  const handleChangeMusicTrack = (trackId: MangaMusicTrackId) => {
+    setMusicTrack(trackId);
+    try { localStorage.setItem('manga_reader_music_track', trackId); } catch {}
+  };
+  const handleChangeMusicVolume = (vol: number) => {
+    const clamped = Math.max(0, Math.min(1, vol));
+    setMusicVolume(clamped);
+    try { localStorage.setItem('manga_reader_music_volume', String(clamped)); } catch {}
+    if (audioRef.current) audioRef.current.volume = clamped;
+  };
+
+  // Init / update audio element when track/volume changes
+  useEffect(() => {
+    const track = MANGA_READER_MUSIC_TRACKS.find((t) => t.id === musicTrack);
+    if (!track || track.id === 'off' || !track.src) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+      }
+      setIsMusicPlaying(false);
+      return;
+    }
+    if (!audioRef.current) {
+      audioRef.current = new Audio();
+      audioRef.current.loop = true;
+      audioRef.current.preload = 'auto';
+    }
+    const audio = audioRef.current;
+    audio.loop = true;
+    audio.volume = musicVolume;
+    if (audio.src !== window.location.origin + track.src && audio.src !== track.src) {
+      audio.src = track.src;
+      audio.load();
+    }
+    // Auto-play when track selected (requires user interaction; will be triggered by button click)
+    const playPromise = audio.play();
+    if (playPromise && typeof (playPromise as Promise<void>).then === 'function') {
+      (playPromise as Promise<void>)
+        .then(() => setIsMusicPlaying(true))
+        .catch(() => setIsMusicPlaying(false));
+    } else {
+      setIsMusicPlaying(true);
+    }
+
+    const onPlay = () => setIsMusicPlaying(true);
+    const onPause = () => setIsMusicPlaying(false);
+    const onError = () => setIsMusicPlaying(false);
+    audio.addEventListener('play', onPlay);
+    audio.addEventListener('pause', onPause);
+    audio.addEventListener('error', onError);
+    return () => {
+      audio.removeEventListener('play', onPlay);
+      audio.removeEventListener('pause', onPause);
+      audio.removeEventListener('error', onError);
+    };
+  }, [musicTrack, musicVolume]);
+
+  // Sync volume to audio element
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = musicVolume;
+  }, [musicVolume]);
+
+  // Cleanup audio on modal unmount
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+        audioRef.current = null;
+      }
+    };
+  }, []);
+
+  const toggleMusicPlayback = () => {
+    if (!audioRef.current) return;
+    if (musicTrack === 'off') {
+      setShowMusicSettings(true);
+      return;
+    }
+    if (audioRef.current.paused) {
+      audioRef.current.play().then(() => setIsMusicPlaying(true)).catch(() => setIsMusicPlaying(false));
+    } else {
+      audioRef.current.pause();
+      setIsMusicPlaying(false);
+    }
+  };
+
   // Zoom & Pan state
   const [scale, setScale] = useState<number>(1);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -155,7 +281,7 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
     setShowControls(true);
     if (controlsTimer.current) clearTimeout(controlsTimer.current);
     controlsTimer.current = setTimeout(() => {
-      if (!showChapterDrawer && !showSettingsModal && !showShortcutsModal) {
+      if (!showChapterDrawer && !showSettingsModal && !showShortcutsModal && !showMusicSettings) {
         setShowControls(false);
       }
     }, 4500);
@@ -528,6 +654,7 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
 
       if (e.key === 'Escape') {
         if (showShortcutsModal) setShowShortcutsModal(false);
+        else if (showMusicSettings) setShowMusicSettings(false);
         else if (showSettingsModal) setShowSettingsModal(false);
         else if (showChapterDrawer) setShowChapterDrawer(false);
         else onClose();
@@ -596,6 +723,7 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
     showShortcutsModal,
     showSettingsModal,
     showChapterDrawer,
+    showMusicSettings,
     onClose,
   ]);
 
@@ -708,7 +836,7 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
       }
       lastTapTime.current = now;
 
-      if (!showChapterDrawer && !showSettingsModal && !showShortcutsModal) {
+      if (!showChapterDrawer && !showSettingsModal && !showShortcutsModal && !showMusicSettings) {
         setShowControls((prev) => !prev);
       }
     }
@@ -716,7 +844,7 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
 
   const handleContainerClick = () => {
     if (isTouchInteraction.current) return;
-    if (!showChapterDrawer && !showSettingsModal && !showShortcutsModal) {
+    if (!showChapterDrawer && !showSettingsModal && !showShortcutsModal && !showMusicSettings) {
       setShowControls((prev) => !prev);
     }
   };
@@ -847,6 +975,21 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
                 <span className="hidden xs:inline sm:inline">Từng trang</span>
               </>
             )}
+          </button>
+
+          {/* Music Background Settings Button */}
+          <button
+            onClick={() => setShowMusicSettings(true)}
+            className={`p-2 sm:px-3 sm:py-2 rounded-xl border text-xs font-semibold transition flex items-center space-x-1.5 relative ${
+              musicTrack !== 'off'
+                ? 'bg-emerald-600/25 border-emerald-500/40 text-emerald-300 hover:bg-emerald-600/35'
+                : 'bg-white/10 border-white/10 hover:bg-white/20 text-gray-200'
+            }`}
+            title="Nhạc nền khi đọc sách"
+          >
+            <Music className={`w-4 h-4 ${musicTrack !== 'off' ? 'text-emerald-400' : 'text-emerald-400/70'}`} />
+            <span className="hidden sm:inline">Nhạc</span>
+            {musicTrack !== 'off' && isMusicPlaying && <span className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-400 rounded-full animate-pulse border border-emerald-900" />}
           </button>
 
           {/* Settings & Display Settings Button */}
@@ -1225,6 +1368,127 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
       {/* Keyboard Shortcuts Modal */}
       {showShortcutsModal && (
         <KeyboardShortcutsModal onClose={() => setShowShortcutsModal(false)} />
+      )}
+
+      {/* Background Music Settings Popup */}
+      {showMusicSettings && (
+        <div
+          className="fixed inset-0 z-[100000] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+          onClick={() => setShowMusicSettings(false)}
+        >
+          <div
+            className="w-full max-w-md bg-[#18181b] border border-white/15 rounded-3xl p-5 sm:p-6 shadow-2xl space-y-5 text-white"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 rounded-xl bg-emerald-600/20 text-emerald-400 border border-emerald-500/30">
+                  <Music className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base sm:text-lg">Nhạc nền khi đọc</h3>
+                  <p className="text-xs text-gray-400">Thư giãn cùng âm thanh dịu nhẹ</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowMusicSettings(false)}
+                className="p-2 rounded-xl hover:bg-white/10 text-gray-400 hover:text-white transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Track selection */}
+            <div className="space-y-2.5">
+              <label className="text-xs font-semibold uppercase tracking-wider text-gray-400 flex items-center space-x-2">
+                <Music className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Chọn nhạc nền</span>
+              </label>
+              <div className="grid grid-cols-1 gap-2">
+                {MANGA_READER_MUSIC_TRACKS.map((track) => {
+                  const isSelected = musicTrack === track.id;
+                  return (
+                    <button
+                      key={track.id}
+                      onClick={() => handleChangeMusicTrack(track.id)}
+                      className={`p-3 rounded-2xl border text-left transition flex items-center justify-between ${
+                        isSelected
+                          ? 'bg-emerald-600/20 border-emerald-500 text-white'
+                          : 'bg-white/5 border-white/10 text-gray-300 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3 min-w-0">
+                        <span className="text-lg shrink-0">{track.icon}</span>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold truncate">{track.label}</p>
+                          <p className="text-xs text-gray-400 truncate">{track.subLabel}</p>
+                          {track.id !== 'off' && <p className="text-[11px] text-white/30 truncate mt-0.5">{track.src}</p>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 ml-2">
+                        {track.id !== 'off' && isSelected && isMusicPlaying && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
+                        {isSelected && <span className="w-6 h-6 rounded-full bg-emerald-600 flex items-center justify-center text-white text-xs">✓</span>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-white/30">Bạn có thể thay file nhạc trong thư mục <code className="bg-white/10 px-1 py-0.5 rounded">public/sounds/</code> – 3 file mặc định sẽ được cung cấp sau.</p>
+            </div>
+
+            {/* Volume slider */}
+            <div className="space-y-3 bg-white/5 border border-white/10 rounded-2xl p-4">
+              <div className="flex items-center justify-between text-xs font-semibold">
+                <label className="text-gray-300 flex items-center space-x-2">
+                  {musicVolume === 0 || musicTrack === 'off' ? <VolumeX className="w-4 h-4 text-gray-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
+                  <span>Âm lượng</span>
+                </label>
+                <span className="font-mono text-emerald-400">{Math.round(musicVolume * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={Math.round(musicVolume * 100)}
+                onChange={(e) => handleChangeMusicVolume(Number(e.target.value) / 100)}
+                disabled={musicTrack === 'off'}
+                className="w-full accent-emerald-500 cursor-pointer h-2 bg-white/10 rounded-lg appearance-none disabled:opacity-30 disabled:cursor-not-allowed"
+              />
+              <div className="flex justify-between text-[11px] text-gray-500">
+                <span>Nhỏ</span>
+                <span>Vừa</span>
+                <span>Lớn</span>
+              </div>
+              {musicTrack !== 'off' && (
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    onClick={toggleMusicPlayback}
+                    className="flex-1 py-2 rounded-xl text-xs font-bold transition border bg-emerald-600 hover:bg-emerald-500 border-emerald-500 text-white"
+                  >
+                    {isMusicPlaying ? '⏸ Tạm dừng' : '▶ Phát nhạc'}
+                  </button>
+                  <button
+                    onClick={() => handleChangeMusicVolume(musicVolume === 0 ? 0.5 : 0)}
+                    className="px-3 py-2 rounded-xl text-xs font-medium bg-white/10 hover:bg-white/15 text-gray-200 border border-white/10"
+                    title="Tắt/Bật tiếng"
+                  >
+                    {musicVolume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <button
+                onClick={() => setShowMusicSettings(false)}
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-xs font-bold text-white transition shadow-lg shadow-emerald-600/30"
+              >
+                Hoàn tất
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </motion.div>
   );

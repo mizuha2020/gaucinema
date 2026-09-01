@@ -798,6 +798,15 @@ export default function App() {
   // Unified History/Back Button Manager
   useEffect(() => {
     const handlePopState = (e: PopStateEvent) => {
+      // Manga overlay (detail/reader) is handled by MangaView; skip global handler to avoid exit popup
+      if (e.state && (e.state.mangaView === 'detail' || e.state.mangaView === 'reader')) {
+        return;
+      }
+      // When popping from manga detail/reader to previous state, let MangaView clear its state; don't show exit
+      const curMangaView = (window.history.state as any)?.mangaView;
+      if (curMangaView === 'detail' || curMangaView === 'reader') {
+        return;
+      }
       if (playingMovie) {
         const movieToDetail = playingMovie;
         const episodeToSave = playingEpisode;
@@ -837,6 +846,10 @@ export default function App() {
       } else if (e.state && e.state.tab) {
         setActiveTab(e.state.tab);
       } else if (!e.state) {
+        // Don't show exit when in manga/livetv app; MangaView handles its own back stack
+        if (activeApp !== 'cinema') {
+          return;
+        }
         if (activeTab === 'home') {
           setShowExitConfirmModal(true);
         } else {
@@ -851,6 +864,17 @@ export default function App() {
     try {
       if (typeof window !== 'undefined' && (window as any)?.Capacitor?.isNativePlatform?.()) {
         CapApp.addListener('backButton', () => {
+          // Manga reader/detail has its own history stack; back should close it, not show exit popup
+          const curState: any = window.history.state;
+          if (curState && (curState.mangaView === 'detail' || curState.mangaView === 'reader')) {
+            window.history.back();
+            return;
+          }
+          // When not in cinema app, don't show cinema exit popup; manga/livetv handle their own back
+          if (activeApp !== 'cinema') {
+            // If manga has no overlay, let browser handle or do nothing; avoid showing cinema exit
+            if (!curState || !curState.mangaView) return;
+          }
           if (showExitConfirmModal) {
             setShowExitConfirmModal(false);
           } else if (playingMovie || selectedMovieForDetail || showAdminDashboard || (showProfileSelector && currentAccount && activeProfile)) {
@@ -873,7 +897,7 @@ export default function App() {
       window.removeEventListener('popstate', handlePopState);
       if (backUnsub) backUnsub();
     };
-  }, [showExitConfirmModal, playingMovie, playingEpisode, playingServer, selectedMovieForDetail, showAdminDashboard, showProfileSelector, currentAccount, activeProfile, activeTab, refreshProfileData]);
+  }, [showExitConfirmModal, playingMovie, playingEpisode, playingServer, selectedMovieForDetail, showAdminDashboard, showProfileSelector, currentAccount, activeProfile, activeTab, activeApp, refreshProfileData]);
 
   // Wrapper for state changes
   const handleTabChange = (tab: NavTab) => {

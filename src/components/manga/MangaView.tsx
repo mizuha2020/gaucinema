@@ -45,7 +45,19 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
   const [page, setPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isDetailLoading, setIsDetailLoading] = useState(false);
   const skipNextFetchRef = React.useRef(false);
+
+  // Cache: keep home/ranking data to avoid reload on tab switch
+  const tabCacheRef = React.useRef(new Map());
+  const getTabCacheKey = (tab, kw) => {
+    if (tab === 'home') return `home:${kw.trim()}`;
+    if (tab === 'ranking') return 'ranking';
+    return `${tab}:${kw}`;
+  };
+  const saveTabCache = (key, items, totalPagesVal, pageVal) => {
+    tabCacheRef.current.set(key, { items, totalPages: totalPagesVal, page: pageVal });
+  };
 
   // Main navigation tab: home | explore | ranking | saved | history ; plus detail overlay
   const [activeTab, setActiveTab] = useState<MangaNavTab>(() => {
@@ -122,12 +134,11 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
     return () => window.removeEventListener('popstate', handler);
   }, [activeReadingSession, isDetail]);
 
-  const fetchMixed = async (pageNum: number, searchKey: string, append = false) => {
+  const fetchMixed = async (pageNum, searchKey, append = false, cacheKeyForSave) => {
     if (append) setIsLoadingMore(true);
     else setIsLoading(true);
     const guard = setTimeout(() => { setIsLoading(false); setIsLoadingMore(false); }, 15000);
     try {
-      // Trang đầu: nạp sẵn 8 page (~190 truyện) để 20 kệ đều đủ 20 truyện, không phải kéo xuống cuối mới thấy nhiều
       if (!append && pageNum === 1 && !searchKey) {
         const results = await Promise.all([
           mangaApi.getMixedMangaList(1, ''),
@@ -139,8 +150,8 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
           mangaApi.getMixedMangaList(7, ''),
           mangaApi.getMixedMangaList(8, ''),
         ]);
-        const merged: typeof results[0]['items'] = [];
-        const seen = new Set<string>();
+        const merged = [];
+        const seen = new Set();
         let maxPages = 1;
         for (const r of results) {
           maxPages = Math.max(maxPages, r.totalPages || 1);
@@ -150,6 +161,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
         }
         setMangaList(merged);
         setTotalPages(maxPages);
+        if (cacheKeyForSave) saveTabCache(cacheKeyForSave, merged, maxPages, 8);
         if (merged.length > 0) { skipNextFetchRef.current = true; setPage(8); }
       } else {
         const result = await mangaApi.getMixedMangaList(pageNum, searchKey);
@@ -157,10 +169,13 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
           setMangaList(prev => {
             const existingIds = new Set(prev.map(p => p.id));
             const newItems = (result.items || []).filter(it => !existingIds.has(it.id));
-            return [...prev, ...newItems];
+            const mergedList = [...prev, ...newItems];
+            if (cacheKeyForSave) saveTabCache(cacheKeyForSave, mergedList, result.totalPages || 1, pageNum);
+            return mergedList;
           });
         } else {
           setMangaList(result.items || []);
+          if (cacheKeyForSave) saveTabCache(cacheKeyForSave, result.items || [], result.totalPages || 1, pageNum);
         }
         setTotalPages(result.totalPages || 1);
         if ((result.items || []).length === 0 && !append) setTotalPages(1);
@@ -175,14 +190,51 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
     }
   };
 
-  // Home fetch - infinite scroll: page 1 replace (preload 1-3), page>1 append
+  // Invalidate tab cache when sources change
+  useEffect(() => {
+    tabCacheRef.current.clear();
+  }, [activeSources]);
+
+  // Home / Ranking fetch with tab cache to avoid reload on navigator switch
   useEffect(() => {
     if (skipNextFetchRef.current) { skipNextFetchRef.current = false; return; }
-    if (!isDetail && activeTab === 'home') {
-      fetchMixed(page, searchKeyword, page > 1);
-    } else if (!isDetail && activeTab === 'ranking') {
-      fetchMixed(page, '', page > 1);
+    if (isDetail) return;
+    if (activeTab !== 'home' && activeTab !== 'ranking') return;
+    const kw = activeTab === 'ranking' ? '' : searchKeyword;
+    const cacheKey = getTabCacheKey(activeTab, kw);
+    const cached = tabCacheRef.current.get(cacheKey);
+    const isAppend = page > 1;
+    if (!isAppend && cached && cached.items.length > 0) {
+      setMangaList(cached.items);
+      setTotalPages(cached.totalPages);
+      if (cached.page !== page) {
+        skipNextFetchRef.current = true;
+        setPage(cached.page);
+      }
+      setIsLoading(false);
+      setIsLoadingMore(false);
+      window.dispatchEvent(new Event('app-data-loaded'));
+      return;
     }
+    if (isAppend && cached && page <= cached.page) {
+      setMangaList(cached.items);
+      setTotalPages(cached.totalPages);
+      setIsLoading(false);
+      setIsLoadingMore(false);
+      window.dispatchEvent(new Event('app-data-loaded'));
+      return;
+    }
+    if (!isAppend && cached && cached.page > 1 && cached.items.length > 0) {
+      setMangaList(cached.items);
+      setTotalPages(cached.totalPages);
+      skipNextFetchRef.current = true;
+      setPage(cached.page);
+      setIsLoading(false);
+      setIsLoadingMore(false);
+      window.dispatchEvent(new Event('app-data-loaded'));
+      return;
+    }
+    fetchMixed(page, kw, isAppend, cacheKey);
   }, [page, activeTab, isDetail, searchKeyword, activeSources]);
 
   // Reset về trang 1 khi searchKeyword đổi (chỉ khi đang ở home)
@@ -201,7 +253,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
   }, [exploreKeyword, activeTab]);
 
   const handleOpenDetail = async (item: MangaItem) => {
-    setIsLoading(true);
+    setIsDetailLoading(true);
     const sourceToUse = item.source || selectedSource;
     let detail = await mangaApi.getMangaDetail(sourceToUse, item.id || item.slug);
     if (!detail || !detail.chapters || detail.chapters.length === 0) {
@@ -219,7 +271,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
         } catch {}
       }
     }
-    setIsLoading(false);
+    setIsDetailLoading(false);
     const full: MangaItem = {
       ...item,
       ...(detail || {}),
@@ -292,12 +344,26 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
     setActiveTab(tab);
     if (tab === 'history') setHistoryPage(1);
     if (tab === 'home' || tab === 'ranking') {
-      // Về trang chủ/ranking thì không áp dụng search - clear Conan còn sót, reset về 1 để infinite scroll hoạt động
+      const cacheKey = tab === 'ranking' ? 'ranking' : 'home:';
+      const cached = tabCacheRef.current.get(cacheKey);
       setSearchKeyword('');
       setHomeInput('');
       if (tab === 'home') setExploreKeyword('');
-      setPage(1);
-      setMangaList([]);
+      if (cached && cached.items.length > 0) {
+        setMangaList(cached.items);
+        setTotalPages(cached.totalPages);
+        setIsLoading(false);
+        setIsLoadingMore(false);
+        if (cached.page !== 1) {
+          skipNextFetchRef.current = true;
+          setPage(cached.page);
+        } else {
+          setPage(1);
+        }
+      } else {
+        setPage(1);
+        setMangaList([]);
+      }
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
     if (tab === 'explore') {
@@ -502,7 +568,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
       <AnimatePresence mode="wait">
         {activeReadingSession && selectedManga && (
           <MangaReaderModal
-            key={`reader-${selectedManga.id}-${activeReadingSession.chapter.id}`}
+            key={`reader-${selectedManga.id}`}
             manga={selectedManga}
             initialChapter={activeReadingSession.chapter}
             initialPageIndex={activeReadingSession.pageIndex || 0}
@@ -537,7 +603,7 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
             />
           </motion.div>
         ) : (
-          <div className="pt-20 sm:pt-24 pb-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto space-y-8">
+          <div key={activeTab} className="pt-20 sm:pt-24 pb-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto space-y-8">
           {/* Tab-specific content */}
           {activeTab === 'explore' ? (
             <MangaSearchView
@@ -648,13 +714,13 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
                     return (
                       <div key={idx} onClick={async () => {
                         if(!active){ setDisabledSourceAlert(`Nguồn "${item.source.toUpperCase()}" đang tạm khóa.`); return; }
-                        setIsLoading(true);
+                        setIsDetailLoading(true);
                         const detail = await mangaApi.getMangaDetail(item.source, item.mangaId);
-                        setIsLoading(false);
+                        setIsDetailLoading(false);
                         const full = detail || { id: item.mangaId, title: item.title, slug: item.mangaId, coverUrl: item.coverUrl, source: item.source, chapters: [{ id: item.chapterId, chapterNumber: '1', title: item.chapterTitle, source: item.source }] };
                         setSelectedManga(full as MangaItem);
                         const found = (full as MangaItem).chapters.find(c=>c.id===item.chapterId) || (full as MangaItem).chapters[0];
-                        if(found){ window.history.pushState({ tab: 'manga', mangaView: 'reader', chapterId: found.id }, ''); setActiveReadingSession({ manga: full as MangaItem, chapter: found, pageIndex: item.pageIndex || 0 }); }
+                        if(found){ window.history.pushState({ tab: 'manga', mangaView: 'detail', mangaId: (full as MangaItem).id }, ''); window.history.pushState({ tab: 'manga', mangaView: 'reader', chapterId: found.id }, ''); setActiveReadingSession({ manga: full as MangaItem, chapter: found, pageIndex: item.pageIndex || 0 }); }
                       }} className={`bg-white/[0.03] hover:bg-white/[0.06] border border-white/10 rounded-2xl p-4 flex items-center justify-between cursor-pointer transition ${!active ? 'opacity-50 grayscale' : ''}`}>
                         <div className="flex items-center gap-4 min-w-0">
                           <img src={item.coverUrl} alt={item.title} referrerPolicy="no-referrer" className="w-12 h-16 object-cover rounded-xl border border-white/10 shrink-0" onError={(e)=> handleMangaImageError(e, item.coverUrl || '')} />
@@ -716,13 +782,13 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
                   <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none">
                     {continueReading.map((item, idx) => (
                       <div key={`${item.mangaId}-${idx}`} onClick={async()=>{
-                        setIsLoading(true);
+                        setIsDetailLoading(true);
                         const detail = await mangaApi.getMangaDetail(item.source, item.mangaId);
-                        setIsLoading(false);
+                        setIsDetailLoading(false);
                         const full = detail || { id: item.mangaId, title: item.title, slug: item.mangaId, coverUrl: item.coverUrl, source: item.source, chapters: [{ id: item.chapterId, chapterNumber: item.chapterNumber, title: item.chapterTitle, source: item.source }] };
                         setSelectedManga(full as MangaItem);
                         const ch = (full as MangaItem).chapters.find(c=>c.id===item.chapterId) || (full as MangaItem).chapters[0];
-                        if(ch) { window.history.pushState({ tab: 'manga', mangaView: 'reader', chapterId: ch.id }, ''); setActiveReadingSession({ manga: full as MangaItem, chapter: ch, pageIndex: item.pageIndex || 0 }); }
+                        if(ch) { window.history.pushState({ tab: 'manga', mangaView: 'detail', mangaId: (full as MangaItem).id }, ''); window.history.pushState({ tab: 'manga', mangaView: 'reader', chapterId: ch.id }, ''); setActiveReadingSession({ manga: full as MangaItem, chapter: ch, pageIndex: item.pageIndex || 0 }); }
                       }} className="group relative w-36 sm:w-40 shrink-0 bg-[#0f0f14] rounded-2xl overflow-hidden border border-white/10 hover:border-fuchsia-500/40 cursor-pointer hover:scale-[1.02] transition-all flex flex-col">
                         <div className="relative aspect-[3/4] overflow-hidden bg-black">
                           <img src={item.coverUrl} alt={item.title} className="w-full h-full object-cover object-top group-hover:scale-105 transition" referrerPolicy="no-referrer" loading="lazy" onError={(e)=> handleMangaImageError(e, item.coverUrl || '')} />
@@ -813,9 +879,19 @@ export const MangaView: React.FC<MangaViewProps> = ({ activeProfile, currentAcco
 
             </div>
           )}
-        </div>
+            </div>
       )}
       </AnimatePresence>
+
+      {/* Detail loading overlay - không reload trang chủ */}
+      {isDetailLoading && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-[#0b0c16]/60 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-10 h-10 border-4 border-white/10 border-t-fuchsia-500 rounded-full animate-spin" />
+            <p className="text-sm text-white/60">Đang tải truyện...</p>
+          </div>
+        </div>
+      )}
 
       {/* Disabled source alert */}
       {disabledSourceAlert && (

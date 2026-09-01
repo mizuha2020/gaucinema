@@ -226,15 +226,79 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
     return unsub;
   }, [isNativeApp, currentData?.slug, currentAccount?.id, activeProfile?.id]);
 
-  const handleToggleOfflineSave = () => {
+  const [isOfflineDownloading, setIsOfflineDownloading] = useState(false);
+  const [offlineProgress, setOfflineProgress] = useState(0);
+
+  // Listen download progress
+  useEffect(() => {
+    if (!currentData || !currentAccount || !activeProfile) return;
+    const handler = (e: any) => {
+      const d = e.detail;
+      if (d.slug === currentData.slug && d.accountId === currentAccount.id) {
+        setOfflineProgress(d.progress);
+        if (d.done) { setIsOfflineDownloading(false); setOfflineProgress(100); }
+      }
+    };
+    window.addEventListener('gau_offline_progress', handler as any);
+    return () => window.removeEventListener('gau_offline_progress', handler as any);
+  }, [currentData?.slug, currentAccount?.id, activeProfile?.id]);
+
+  const handleToggleOfflineSave = async () => {
     if (!currentData || !currentAccount || !activeProfile) return;
     if (isOfflineSaved) {
       offlineMovieService.remove(currentAccount.id, activeProfile.id, currentData.slug);
       onShowToast?.('Đã xóa khỏi Đã lưu (Offline)', 'info');
+      setIsOfflineDownloading(false);
+      setOfflineProgress(0);
     } else {
       const res = offlineMovieService.save(currentAccount.id, activeProfile.id, currentData);
       if (res.already) {
         onShowToast?.('Phim đã có trong Đã lưu', 'info');
+        return;
+      }
+      onShowToast?.('Đã lưu • Bắt đầu tải video để xem offline...', 'success');
+      // Only on native: download video file via Filesystem
+      if (offlineMovieService.isNativeApp()) {
+        setIsOfflineDownloading(true);
+        setOfflineProgress(0);
+        try {
+          // Try to get first episode/server from snapshot
+          const anyData = currentData as any;
+          let server: any = null;
+          let episode: any = null;
+          // Try to find server_data from movieSnapshot or currentData
+          if (anyData.episodeServers && anyData.episodeServers[0]) {
+            server = anyData.episodeServers[0];
+            episode = server.server_data?.[0];
+          } else if (anyData.servers && anyData.servers[0]) {
+            server = anyData.servers[0];
+            episode = server.server_data?.[0];
+          } else if (anyData.link_m3u8) {
+            episode = { slug: currentData.slug, name: '1', link_m3u8: anyData.link_m3u8, link_embed: '' };
+            server = { server_name: 'default', server_data: [episode] };
+          }
+          if (episode && server) {
+            const dlRes = await offlineMovieService.downloadEpisode(
+              currentAccount.id,
+              activeProfile.id,
+              currentData,
+              episode,
+              server,
+              (pct) => setOfflineProgress(pct)
+            );
+            if (dlRes.success) {
+              onShowToast?.(`Đã tải xong "${currentData.name}" để xem offline`, 'success');
+            } else {
+              onShowToast?.(dlRes.error || 'Lưu metadata, tải video thất bại (sẽ thử lại)', 'warning');
+            }
+          } else {
+            onShowToast?.('Đã lưu metadata (không tìm thấy link tập để tải)', 'info');
+          }
+        } catch (e: any) {
+          onShowToast?.(e?.message || 'Lỗi tải offline', 'error');
+        } finally {
+          setIsOfflineDownloading(false);
+        }
       } else {
         onShowToast?.('Đã lưu để xem offline (tự xóa sau 7 ngày)', 'success');
       }
@@ -558,14 +622,20 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                       <button
                         id="hero-offline-save-btn"
                         onClick={handleToggleOfflineSave}
-                        className={`flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3.5 rounded-2xl font-bold text-xs sm:text-sm border transition-all cursor-pointer ${
+                        disabled={isOfflineDownloading}
+                        className={`flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3.5 rounded-2xl font-bold text-xs sm:text-sm border transition-all cursor-pointer disabled:opacity-60 disabled:cursor-wait ${
                           isOfflineSaved
                             ? 'bg-amber-600 border-amber-500 text-white shadow-xl shadow-amber-600/30'
                             : 'bg-slate-900/90 border-slate-700 text-slate-200 hover:text-white hover:bg-slate-800'
                         }`}
-                        title={isOfflineSaved ? 'Đã lưu offline - bấm để xóa' : 'Tải xem offline (lưu 7 ngày)'}
+                        title={isOfflineSaved ? 'Đã lưu offline - bấm để xóa' : 'Tải xem offline (lưu 7 ngày) - chỉ trên App'}
                       >
-                        {isOfflineSaved ? (
+                        {isOfflineDownloading ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            <span>{offlineProgress}%</span>
+                          </>
+                        ) : isOfflineSaved ? (
                           <>
                             <Check className="w-4 h-4" />
                             <span>Đã lưu Offline</span>

@@ -71,14 +71,14 @@ var LRUCache = class {
 var proxyCache = new LRUCache(500);
 var imageMemoryCache = new LRUCache(400);
 var CACHE_TTL_MS = 3 * 60 * 1e3;
-async function fetchWithTimeout(url, timeoutMs = 4e3) {
+async function fetchWithTimeout(url, timeoutMs = 12e3) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         Accept: "application/json, text/plain, */*"
       }
     });
@@ -133,6 +133,8 @@ async function startServer() {
       targetUrl = cleanUrl.endsWith("/v1/api") ? `${cleanUrl}/home` : `${cleanUrl}/v1/api/home`;
     } else if (cleanUrl === "https://api.mangadex.org") {
       targetUrl = "https://api.mangadex.org/ping";
+    } else if (cleanUrl.includes("truyenqq") && !url.includes("/truyen-moi-cap-nhat") && !url.includes("/truyen-tranh/")) {
+      targetUrl = "https://truyenqqko.com/truyen-moi-cap-nhat";
     }
     const startTime = Date.now();
     const controller = new AbortController();
@@ -217,6 +219,227 @@ async function startServer() {
       });
     }
   });
+  function normalizeSearchText(str) {
+    if (!str) return "";
+    return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase().trim();
+  }
+  const dynamicCastIndex = /* @__PURE__ */ new Map();
+  function indexMovieCast(movie, defaultSource = "kkphim") {
+    if (!movie || !movie.slug || !movie.name) return;
+    const item = {
+      slug: movie.slug,
+      name: movie.name,
+      origin_name: movie.origin_name || movie.original_name || "",
+      poster_url: movie.poster_url || movie.thumb_url || "",
+      thumb_url: movie.thumb_url || movie.poster_url || "",
+      year: movie.year || (movie.created?.time ? new Date(movie.created.time).getFullYear() : void 0),
+      quality: movie.quality || "HD",
+      lang: movie.lang || "Vietsub",
+      source: movie.source || defaultSource,
+      actor: Array.isArray(movie.actor) ? movie.actor : typeof movie.actor === "string" ? [movie.actor] : [],
+      director: Array.isArray(movie.director) ? movie.director : typeof movie.director === "string" ? [movie.director] : []
+    };
+    const castNames = [
+      ...item.actor || [],
+      ...item.director || []
+    ];
+    for (const rawName of castNames) {
+      if (!rawName || typeof rawName !== "string") continue;
+      const clean = rawName.trim();
+      if (!clean || clean.length < 2) continue;
+      const norm = normalizeSearchText(clean);
+      if (!norm) continue;
+      let list = dynamicCastIndex.get(norm);
+      if (!list) {
+        list = [];
+        dynamicCastIndex.set(norm, list);
+      }
+      if (!list.some((m) => m.slug === item.slug)) {
+        list.push(item);
+        if (list.length > 50) list.shift();
+      }
+    }
+  }
+  const ACTOR_FILMOGRAPHY = {
+    "chau tinh tri": ["tuyet-dinh-kungfu", "doi-bong-thieu-lam", "vua-hai-kich", "quoc-san-007", "quan-xam-loc-coc", "tay-du-ky-moi-tinh-ngoai-truyen", "my-nhan-ngu", "truong-hoc-uy-long", "than-bai-2", "dai-noi-mat-tham-008", "duong-ba-ho-diem-thu-huong", "gia-huu-hy-su", "vo-trang-nguyen-to-khat-nhi", "than-an"],
+    "stephen chow": ["tuyet-dinh-kungfu", "doi-bong-thieu-lam", "vua-hai-kich", "quoc-san-007", "quan-xam-loc-coc", "tay-du-ky-moi-tinh-ngoai-truyen", "my-nhan-ngu"],
+    "thanh long": ["gio-cao-diem", "cau-chuyen-canh-sat", "ke-ngoai-toc", "kungfu-yoga", "12-con-giap", "dai-nao-pho-bronx", "ke-san-thanh-pho", "tay-du-ky-lao-ton", "thanh-long-truyen-ky"],
+    "jackie chan": ["gio-cao-diem", "cau-chuyen-canh-sat", "ke-ngoai-toc", "kungfu-yoga", "12-con-giap", "ke-san-thanh-pho"],
+    "ly lien kiet": ["hoang-phi-hong", "tinh-vo-anh-hung", "nuoc-mat-sat-thu", "anh-hung", "thai-cuc-truong-tam-phong", "biet-doi-danh-thue"],
+    "jet li": ["hoang-phi-hong", "tinh-vo-anh-hung", "nuoc-mat-sat-thu", "anh-hung", "biet-doi-danh-thue"],
+    "chan tu dan": ["diep-van", "diep-van-2", "diep-van-3", "diep-van-4", "sat-pha-lang", "dao-hoa-tuyen", "trum-huong-cang", "john-wick-4"],
+    "donnie yen": ["diep-van", "diep-van-2", "diep-van-3", "diep-van-4", "sat-pha-lang", "john-wick-4"],
+    "co thien lac": ["co-may-thoi-gian", "thien-menh-anh-hung", "cuoc-chien-tuong-lai", "phong-bao-trang", "sat-pha-lang-2"],
+    "louis koo": ["co-may-thoi-gian", "thien-menh-anh-hung", "cuoc-chien-tuong-lai", "phong-bao-trang"],
+    "luu diec phi": ["than-dieu-dai-hiep", "mong-hoa-luc", "di-den-noi-co-gio", "cau-chuyen-hoa-hong", "thien-long-bat-bo", "hoa-moc-lan"],
+    "crystal liu": ["than-dieu-dai-hiep", "mong-hoa-luc", "di-den-noi-co-gio", "cau-chuyen-hoa-hong"],
+    "duong mich": ["tam-sinh-tam-the-thap-ly-dao-hoa", "ho-yeu-tieu-hong-nuong-nguyet-hong-thien", "phu-dao", "nguoi-dam-phan", "bao-phong-nhan", "hoc-chau-phu-nhan"],
+    "yang mi": ["tam-sinh-tam-the-thap-ly-dao-hoa", "ho-yeu-tieu-hong-nuong-nguyet-hong-thien", "phu-dao"],
+    "trieu le dinh": ["so-kieu-truyen", "hoa-thien-cot", "minh-lan-truyen", "du-phuong-hanh", "huu-phi", "gio-thoi-ban-ha", "hanh-phuc-den-van-gia"],
+    "zanilia zhao": ["so-kieu-truyen", "hoa-thien-cot", "minh-lan-truyen", "du-phuong-hanh", "huu-phi"],
+    "trieu lo tu": ["vung-trom-khong-the-giau", "tinh-han-xan-lan", "tha-thi-thien-ha", "tran-thien-thien-trong-loi-don", "than-an", "chau-liem-ngoc-mac", "hau-lang", "truong-ca-hanh", "o-o-co-nang-cua-toi"],
+    "zhao lusi": ["vung-trom-khong-the-giau", "tinh-han-xan-lan", "tha-thi-thien-ha", "tran-thien-thien-trong-loi-don", "than-an"],
+    "rosy zhao": ["vung-trom-khong-the-giau", "tinh-han-xan-lan", "tha-thi-thien-ha", "than-an"],
+    "tran triet vien": ["vung-trom-khong-the-giau", "bi-mat-noi-goc-toi", "tien-kiem-ky-hiep-4", "dem-say", "tan-tuyet-dai-song-kieu", "cay-o-liu-mau-trang"],
+    "chen zheyuan": ["vung-trom-khong-the-giau", "bi-mat-noi-goc-toi", "tien-kiem-ky-hiep-4", "dem-say"],
+    "tieu chien": ["tran-tinh-lenh", "dau-la-dai-luc", "ngoc-cot-dao", "vung-bien-trong-mo", "tru-tien", "lang-dien-ha", "du-sinh-xin-chi-giao-nhieu-hon", "tang-hai-truyen"],
+    "xiao zhan": ["tran-tinh-lenh", "dau-la-dai-luc", "ngoc-cot-dao", "vung-bien-trong-mo", "tru-tien"],
+    "vuong nhat bac": ["tran-tinh-lenh", "huu-phi", "phong-khoi-lac-duong", "vo-danh", "nhiet-liet", "bang-vu-hoa"],
+    "wang yibo": ["tran-tinh-lenh", "huu-phi", "phong-khoi-lac-duong", "vo-danh", "nhiet-liet"],
+    "duong duong": ["yeu-em-tu-cai-nhin-dau-tien", "tha-thi-thien-ha", "khoi-lua-nhan-gian-cua-toi", "toan-chuc-cao-thu", "vu-dong-can-khon", "dac-chien-vinh-quang"],
+    "yang yang": ["yeu-em-tu-cai-nhin-dau-tien", "tha-thi-thien-ha", "khoi-lua-nhan-gian-cua-toi", "toan-chuc-cao-thu"],
+    "dich le nhiet ba": ["em-la-niem-kieu-hanh-cua-anh", "tam-sinh-tam-the-thap-ly-dao-hoa", "tam-sinh-tam-the-cham-thuong-thu", "ngu-giao-ky", "an-lac-truyen", "cong-to-tinh-anh"],
+    "dilraba": ["em-la-niem-kieu-hanh-cua-anh", "tam-sinh-tam-the-thap-ly-dao-hoa", "tam-sinh-tam-the-cham-thuong-thu", "ngu-giao-ky"],
+    "bach loc": ["truong-nguyet-tan-minh", "ninh-an-nhu-mong", "di-ai-vi-doanh", "chau-sinh-nhu-co", "bach-nguyet-phan-tinh", "nua-la-duong-mat-nua-la-dau-thuong", "chieu-dieu"],
+    "bai lu": ["truong-nguyet-tan-minh", "ninh-an-nhu-mong", "di-ai-vi-doanh", "chau-sinh-nhu-co"],
+    "duong tu": ["truong-tuong-tu", "huong-mat-tua-khoi-suong", "ca-muc-ham-mat", "tram-vun-huong-phai", "thua-hoan-ky", "nu-bac-si-tam-ly"],
+    "yang zi": ["truong-tuong-tu", "huong-mat-tua-khoi-suong", "ca-muc-ham-mat", "tram-vun-huong-phai"],
+    "vuong hac de": ["thuong-lan-quyet", "di-ai-vi-doanh", "phu-do-duyen", "dai-phung-da-canh-nhan"],
+    "dylan wang": ["thuong-lan-quyet", "di-ai-vi-doanh", "phu-do-duyen"],
+    "ngo loi": ["tinh-han-xan-lan", "truong-ca-hanh", "giua-con-bao-tuyet", "lang-nha-bang"],
+    "leo wu": ["tinh-han-xan-lan", "truong-ca-hanh", "giua-con-bao-tuyet"],
+    "la van hi": ["truong-nguyet-tan-minh", "nua-la-duong-mat-nua-la-dau-thuong", "thuy-long-ngam", "huong-mat-tua-khoi-suong"],
+    "luo yunxi": ["truong-nguyet-tan-minh", "nua-la-duong-mat-nua-la-dau-thuong", "huong-mat-tua-khoi-suong"],
+    "truong lang hach": ["thuong-lan-quyet", "ninh-an-nhu-mong", "van-chi-vu", "do-hoa-nien"],
+    "zhang linghe": ["thuong-lan-quyet", "ninh-an-nhu-mong", "van-chi-vu", "do-hoa-nien"],
+    "ngu thu han": ["thuong-lan-quyet", "van-chi-vu", "vinh-da-tinh-ha", "khu-rung-nho-cua-hai-nguoi"],
+    "esther yu": ["thuong-lan-quyet", "van-chi-vu", "vinh-da-tinh-ha"],
+    "cuc tinh y": ["van-tich-truyen", "hoa-nhung", "hoa-gian-lenh", "tan-bach-nuong-tu-truyen"],
+    "ju jingyi": ["van-tich-truyen", "hoa-nhung", "hoa-gian-lenh"],
+    "cung tuan": ["son-ha-lenh", "an-lac-truyen", "ho-yeu-tieu-hong-nuong-nguyet-hong-thien"],
+    "gong jun": ["son-ha-lenh", "an-lac-truyen"],
+    "nham gia luan": ["chau-sinh-nhu-co", "cam-y-chi-ha", "ngu-giao-ky", "vu-canh-ky"],
+    "ren jialun": ["chau-sinh-nhu-co", "cam-y-chi-ha", "ngu-giao-ky"],
+    "hua khai": ["dien-hi-cong-luoc", "chieu-dieu", "em-dep-hon-ca-anh-sao", "thua-hoan-ky", "dinh-luat-80-20-cua-tinh-yeu"],
+    "xu kai": ["dien-hi-cong-luoc", "chieu-dieu", "em-dep-hon-ca-anh-sao"],
+    "dang vi": ["truong-tuong-tu", "ngo-tien", "trung-tu"],
+    "deng wei": ["truong-tuong-tu", "ngo-tien", "trung-tu"],
+    "song joong ki": ["hau-due-mat-troi", "vincenzo", "cau-ut-nha-tai-phiet", "space-sweepers", "dao-dia-nguc"],
+    "lee min ho": ["vuon-sao-bang", "huyen-thoai-bien-xanh", "quan-vuong-bat-diet", "city-hunter", "nguoi-thua-ke"],
+    "hyun bin": ["ha-canh-noi-anh", "khu-vuon-bi-mat", "hoi-uc-alhambra", "dac-vu-xuyen-quoc-gia"],
+    "son ye jin": ["ha-canh-noi-anh", "chi-dep-mua-com-ngon-cho-toi", "tuoi-39", "co-dien"],
+    "song hye kyo": ["the-glory", "hau-due-mat-troi", "gio-mua-dong-nam-ay", "ngoi-nha-hanh-phuc"],
+    "park seo joon": ["tang-lop-itaewon", "thu-ky-kim-sao-the", "sinh-vat-gyeongseong", "thanh-xuan-vat-va"],
+    "kim soo hyun": ["nu-hoang-nuoc-mat", "vi-sao-dua-anh-toi", "dien-thi-co-sao", "mat-trang-om-mat-troi"],
+    "iu": ["khach-san-anh-trang", "nguoi-chu-cua-toi", "nguoi-tinh-anh-trang"],
+    "lee ji eun": ["khach-san-anh-trang", "nguoi-chu-cua-toi", "nguoi-tinh-anh-trang"],
+    "park shin hye": ["nguoi-thua-ke", "pinocchio", "bac-si-tram-cam", "co-nang-dep-trai"],
+    "lee jong suk": ["big-mouth", "khi-nang-say-giac", "hai-the-gioi", "pinocchio", "toi-lang-nghe-tieng-em"],
+    "ji chang wook": ["the-k2", "hoang-hau-ki", "chao-mung-den-samdalri"],
+    "gong yoo": ["yeu-tinh", "chuyen-tau-sinh-tu", "squid-game", "tiem-ca-phe-hoang-tu"],
+    "ma dong seok": ["chuyen-tau-sinh-tu", "trum-cho-dien-va-ke-sat-nhan", "vay-bat-ke-ac", "vinh-hang-eternals"],
+    "han so hee": ["sinh-vat-gyeongseong", "the-gioi-hon-nhan", "my-name"],
+    "tom cruise": ["phi-cong-sieu-dang-maverick", "nhiem-vu-bat-kha-thi-nghiep-bao-phan-1", "nhiem-vu-bat-kha-thi-sup-do", "cuoc-chien-luan-hoi", "ke-doc-hanh", "nguoi-hung-jack-reacher"],
+    "keanu reeves": ["john-wick", "john-wick-2", "john-wick-3", "john-wick-4", "ma-tran", "ma-tran-hoi-sinh", "constantine"],
+    "leonardo dicaprio": ["titanic", "inception", "ke-trom-giac-mo", "soi-gia-pho-wall", "nguoi-ve-tu-coi-chet", "dao-kinh-hoang"],
+    "brad pitt": ["bullet-train", "cau-lac-bo-danh-nhau", "ong-ba-smith", "the-chien-z", "chuyen-ngay-xua-o-hollywood"],
+    "scarlett johansson": ["avengers-hoi-ket", "black-widow", "lucy", "vo-dien", "chuyen-hon-nhan"],
+    "robert downey jr": ["iron-man", "avengers-hoi-ket", "oppenheimer", "sherlock-holmes"],
+    "robert downey jr.": ["iron-man", "avengers-hoi-ket", "oppenheimer", "sherlock-holmes"],
+    "chris evans": ["captain-america-ke-bao-thu-dau-tien", "avengers-hoi-ket", "ke-dam-len-nhau", "snowpiercer"],
+    "chris hemsworth": ["thor-tan-the-ragnarok", "thor-tinh-yeu-va-sam-set", "extraction-nhiem-vu-giai-cuu", "avengers-hoi-ket"],
+    "jason statham": ["the-meg", "nguoi-van-chuyen", "fast-furious-hobbs-shaw", "mat-vu-ong-beekeeper", "biet-doi-danh-thue"],
+    "vin diesel": ["fast-furious", "fast-x", "ve-binh-dai-ngan-ha", "bloodshot", "riddick"],
+    "dwayne johnson": ["black-adam", "jumanji-tro-choi-ky-ao", "san-andreas", "thong-bao-do", "fast-furious"],
+    "the rock": ["black-adam", "jumanji-tro-choi-ky-ao", "san-andreas", "thong-bao-do"],
+    "cillian murphy": ["oppenheimer", "peaky-blinders", "ky-si-bong-dem", "inception"],
+    "ryan reynolds": ["deadpool", "deadpool-wolverine", "free-guy", "thong-bao-do"],
+    "christopher nolan": ["oppenheimer", "tenet", "huyen-thoai-interstellar", "inception", "ky-si-bong-dem", "dunkirk"],
+    "tran thanh": ["mai", "nha-ba-nu", "bo-gia", "cua-lai-vo-bau", "trang-quynh"],
+    "thu trang": ["chi-muoi-ba", "con-nhot-mot-chong", "tiec-trang-mau", "nghe-sieu-de"],
+    "kieu minh tuan": ["em-chua-18", "tiec-trang-mau", "ke-an-hon", "chi-muoi-ba", "nghe-sieu-de"],
+    "ninh duong lan ngoc": ["cua-lai-vo-bau", "gai-gia-lam-chieu-3", "co-ba-sai-gon", "tam-cam-chuyen-chua-ke"],
+    "kaity nguyen": ["em-chua-18", "tiec-trang-mau", "co-gai-tu-qua-khu", "nguoi-vo-cuoi-cung"],
+    "victor vu": ["mat-biec", "toi-thay-hoa-vang-tren-co-xanh", "nguoi-vo-cuoi-cung", "thien-menh-anh-hung", "qua-tim-mau"]
+  };
+  async function resolveMovieSlug(slug) {
+    const cacheKey = `resolved-slug:${slug}`;
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 10 * 60 * 1e3) {
+      return cached.data;
+    }
+    try {
+      const raw = await fetchWithTimeout(`https://phimapi.com/phim/${slug}`, 3e3);
+      if (raw?.movie?.name) {
+        const m = raw.movie;
+        const item = {
+          slug: m.slug || slug,
+          name: m.name,
+          origin_name: m.origin_name || "",
+          poster_url: m.poster_url || "",
+          thumb_url: m.thumb_url || "",
+          year: m.year || void 0,
+          quality: m.quality || "HD",
+          lang: m.lang || "Vietsub",
+          source: "kkphim",
+          sourceLabel: "KKPhim",
+          actor: m.actor || [],
+          director: m.director || []
+        };
+        indexMovieCast(m, "kkphim");
+        proxyCache.set(cacheKey, { data: item, timestamp: Date.now() });
+        return item;
+      }
+    } catch {
+    }
+    return null;
+  }
+  async function searchActorDirectorMovies(keyword) {
+    const normKey = normalizeSearchText(keyword);
+    if (!normKey || normKey.length < 2) return [];
+    const foundMovies = /* @__PURE__ */ new Map();
+    for (const [normCastName, movieList] of dynamicCastIndex.entries()) {
+      if (normCastName.includes(normKey) || normKey.includes(normCastName)) {
+        for (const m of movieList) {
+          if (!foundMovies.has(m.slug)) {
+            foundMovies.set(m.slug, m);
+          }
+        }
+      }
+    }
+    const matchedSlugs = /* @__PURE__ */ new Set();
+    for (const [normActor, slugs] of Object.entries(ACTOR_FILMOGRAPHY)) {
+      if (normActor.includes(normKey) || normKey.includes(normActor)) {
+        for (const slug of slugs) {
+          matchedSlugs.add(slug);
+        }
+      }
+    }
+    if (matchedSlugs.size > 0) {
+      const slugPromises = Array.from(matchedSlugs).slice(0, 16).map((slug) => resolveMovieSlug(slug));
+      const resolvedItems = await Promise.allSettled(slugPromises);
+      for (const res of resolvedItems) {
+        if (res.status === "fulfilled" && res.value && !foundMovies.has(res.value.slug)) {
+          foundMovies.set(res.value.slug, res.value);
+        }
+      }
+    }
+    return Array.from(foundMovies.values());
+  }
+  async function seedInitialCastIndex() {
+    try {
+      const seedUrls = [
+        "https://phimapi.com/danh-sach/phim-moi-cap-nhat?page=1",
+        "https://phimapi.com/v1/api/danh-sach/phim-bo?page=1&limit=24",
+        "https://phimapi.com/v1/api/danh-sach/phim-le?page=1&limit=24"
+      ];
+      for (const url of seedUrls) {
+        try {
+          const data = await fetchWithTimeout(url, 4e3);
+          const items = data?.items || data?.data?.items || [];
+          for (const item of items.slice(0, 8)) {
+            if (item?.slug) {
+              resolveMovieSlug(item.slug).catch(() => {
+              });
+            }
+          }
+        } catch {
+        }
+      }
+    } catch {
+    }
+  }
+  setTimeout(seedInitialCastIndex, 2e3);
   app.get("/api/proxy/kkphim/*", async (req, res) => {
     const endpoint = req.params[0];
     const query = new URLSearchParams(req.query).toString();
@@ -228,6 +451,9 @@ async function startServer() {
     try {
       const url = `https://phimapi.com/${endpoint}${query ? `?${query}` : ""}`;
       const data = await fetchWithTimeout(url, 4500);
+      if (data?.movie) {
+        indexMovieCast(data.movie, "kkphim");
+      }
       proxyCache.set(cacheKey, { data, timestamp: Date.now() });
       return res.json(data);
     } catch (err) {
@@ -252,6 +478,9 @@ async function startServer() {
       try {
         const data = await fetchWithTimeout(url, 4e3);
         if (data && (data.status === true || data.status === "success" || data.items || data.data?.items || data.movie)) {
+          if (data?.movie) {
+            indexMovieCast(data.movie, "ophim");
+          }
           proxyCache.set(cacheKey, { data, timestamp: Date.now() });
           return res.json(data);
         }
@@ -273,6 +502,9 @@ async function startServer() {
       const normalizedEndpoint = endpoint.startsWith("api/") ? endpoint : `api/${endpoint}`;
       const url = `https://phim.nguonc.com/${normalizedEndpoint}${query ? `?${query}` : ""}`;
       const data = await fetchWithTimeout(url, 5e3);
+      if (data?.movie) {
+        indexMovieCast(data.movie, "nguonc");
+      }
       proxyCache.set(cacheKey, { data, timestamp: Date.now() });
       return res.json(data);
     } catch (err) {
@@ -292,14 +524,27 @@ async function startServer() {
       return res.json(cached.data);
     }
     const tasks = [
-      fetchWithTimeout(`https://phimapi.com/v1/api/tim-kiem?keyword=${encoded}&limit=16`, 4e3).then((d) => ({ source: "kkphim", data: d })).catch(() => null),
-      fetchWithTimeout(`https://ophim1.com/v1/api/tim-kiem?keyword=${encoded}&limit=16`, 4e3).then((d) => ({ source: "ophim", data: d })).catch(() => null),
-      fetchWithTimeout(`https://phim.nguonc.com/api/films/search?keyword=${encoded}`, 4500).then((d) => ({ source: "nguonc", data: d })).catch(() => null)
+      fetchWithTimeout(`https://phimapi.com/v1/api/tim-kiem?keyword=${encoded}&limit=20`, 4e3).then((d) => ({ source: "kkphim", data: d })).catch(() => null),
+      fetchWithTimeout(`https://ophim1.com/v1/api/tim-kiem?keyword=${encoded}&limit=20`, 4e3).then((d) => ({ source: "ophim", data: d })).catch(() => null),
+      fetchWithTimeout(`https://phim.nguonc.com/api/films/search?keyword=${encoded}`, 4500).then((d) => ({ source: "nguonc", data: d })).catch(() => null),
+      searchActorDirectorMovies(keyword).then((items) => ({ source: "actor_cast_index", items })).catch(() => ({ source: "actor_cast_index", items: [] }))
     ];
     const results = await Promise.all(tasks);
     const combinedMap = /* @__PURE__ */ new Map();
+    const actorResult = results.find((r) => r && "items" in r && r.source === "actor_cast_index");
+    if (actorResult && Array.isArray(actorResult.items)) {
+      for (const item of actorResult.items) {
+        if (item?.slug && !combinedMap.has(item.slug)) {
+          combinedMap.set(item.slug, {
+            ...item,
+            isActorMatch: true,
+            sourceLabel: item.source === "nguonc" ? "NguonC" : item.source === "ophim" ? "OPhim" : "KKPhim"
+          });
+        }
+      }
+    }
     for (const r of results) {
-      if (!r || !r.data) continue;
+      if (!r || !("data" in r) || !r.data) continue;
       const src = r.source;
       const raw = r.data;
       if (raw.data?.items && Array.isArray(raw.data.items)) {
@@ -329,7 +574,8 @@ async function startServer() {
     const payload = {
       status: true,
       items: Array.from(combinedMap.values()),
-      total: combinedMap.size
+      total: combinedMap.size,
+      keyword
     };
     proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
     return res.json(payload);
@@ -406,37 +652,649 @@ async function startServer() {
     const cached = imageMemoryCache.get(imageUrl);
     if (cached) {
       res.setHeader("Content-Type", cached.contentType);
+      res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
       res.setHeader("X-Cache", "HIT");
       return res.send(cached.buffer);
     }
+    const candidateReferers = [];
+    if (imageUrl.includes("hinhhinh.com") || imageUrl.includes("truyenvua.com") || imageUrl.includes("tintruyen.com") || imageUrl.includes("truyenqq") || imageUrl.includes("st.truyenqq")) {
+      candidateReferers.push("https://truyenqqko.com/", "https://truyenqqno.com/", "https://truyenqqgo.com/", "https://truyenqqto.com/", "");
+    } else if (imageUrl.includes("mangadex")) {
+      candidateReferers.push("https://mangadex.org/", "");
+    } else if (imageUrl.includes("otruyen")) {
+      candidateReferers.push("https://otruyenapi.com/", "https://otruyen.cc/", "");
+    } else if (imageUrl.includes("cuutruyen")) {
+      candidateReferers.push("https://cuutruyen.net/", "");
+    } else {
+      candidateReferers.push("");
+    }
     for (const urlToFetch of candidateUrls) {
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 8e3);
-        const upstream = await fetch(urlToFetch, {
-          signal: controller.signal,
-          headers: {
+      for (const referer of candidateReferers) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 12e3);
+          const headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-            "Referer": "https://mangadex.org/"
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
+          };
+          if (referer) {
+            headers["Referer"] = referer;
           }
-        });
-        clearTimeout(timer);
-        if (upstream.ok) {
-          const contentType = upstream.headers.get("content-type") || "image/jpeg";
-          const arrayBuffer = await upstream.arrayBuffer();
-          const buffer = Buffer.from(arrayBuffer);
-          imageMemoryCache.set(imageUrl, { buffer, contentType });
-          res.setHeader("Content-Type", contentType);
-          res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
-          res.setHeader("X-Cache", "MISS");
-          return res.send(buffer);
+          const upstream = await fetch(urlToFetch, {
+            signal: controller.signal,
+            headers
+          });
+          clearTimeout(timer);
+          if (upstream.ok) {
+            const contentType = upstream.headers.get("content-type") || "image/jpeg";
+            const arrayBuffer = await upstream.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            imageMemoryCache.set(imageUrl, { buffer, contentType });
+            res.setHeader("Content-Type", contentType);
+            res.setHeader("Access-Control-Allow-Origin", "*");
+            res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+            res.setHeader("X-Cache", "MISS");
+            return res.send(buffer);
+          }
+        } catch (err) {
         }
-      } catch (err) {
       }
     }
     return res.status(502).send("Failed to fetch image upstream across all fallback sources");
+  });
+  const TRUYENQQ_MIRRORS = [
+    "https://truyenqqko.com",
+    "https://truyenqqno.com",
+    "https://truyenqqgo.com",
+    "https://truyenqqto.com",
+    "https://truyenqqviet.com"
+  ];
+  async function fetchWithDomainFallback(pathBuilder, options = {}) {
+    let lastError = null;
+    for (const base of TRUYENQQ_MIRRORS) {
+      try {
+        const url = pathBuilder(base);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4500);
+        const headers = {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Referer": `${base}/`
+        };
+        if (options.isPost) {
+          headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8";
+          headers["X-Requested-With"] = "XMLHttpRequest";
+        }
+        const res = await fetch(url, {
+          method: options.method || (options.isPost ? "POST" : "GET"),
+          headers,
+          body: options.body,
+          signal: controller.signal
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          const html = await res.text();
+          if (html && html.length > 50 && (html.includes("truyen-tranh") || html.includes("book_avatar") || html.includes("search_avatar") || html.includes("search_info") || html.includes("list_grid") || html.includes("works-chapter-item") || html.includes("page-chapter") || html.includes("ItemList"))) {
+            return { html, base };
+          }
+        }
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError || new Error("All TruyenQQ mirrors failed");
+  }
+  function cleanTruyenqqCoverUrl(url) {
+    if (!url) return "";
+    let u = url.trim();
+    if (u.startsWith("//")) u = "https:" + u;
+    if (u.startsWith("http://")) u = "https://" + u.slice(7);
+    u = u.replace(/(\d+\.)?tintruyen\.(net|com)/gi, "i.hinhhinh.com");
+    u = u.replace(/(https?:\/\/[^\/]+)\/\/+/g, "$1/");
+    u = u.replace(/F80x105/gi, "190x247");
+    u = u.replace(/F\d+x\d+/gi, "190x247");
+    u = u.replace(/\/ebook\/F?\d+x\d+\//gi, "/ebook/190x247/");
+    u = u.replace(/\/thumb\/F?\d+x\d+\//gi, "/thumb/190x247/");
+    u = u.replace(/[-_]F?80x105\./gi, "-190x247.").replace(/[-_]F?90x\d+\./gi, "-190x247.");
+    u = u.replace(/80x105/gi, "190x247");
+    return u;
+  }
+  function extractTruyenqqCoverUrl(block) {
+    if (!block) return "";
+    const srcMatch = block.match(/<img[^>]*src="([^"]+)"/i);
+    if (srcMatch && srcMatch[1]) {
+      const s = srcMatch[1].trim();
+      if (!s.includes("lazy.gif") && !s.includes("no_image") && !s.includes("logo") && !s.includes("icon")) {
+        return cleanTruyenqqCoverUrl(s);
+      }
+    }
+    const origMatch = block.match(/data-original="([^"]+)"/i);
+    if (origMatch && origMatch[1]) {
+      const s = origMatch[1].trim();
+      if (!s.includes("lazy.gif") && !s.includes("no_image") && !s.includes("logo")) {
+        return cleanTruyenqqCoverUrl(s);
+      }
+    }
+    const dataSrcMatch = block.match(/data-src="([^"]+)"/i);
+    if (dataSrcMatch && dataSrcMatch[1]) {
+      const s = dataSrcMatch[1].trim();
+      if (!s.includes("lazy.gif") && !s.includes("no_image") && !s.includes("logo")) {
+        return cleanTruyenqqCoverUrl(s);
+      }
+    }
+    const srcMatches = [...block.matchAll(/src="([^"]+)"/gi)];
+    for (const m of srcMatches) {
+      const s = m[1]?.trim();
+      if (s && !s.includes("lazy.gif") && !s.includes("no_image") && !s.includes("logo") && !s.includes("icon")) {
+        return cleanTruyenqqCoverUrl(s);
+      }
+    }
+    return "";
+  }
+  async function scrapeTruyenqqList(page = 1) {
+    const { html } = await fetchWithDomainFallback((base) => `${base}/truyen-moi-cap-nhat/trang-${page}`);
+    const pageMatches = [...html.matchAll(/\/trang-(\d+)/g)];
+    let maxPage = 1;
+    for (const pm of pageMatches) {
+      const p = parseInt(pm[1], 10);
+      if (p > maxPage && p < 1e4) maxPage = p;
+    }
+    const items = [];
+    const listGridMatch = html.match(/<ul class="list_grid[^"]*">([\s\S]*?)<\/ul>/i) || html.match(/<div class="list_grid[^"]*">([\s\S]*?)<\/div>/i);
+    const container = listGridMatch ? listGridMatch[0] : html;
+    const liBlocks = container.match(/<li[^>]*>[\s\S]*?<\/li>/gi) || [];
+    for (const block of liBlocks) {
+      const slugMatch = block.match(/href="[^"]*\/truyen-tranh\/([^"]+)"/i);
+      const titleMatch = block.match(/<h3[^>]*><a[^>]*title="([^"]+)"/i) || block.match(/<h3[^>]*><a[^>]*>([^<]+)<\/a>/i) || block.match(/alt="([^"]+)"/i) || block.match(/<p class="name">([^<]+)<\/p>/i);
+      const rawCover = extractTruyenqqCoverUrl(block);
+      const lastChapMatch = block.match(/class="last_chapter"[^>]*>[\s\S]*?<a[^>]*>([^<]+)<\/a>/i);
+      const descMatch = block.match(/class="excerpt"[^>]*>([\s\S]*?)<\/div>/i);
+      const statusMatch = block.match(/Tình trạng:\s*([^<]+)<\/p>/i);
+      const otherTitleMatch = block.match(/Tên khác:\s*([^<]+)<\/div>/i);
+      if (slugMatch && titleMatch) {
+        const slug = slugMatch[1].replace(/^\/|\/$/g, "");
+        const title = titleMatch[1].trim();
+        const coverUrl = rawCover.replace(/F80x105/gi, "F190x247").replace(/80x105/gi, "190x247");
+        const lastChapter = lastChapMatch ? lastChapMatch[1].trim() : "";
+        const description = descMatch ? descMatch[1].trim() : "";
+        const status = statusMatch ? statusMatch[1].trim() : "\u0110ang c\u1EADp nh\u1EADt";
+        const altTitles = otherTitleMatch ? otherTitleMatch[1].split(";").map((s) => s.trim()) : [];
+        items.push({
+          id: slug,
+          slug,
+          title,
+          coverUrl,
+          lastChapter,
+          description,
+          status,
+          altTitles,
+          source: "truyenqq",
+          chapters: []
+        });
+      }
+    }
+    return { items, totalPages: maxPage };
+  }
+  async function scrapeTruyenqqSearch(keyword) {
+    const items = [];
+    const cleanKw = keyword.trim();
+    if (!cleanKw) return { items: [], totalPages: 1 };
+    try {
+      const formData = new URLSearchParams();
+      formData.append("search", cleanKw);
+      formData.append("type", "0");
+      const { html } = await fetchWithDomainFallback(
+        (base) => `${base}/frontend/search/search`,
+        { isPost: true, body: formData.toString() }
+      );
+      if (html) {
+        const liBlocks = html.match(/<li>[\s\S]*?<\/li>/gi) || [];
+        for (const block of liBlocks) {
+          const slugMatch = block.match(/href="[^"]*\/truyen-tranh\/([^"]+)"/i);
+          const titleMatch = block.match(/<p class="name">([^<]+)<\/p>/i) || block.match(/<h3[^>]*>([^<]+)<\/h3>/i) || block.match(/alt="([^"]+)"/i);
+          const altMatch = block.match(/<p class="name_other">([^<]+)<\/p>/i);
+          const rawCover = extractTruyenqqCoverUrl(block);
+          if (slugMatch && titleMatch) {
+            const slug = slugMatch[1].replace(/^\/|\/$/g, "");
+            const title = titleMatch[1].trim();
+            const altTitles = altMatch ? altMatch[1].split(";").map((s) => s.trim()) : [];
+            const coverUrl = rawCover.replace(/F80x105/gi, "F190x247").replace(/80x105/gi, "190x247");
+            let lastChapter = "";
+            if (block.includes("Ch\u01B0\u01A1ng") || block.includes("Chapter") || block.includes("Chap")) {
+              const chm = block.match(/<p>(Chương\s*[\d.]+|Chapter\s*[\d.]+|Chap\s*[\d.]+)<\/p>/i) || block.match(/(?:Chương|Chapter|Chap)\s*[\d.]+/i);
+              if (chm) lastChapter = Array.isArray(chm) ? chm[1] || chm[0] : String(chm);
+            }
+            items.push({
+              id: slug,
+              slug,
+              title,
+              altTitles,
+              coverUrl,
+              lastChapter,
+              source: "truyenqq",
+              chapters: []
+            });
+          }
+        }
+        if (items.length > 0) return { items, totalPages: 1 };
+      }
+    } catch (e) {
+      console.warn("TruyenQQ POST search failed:", e?.message);
+    }
+    return { items, totalPages: 1 };
+  }
+  async function scrapeTruyenqqDetail(slug) {
+    const cleanSlug = slug.replace(/^https?:\/\/[^/]+\/truyen-tranh\//i, "").replace(/^\/|\/$/g, "");
+    const { html, base } = await fetchWithDomainFallback((b) => `${b}/truyen-tranh/${cleanSlug}`);
+    const titleMatch = html.match(/<h1[^>]*itemprop="name"[^>]*>([^<]+)<\/h1>/i) || html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
+    const title = titleMatch ? titleMatch[1].trim() : "Truy\u1EC7n Tranh";
+    const rawCover = extractTruyenqqCoverUrl(html);
+    const coverUrl = rawCover.replace(/F80x105/gi, "F190x247").replace(/80x105/gi, "190x247");
+    const altMatch = html.match(/<li class="othername[^>]*>[\s\S]*?<p class="other-name[^>]*>([^<]+)<\/p>/i);
+    const altTitles = altMatch ? altMatch[1].split(";").map((s) => s.trim()) : [];
+    const authorMatch = html.match(/<li class="author[^>]*>[\s\S]*?<a[^>]*>([^<]+)<\/a>/i);
+    const authors = authorMatch ? [authorMatch[1].trim()] : [];
+    const statusMatch = html.match(/<li class="status[^>]*>[\s\S]*?<p class="col-xs-9">([^<]+)<\/p>/i);
+    const status = statusMatch ? statusMatch[1].trim() : "\u0110ang c\u1EADp nh\u1EADt";
+    const genreMatches = [...html.matchAll(/<ul class="list01">[\s\S]*?<\/ul>/gi)];
+    let genres = [];
+    if (genreMatches.length > 0) {
+      const gList = [...genreMatches[0][0].matchAll(/<a[^>]*>([^<]+)<\/a>/gi)];
+      genres = gList.map((g) => g[1].trim());
+    }
+    const descMatch = html.match(/<div class="story-detail-info[^>]*>([\s\S]*?)<\/div>/i) || html.match(/<p class="listing-excerpt">([\s\S]*?)<\/p>/i);
+    const description = descMatch ? descMatch[1].replace(/<[^>]+>/g, "").trim() : "";
+    const chapters = [];
+    const chapBlocks = [...html.matchAll(/<div class="works-chapter-item">[\s\S]*?<a[^>]*href="([^"]*\/truyen-tranh\/([^"]+))"[^>]*>([^<]+)<\/a>/gi)];
+    for (const cb of chapBlocks) {
+      const chapSlug = cb[2].replace(/^\/|\/$/g, "");
+      const chapTitle = cb[3].trim();
+      const numMatch = chapTitle.match(/(?:Chương|Chapter|Chap)\s*([\d.]+)/i) || chapSlug.match(/chap-([\d.]+)/i);
+      const chapterNumber = numMatch ? numMatch[1] : chapTitle;
+      chapters.push({
+        id: chapSlug,
+        slug: chapSlug,
+        title: chapTitle,
+        chapterNumber,
+        source: "truyenqq",
+        chapterApiUrl: `${base}/truyen-tranh/${chapSlug}`
+      });
+    }
+    return {
+      id: cleanSlug,
+      slug: cleanSlug,
+      title,
+      altTitles,
+      coverUrl,
+      description,
+      status,
+      authors,
+      genres,
+      chapters,
+      source: "truyenqq"
+    };
+  }
+  async function scrapeTruyenqqChapter(chapSlug) {
+    const cleanChapSlug = chapSlug.replace(/^https?:\/\/[^/]+\/truyen-tranh\//i, "").replace(/^\/|\/$/g, "");
+    const { html } = await fetchWithDomainFallback((b) => `${b}/truyen-tranh/${cleanChapSlug}`);
+    const pages = [];
+    const imgMatches = [...html.matchAll(/<img[^>]*class="[^"]*lazy[^"]*"[^>]*data-original="([^"]+)"/gi)].concat([...html.matchAll(/<img[^>]*data-original="([^"]+)"/gi)]).concat([...html.matchAll(/<div class="page-chapter"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/gi)]);
+    for (const m of imgMatches) {
+      const src = m[1];
+      if (src && !src.includes("lazy.gif") && !src.includes("logo") && !pages.includes(src)) {
+        pages.push(src);
+      }
+    }
+    return pages;
+  }
+  app.get("/api/proxy/truyenqq/list", async (req, res) => {
+    const page = parseInt(String(req.query.page || "1"), 10) || 1;
+    const cacheKey = `truyenqq:list:page:${page}`;
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+    try {
+      const data = await scrapeTruyenqqList(page);
+      if (data && Array.isArray(data.items) && data.items.length > 0) {
+        proxyCache.set(cacheKey, { data, timestamp: Date.now() });
+        return res.json(data);
+      }
+    } catch (err) {
+      console.warn("TruyenQQ list scraper warning:", err.message);
+    }
+    try {
+      const otRes = await fetch(`https://otruyenapi.com/v1/api/danh-sach/truyen-moi?page=${page}`, {
+        headers: { "User-Agent": "Mozilla/5.0" }
+      });
+      if (otRes.ok) {
+        const otData = await otRes.json();
+        const rawItems = otData.data?.items || [];
+        const domainCdn = otData.data?.domain_cdn || "https://otruyenapi.com/uploads/comics";
+        const items = rawItems.map((item) => ({
+          id: item.slug || item._id,
+          slug: item.slug,
+          title: item.name,
+          coverUrl: item.thumb_url ? item.thumb_url.startsWith("http") ? item.thumb_url : `${domainCdn}/${item.thumb_url}` : "",
+          status: item.status || "\u0110ang c\u1EADp nh\u1EADt",
+          source: "truyenqq",
+          chapters: []
+        }));
+        const totalItems = otData.data?.params?.pagination?.totalItems || rawItems.length * 16;
+        const totalPages = Math.max(1, Math.ceil(totalItems / 24));
+        const payload = { items, totalPages, isFallback: true, fallbackSource: "otruyen" };
+        proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+        return res.json(payload);
+      }
+    } catch (e) {
+    }
+    if (cached) return res.json(cached.data);
+    return res.json({ items: [], totalPages: 1 });
+  });
+  app.get("/api/proxy/truyenqq/search", async (req, res) => {
+    const query = String(req.query.q || req.query.keyword || "").trim();
+    if (!query) {
+      return res.json({ items: [], totalPages: 1 });
+    }
+    const cacheKey = `truyenqq:search:${query.toLowerCase()}`;
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+    try {
+      const data = await scrapeTruyenqqSearch(query);
+      if (data && Array.isArray(data.items) && data.items.length > 0) {
+        proxyCache.set(cacheKey, { data, timestamp: Date.now() });
+        return res.json(data);
+      }
+    } catch (err) {
+      console.warn("TruyenQQ search scraper warning:", err.message);
+    }
+    try {
+      const otRes = await fetch(`https://otruyenapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(query)}&page=1`, {
+        headers: { "User-Agent": "Mozilla/5.0" }
+      });
+      if (otRes.ok) {
+        const otData = await otRes.json();
+        const rawItems = otData.data?.items || [];
+        const domainCdn = otData.data?.domain_cdn || "https://otruyenapi.com/uploads/comics";
+        const items = rawItems.map((item) => ({
+          id: item.slug || item._id,
+          slug: item.slug,
+          title: item.name,
+          coverUrl: item.thumb_url ? item.thumb_url.startsWith("http") ? item.thumb_url : `${domainCdn}/${item.thumb_url}` : "",
+          source: "truyenqq",
+          chapters: []
+        }));
+        const payload = { items, totalPages: 1, isFallback: true, fallbackSource: "otruyen" };
+        proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+        return res.json(payload);
+      }
+    } catch (e) {
+    }
+    if (cached) return res.json(cached.data);
+    return res.json({ items: [], totalPages: 1 });
+  });
+  app.get("/api/proxy/truyenqq/detail", async (req, res) => {
+    const slug = String(req.query.slug || req.query.id || "").trim();
+    if (!slug) {
+      return res.status(400).json({ error: "Missing manga slug/id" });
+    }
+    const cacheKey = `truyenqq:detail:${slug}`;
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+    try {
+      const data = await scrapeTruyenqqDetail(slug);
+      if (data && data.title && data.chapters && data.chapters.length > 0) {
+        proxyCache.set(cacheKey, { data, timestamp: Date.now() });
+        return res.json(data);
+      }
+    } catch (err) {
+      console.warn("TruyenQQ detail scraper warning:", err.message);
+    }
+    const cleanSlug = slug.replace(/-\d+$/, "").replace(/^https?:\/\/[^/]+\/truyen-tranh\//i, "").replace(/^\/|\/$/g, "");
+    const slugsToTry = Array.from(/* @__PURE__ */ new Set([slug, cleanSlug]));
+    for (const s of slugsToTry) {
+      try {
+        const otRes = await fetch(`https://otruyenapi.com/v1/api/truyen-tranh/${encodeURIComponent(s)}`, {
+          headers: { "User-Agent": "Mozilla/5.0" }
+        });
+        if (otRes.ok) {
+          const otData = await otRes.json();
+          const item = otData.data?.item;
+          if (item) {
+            const domainCdn = otData.data?.domain_cdn || "https://otruyenapi.com/uploads/comics";
+            const coverUrl = item.thumb_url ? item.thumb_url.startsWith("http") ? item.thumb_url : `${domainCdn}/${item.thumb_url}` : "";
+            const rawChapters = item.chapters?.[0]?.server_data || [];
+            const chapters = rawChapters.map((ch) => ({
+              id: ch.chapter_api_data || ch.chapter_name,
+              chapterNumber: ch.chapter_name,
+              title: `Chapter ${ch.chapter_name}${ch.chapter_title ? `: ${ch.chapter_title}` : ""}`,
+              source: "truyenqq",
+              chapterApiUrl: ch.chapter_api_data
+            }));
+            if (chapters.length > 0) {
+              const payload = {
+                id: slug,
+                slug,
+                title: item.name,
+                altTitles: item.origin_name ? [item.origin_name] : [],
+                coverUrl,
+                description: item.content,
+                status: item.status,
+                authors: item.author || [],
+                genres: item.category?.map((c) => c.name) || [],
+                chapters,
+                source: "truyenqq"
+              };
+              proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+              return res.json(payload);
+            }
+          }
+        }
+      } catch (e) {
+      }
+    }
+    try {
+      const keyword = cleanSlug.replace(/-/g, " ");
+      const searchRes = await fetch(`https://otruyenapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(keyword)}&page=1`, {
+        headers: { "User-Agent": "Mozilla/5.0" }
+      });
+      if (searchRes.ok) {
+        const searchData = await searchRes.json();
+        const matchedItem = searchData.data?.items?.[0];
+        if (matchedItem && matchedItem.slug) {
+          const otRes = await fetch(`https://otruyenapi.com/v1/api/truyen-tranh/${encodeURIComponent(matchedItem.slug)}`, {
+            headers: { "User-Agent": "Mozilla/5.0" }
+          });
+          if (otRes.ok) {
+            const otData = await otRes.json();
+            const item = otData.data?.item;
+            if (item) {
+              const domainCdn = otData.data?.domain_cdn || "https://otruyenapi.com/uploads/comics";
+              const coverUrl = item.thumb_url ? item.thumb_url.startsWith("http") ? item.thumb_url : `${domainCdn}/${item.thumb_url}` : "";
+              const rawChapters = item.chapters?.[0]?.server_data || [];
+              const chapters = rawChapters.map((ch) => ({
+                id: ch.chapter_api_data || ch.chapter_name,
+                chapterNumber: ch.chapter_name,
+                title: `Chapter ${ch.chapter_name}${ch.chapter_title ? `: ${ch.chapter_title}` : ""}`,
+                source: "truyenqq",
+                chapterApiUrl: ch.chapter_api_data
+              }));
+              if (chapters.length > 0) {
+                const payload = {
+                  id: slug,
+                  slug,
+                  title: item.name || matchedItem.name,
+                  altTitles: item.origin_name ? [item.origin_name] : [],
+                  coverUrl,
+                  description: item.content,
+                  status: item.status,
+                  authors: item.author || [],
+                  genres: item.category?.map((c) => c.name) || [],
+                  chapters,
+                  source: "truyenqq"
+                };
+                proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+                return res.json(payload);
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+    }
+    try {
+      const keyword = cleanSlug.replace(/-/g, " ");
+      const ctSearchRes = await fetch(`https://cuutruyen.net/api/v2/mangas/recently_updated?query=${encodeURIComponent(keyword)}`, {
+        headers: { "User-Agent": "Mozilla/5.0" }
+      });
+      if (ctSearchRes.ok) {
+        const ctSearchData = await ctSearchRes.json();
+        const rawManga = ctSearchData.data?.[0];
+        if (rawManga && rawManga.id) {
+          const chapRes = await fetch(`https://cuutruyen.net/api/v2/mangas/${rawManga.id}/chapters`, {
+            headers: { "User-Agent": "Mozilla/5.0" }
+          });
+          if (chapRes.ok) {
+            const chapData = await chapRes.json();
+            const rawChaps = chapData.data || [];
+            const chapters = rawChaps.map((ch) => ({
+              id: String(ch.id),
+              chapterNumber: String(ch.number || ch.name || "1"),
+              title: ch.name ? `Chapter ${ch.number || ch.name}: ${ch.name}` : `Chapter ${ch.number || "1"}`,
+              source: "cuutruyen"
+            }));
+            if (chapters.length > 0) {
+              const payload = {
+                id: slug,
+                slug,
+                title: rawManga.name,
+                altTitles: [],
+                coverUrl: rawManga.cover_url || rawManga.cover_mobile_url || "",
+                description: rawManga.description || "",
+                status: rawManga.status || "\u0110ang c\u1EADp nh\u1EADt",
+                authors: [],
+                genres: [],
+                chapters,
+                source: "truyenqq"
+              };
+              proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+              return res.json(payload);
+            }
+          }
+        }
+      }
+    } catch (e) {
+    }
+    if (cached) return res.json(cached.data);
+    return res.status(404).json({ error: "Manga detail not found" });
+  });
+  app.get("/api/proxy/truyenqq/chapter", async (req, res) => {
+    const slug = String(req.query.slug || req.query.url || req.query.id || "").trim();
+    if (!slug) {
+      return res.status(400).json({ error: "Missing chapter slug/url" });
+    }
+    const cacheKey = `truyenqq:chapter:${slug}`;
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+    try {
+      const pages = await scrapeTruyenqqChapter(slug);
+      if (pages.length > 0) {
+        const data = { pages };
+        proxyCache.set(cacheKey, { data, timestamp: Date.now() });
+        return res.json(data);
+      }
+    } catch (err) {
+      console.warn("TruyenQQ chapter error:", err.message);
+    }
+    if (slug.includes("otruyenapi.com") || slug.startsWith("http")) {
+      try {
+        const otRes = await fetch(slug, { headers: { "User-Agent": "Mozilla/5.0" } });
+        if (otRes.ok) {
+          const otData = await otRes.json();
+          if (otData.status === "success" && otData.data?.item) {
+            const domainCdn = otData.data.domain_cdn || "https://otruyenapi.com/uploads/comics";
+            const chapterPath = otData.data.item.chapter_path;
+            const images = otData.data.item.chapter_image || [];
+            const pages = images.map((img) => `/api/proxy/image?url=${encodeURIComponent(`${domainCdn}/${chapterPath}/${img.image_file}`)}`);
+            const payload = { pages };
+            proxyCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+            return res.json(payload);
+          }
+        }
+      } catch (e) {
+      }
+    }
+    if (cached) return res.json(cached.data);
+    return res.json({ pages: [] });
+  });
+  app.get("/api/proxy/mangadex/*", async (req, res) => {
+    const rawEndpoint = req.params[0] || "";
+    const cleanEndpoint = rawEndpoint.split("?")[0];
+    const rawQuery = req.url.includes("?") ? req.url.substring(req.url.indexOf("?") + 1) : "";
+    const targetUrl = `https://api.mangadex.org/${cleanEndpoint}${rawQuery ? `?${rawQuery}` : ""}`;
+    const cacheKey = `mangadex:${cleanEndpoint}?${rawQuery}`;
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+    try {
+      const data = await fetchWithTimeout(targetUrl, 15e3);
+      proxyCache.set(cacheKey, { data, timestamp: Date.now() });
+      return res.json(data);
+    } catch (err) {
+      console.warn(`[MangaDex Proxy Warning] ${targetUrl}:`, err.message);
+      if (cached) return res.json(cached.data);
+      return res.status(502).json({ error: err.message });
+    }
+  });
+  app.get("/api/proxy/otruyen/*", async (req, res) => {
+    const rawEndpoint = req.params[0] || "";
+    const cleanEndpoint = rawEndpoint.split("?")[0];
+    const rawQuery = req.url.includes("?") ? req.url.substring(req.url.indexOf("?") + 1) : "";
+    const targetUrl = `https://otruyenapi.com/v1/api/${cleanEndpoint}${rawQuery ? `?${rawQuery}` : ""}`;
+    const cacheKey = `otruyen:${cleanEndpoint}?${rawQuery}`;
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+    try {
+      const data = await fetchWithTimeout(targetUrl, 1e4);
+      proxyCache.set(cacheKey, { data, timestamp: Date.now() });
+      return res.json(data);
+    } catch (err) {
+      console.warn(`[OTruyen Proxy Warning] ${targetUrl}:`, err.message);
+      if (cached) return res.json(cached.data);
+      return res.status(502).json({ error: err.message });
+    }
+  });
+  app.get("/api/proxy/cuutruyen/*", async (req, res) => {
+    let rawEndpoint = req.params[0] || "";
+    let cleanEndpoint = rawEndpoint.split("?")[0];
+    if (cleanEndpoint === "mangas" || cleanEndpoint === "mangas/") {
+      cleanEndpoint = "mangas/recently_updated";
+    }
+    const rawQuery = req.url.includes("?") ? req.url.substring(req.url.indexOf("?") + 1) : "";
+    const targetUrl = `https://cuutruyen.net/api/v2/${cleanEndpoint}${rawQuery ? `?${rawQuery}` : ""}`;
+    const cacheKey = `cuutruyen:${cleanEndpoint}?${rawQuery}`;
+    const cached = proxyCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+    try {
+      const data = await fetchWithTimeout(targetUrl, 1e4);
+      proxyCache.set(cacheKey, { data, timestamp: Date.now() });
+      return res.json(data);
+    } catch (err) {
+      console.warn(`[CuuTruyen Proxy Warning] ${targetUrl}:`, err.message);
+      if (cached) return res.json(cached.data);
+      return res.status(502).json({ error: err.message });
+    }
   });
   app.get("/api/proxy/movie/*", async (req, res) => {
     const endpoint = req.params[0];
@@ -852,6 +1710,14 @@ async function startServer() {
         try {
           const parsed = JSON.parse(responseText);
           if (parsed && Array.isArray(parsed.keys) && parsed.keys.length > 0) {
+            for (const keyItem of parsed.keys) {
+              if (keyItem.kid) {
+                keyItem.kid = keyItem.kid.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+              }
+              if (keyItem.k) {
+                keyItem.k = keyItem.k.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+              }
+            }
             return res.json(parsed);
           }
         } catch (e) {
@@ -900,7 +1766,81 @@ async function startServer() {
       return res.status(500).json({ error: err.message, keys: [] });
     }
   });
+  async function fetchYouTubeInnerTubeBackend(query, token) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 7e3);
+      const body = {
+        context: {
+          client: {
+            clientName: "WEB",
+            clientVersion: "2.20240801.00.00",
+            hl: "vi",
+            gl: "VN"
+          }
+        }
+      };
+      if (token) {
+        body.continuation = token;
+      } else {
+        body.query = query;
+      }
+      const res = await fetch("https://www.youtube.com/youtubei/v1/search?prettyPrint=false", {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8",
+          "Origin": "https://www.youtube.com",
+          "Referer": "https://www.youtube.com/",
+          "X-YouTube-Client-Name": "1",
+          "X-YouTube-Client-Version": "2.20240801.00.00"
+        },
+        body: JSON.stringify(body)
+      }).finally(() => clearTimeout(timer));
+      if (!res.ok) return { channels: [], items: [], nextToken: null };
+      const data = await res.json();
+      if (!data) return { channels: [], items: [], nextToken: null };
+      const items = extractAllVideos(data);
+      const channels = [];
+      const walkChannels = (obj) => {
+        if (!obj || typeof obj !== "object") return;
+        const c = obj.channelRenderer;
+        if (c && c.channelId && !channels.some((x) => x.id === c.channelId)) {
+          const title = c.title?.simpleText || c.title?.runs?.[0]?.text || "K\xEAnh YouTube";
+          const subscribers = c.subscriberCountText?.simpleText || c.subscriberCountText?.runs?.[0]?.text || "";
+          let avatarUrl = c.thumbnail?.thumbnails?.[c.thumbnail.thumbnails.length - 1]?.url || "";
+          if (avatarUrl && avatarUrl.startsWith("//")) avatarUrl = "https:" + avatarUrl;
+          if (avatarUrl && c.channelId) {
+            channelAvatarCache.set(c.channelId, avatarUrl);
+          }
+          channels.push({
+            id: c.channelId,
+            title,
+            subscribers,
+            avatarUrl,
+            description: c.descriptionSnippet?.runs?.[0]?.text || ""
+          });
+        }
+        for (const k of Object.keys(obj)) {
+          if (obj[k] && typeof obj[k] === "object") walkChannels(obj[k]);
+        }
+      };
+      walkChannels(data);
+      return { channels, items, nextToken: findNextContinuationToken(data) };
+    } catch (e) {
+      console.error("InnerTube backend search error:", e);
+      return { channels: [], items: [], nextToken: null };
+    }
+  }
   async function scrapeYouTubeSearch(query, opts) {
+    if (!opts?.liveOnly) {
+      const innerRes = await fetchYouTubeInnerTubeBackend(query);
+      if (innerRes.items.length > 0 || innerRes.channels.length > 0) {
+        return innerRes;
+      }
+    }
     try {
       const url = "https://www.youtube.com/results?search_query=" + encodeURIComponent(query) + (opts?.liveOnly ? "&sp=EgJAAQ%3D%3D" : "") + "&persist_gl=1&gl=VN&hl=vi";
       const { data, apiKey, clientVersion } = await fetchYouTubePageDataFull(url);
@@ -920,6 +1860,9 @@ async function startServer() {
           const description = c.descriptionSnippet?.runs?.[0]?.text || "";
           let avatarUrl = c.thumbnail?.thumbnails?.[c.thumbnail.thumbnails.length - 1]?.url || "";
           if (avatarUrl && avatarUrl.startsWith("//")) avatarUrl = "https:" + avatarUrl;
+          if (avatarUrl && channelId) {
+            channelAvatarCache.set(channelId, avatarUrl);
+          }
           channels.push({
             id: channelId,
             title,
@@ -959,7 +1902,7 @@ async function startServer() {
       }).finally(() => clearTimeout(timer));
       if (!res.ok) return { data: null };
       const html = await res.text();
-      const match = html.match(/var ytInitialData = ({.*?});<\/script>/s) || html.match(/ytInitialData = ({.*?});/s);
+      const match = html.match(/window\["ytInitialData"\]\s*=\s*({.*?});/s) || html.match(/var ytInitialData\s*=\s*({.*?});/s) || html.match(/ytInitialData\s*=\s*({.*?});/s) || html.match(/ytInitialData\s*=\s*({[\s\S]*?});<\/script>/);
       if (!match) return { data: null };
       return {
         data: JSON.parse(match[1]),
@@ -1075,11 +2018,49 @@ async function startServer() {
       }
     }
     let channelTitle = "";
+    let channelId = "";
     let channelAvatar = "";
     let viewCount = "";
     let publishedAt = "";
     const avSrcs = metaVm?.image?.avatarViewModel?.avatar?.image?.sources || [];
     if (avSrcs.length > 0) channelAvatar = avSrcs[avSrcs.length - 1]?.url || "";
+    if (channelAvatar && channelAvatar.startsWith("//")) {
+      channelAvatar = "https:" + channelAvatar;
+    }
+    const possibleChannelTitles = [
+      metaVm?.ownerText?.runs?.[0]?.text,
+      metaVm?.ownerText?.simpleText,
+      lockup.shortBylineText?.runs?.[0]?.text,
+      lockup.longBylineText?.runs?.[0]?.text,
+      metaVm?.image?.avatarViewModel?.avatar?.image?.accessibility?.accessibilityData?.label
+    ];
+    for (const titleCandidate of possibleChannelTitles) {
+      if (titleCandidate && typeof titleCandidate === "string" && titleCandidate.trim().length > 0) {
+        let cleanName = titleCandidate.trim();
+        if (cleanName.startsWith("\u1EA2nh \u0111\u1EA1i di\u1EC7n cho ")) {
+          cleanName = cleanName.replace("\u1EA2nh \u0111\u1EA1i di\u1EC7n cho ", "");
+        } else if (cleanName.startsWith("Avatar for ")) {
+          cleanName = cleanName.replace("Avatar for ", "");
+        }
+        if (cleanName) {
+          channelTitle = cleanName;
+          break;
+        }
+      }
+    }
+    const possibleChannelIds = [
+      metaVm?.ownerText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId,
+      metaVm?.image?.avatarViewModel?.onTap?.innertubeCommand?.browseEndpoint?.browseId,
+      lockup.shortBylineText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId,
+      lockup.longBylineText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId,
+      lockup.rendererContext?.commandContext?.onTap?.innertubeCommand?.watchEndpoint?.ownerChannelId
+    ];
+    for (const idCandidate of possibleChannelIds) {
+      if (idCandidate && typeof idCandidate === "string" && idCandidate.startsWith("UC")) {
+        channelId = idCandidate;
+        break;
+      }
+    }
     const rows = metaVm?.metadata?.contentMetadataViewModel?.metadataRows || [];
     for (const row of rows) {
       for (const part of row?.metadataParts || []) {
@@ -1095,11 +2076,14 @@ async function startServer() {
         }
       }
     }
+    if (!channelAvatar && channelId && channelAvatarCache.has(channelId)) {
+      channelAvatar = channelAvatarCache.get(channelId) || "";
+    }
     return {
       id: vid,
       title,
       channelTitle: channelTitle || "K\xEAnh YouTube",
-      channelId: "",
+      channelId: channelId || "",
       channelAvatar,
       publishedAt: publishedAt || "M\u1EDBi \u0111\xE2y",
       viewCount,
@@ -1174,6 +2158,7 @@ async function startServer() {
       category: isLive ? "live" : "trending"
     };
   }
+  const channelAvatarCache = /* @__PURE__ */ new Map();
   let cachedInnertubeKey;
   let cachedInnertubeVer;
   const VIETNAM_CATEGORY_QUERIES = {
@@ -1284,7 +2269,55 @@ async function startServer() {
   };
   const TRENDING_FALLBACK_QUERIES = VIETNAM_CATEGORY_QUERIES.all;
   const buildTrendingFallbackToken = (pageIndex, category) => `trendsearch:${pageIndex}:${encodeURIComponent(category || "all")}`;
+  async function fetchYouTubeInnerTubeTrendingBackend(region = "VN") {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 7e3);
+      const body = {
+        context: {
+          client: {
+            clientName: "WEB",
+            clientVersion: "2.20240801.00.00",
+            hl: "vi",
+            gl: region
+          }
+        },
+        browseId: "FEtrending"
+      };
+      const res = await fetch("https://www.youtube.com/youtubei/v1/browse?prettyPrint=false", {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8",
+          "Origin": "https://www.youtube.com",
+          "Referer": "https://www.youtube.com/",
+          "X-YouTube-Client-Name": "1",
+          "X-YouTube-Client-Version": "2.20240801.00.00"
+        },
+        body: JSON.stringify(body)
+      }).finally(() => clearTimeout(timer));
+      if (!res.ok) return { items: [], nextToken: null };
+      const data = await res.json();
+      if (!data) return { items: [], nextToken: null };
+      const seen = /* @__PURE__ */ new Set();
+      const items = extractAllVideos(data).filter((v) => {
+        if (!v?.id || seen.has(v.id)) return false;
+        seen.add(v.id);
+        return true;
+      });
+      return { items, nextToken: findNextContinuationToken(data) };
+    } catch (e) {
+      console.error("InnerTube backend trending error:", e);
+      return { items: [], nextToken: null };
+    }
+  }
   async function scrapeYouTubeTrending(region = "VN") {
+    const innerRes = await fetchYouTubeInnerTubeTrendingBackend(region);
+    if (innerRes.items.length > 0) {
+      return innerRes;
+    }
     const { data, apiKey, clientVersion } = await fetchYouTubePageDataFull(
       `https://www.youtube.com/feed/trending?gl=${encodeURIComponent(region)}&hl=vi`
     );
@@ -1303,9 +2336,12 @@ async function startServer() {
     const videoId = video?.videoId;
     if (!videoId) return null;
     const title = video.title?.runs?.[0]?.text || video.title?.simpleText || "Video YouTube";
-    const channelTitle = video.ownerText?.runs?.[0]?.text || fallbackChannelTitle;
-    const channelId = video.ownerText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId || "";
-    let channelAvatar = video.channelThumbnailSupportedRenderers?.channelThumbnailWithRippleRenderer?.thumbnail?.thumbnails?.[0]?.url || "";
+    const channelTitle = video.ownerText?.runs?.[0]?.text || video.shortBylineText?.runs?.[0]?.text || video.longBylineText?.runs?.[0]?.text || fallbackChannelTitle;
+    const channelId = video.ownerText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId || video.shortBylineText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId || video.longBylineText?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId || "";
+    let channelAvatar = video.channelThumbnailSupportedRenderers?.channelThumbnailWithRippleRenderer?.thumbnail?.thumbnails?.[0]?.url || video.channelThumbnailSupportedRenderers?.channelThumbnailWithLinkRenderer?.thumbnail?.thumbnails?.[0]?.url || video.channelThumbnailSupportedRenderers?.channelThumbnailRenderer?.thumbnail?.thumbnails?.[0]?.url || video.channelThumbnail?.thumbnails?.[0]?.url || video.channelThumbnail?.thumbnail?.thumbnails?.[0]?.url || video.channelThumbnailWithRippleRenderer?.thumbnail?.thumbnails?.[0]?.url || video.channelThumbnailWithLinkRenderer?.thumbnail?.thumbnails?.[0]?.url || "";
+    if (!channelAvatar && channelId && channelAvatarCache.has(channelId)) {
+      channelAvatar = channelAvatarCache.get(channelId) || "";
+    }
     if (channelAvatar && channelAvatar.startsWith("//")) channelAvatar = "https:" + channelAvatar;
     const publishedAt = video.publishedTimeText?.simpleText || video.publishedTimeText?.runs?.map((r) => r.text).join("") || "M\u1EDBi \u0111\xE2y";
     const viewCount = video.viewCountText?.simpleText || video.viewCountText?.runs?.map((r) => r.text).join("") || "";
@@ -1391,6 +2427,9 @@ async function startServer() {
           meta.avatarUrl = header.avatar.thumbnails[header.avatar.thumbnails.length - 1].url;
         }
       }
+      if (meta.id && meta.avatarUrl) {
+        channelAvatarCache.set(meta.id, meta.avatarUrl);
+      }
       let videos = extractAllVideos(data);
       videos.sort((a, b) => {
         if (a.duration === "LIVE" && b.duration !== "LIVE") return -1;
@@ -1466,6 +2505,69 @@ async function startServer() {
     }
     return parsed;
   }
+  async function scrapeYouTubeChannelSearch(channelId, channelName, query) {
+    const idTrim = (channelId || "").trim();
+    const nameTrim = (channelName || "").trim();
+    const qTrim = (query || "").trim();
+    const fallbackChannel = {
+      id: idTrim || "channel_custom",
+      title: nameTrim || "K\xEAnh YouTube",
+      subscribers: "",
+      description: "",
+      avatarUrl: "",
+      bannerUrl: ""
+    };
+    if (!qTrim) {
+      return scrapeYouTubeChannelVideos(channelId, channelName);
+    }
+    const candidates = [];
+    if (/^UC[\w-]{22}$/.test(idTrim)) {
+      candidates.push(`https://www.youtube.com/channel/${idTrim}`);
+    } else if (idTrim.startsWith("@")) {
+      candidates.push(`https://www.youtube.com/${encodeURIComponent(idTrim)}`);
+    }
+    let items = [];
+    for (const base of candidates) {
+      const searchPageData = await fetchYouTubePageData(`${base}/search?query=${encodeURIComponent(qTrim)}`);
+      if (searchPageData) {
+        const vids = extractAllVideos(searchPageData);
+        if (vids.length > 0) {
+          items = vids;
+          break;
+        }
+      }
+    }
+    if (items.length === 0 && nameTrim) {
+      const resolvedId = await resolveChannelIdByTitle(nameTrim);
+      if (resolvedId) {
+        const searchPageData = await fetchYouTubePageData(`https://www.youtube.com/channel/${resolvedId}/search?query=${encodeURIComponent(qTrim)}`);
+        if (searchPageData) {
+          const vids = extractAllVideos(searchPageData);
+          if (vids.length > 0) {
+            items = vids;
+          }
+        }
+      }
+    }
+    if (items.length === 0) {
+      const searchString = nameTrim ? `"${nameTrim}" ${qTrim}` : `${idTrim} ${qTrim}`;
+      const s1 = await scrapeYouTubeSearch(searchString);
+      const tKey = normChannelKey(nameTrim || idTrim);
+      const channelMatches = s1.items.filter((it) => {
+        const iKey = normChannelKey(it.channelTitle || "");
+        return tKey.length >= 2 && iKey && (iKey === tKey || iKey.includes(tKey) || tKey.includes(iKey));
+      });
+      if (channelMatches.length > 0) {
+        items = channelMatches;
+      } else if (s1.items.length > 0) {
+        items = s1.items;
+      } else {
+        const s2 = await scrapeYouTubeSearch(`${nameTrim} ${qTrim}`);
+        items = s2.items;
+      }
+    }
+    return { channel: fallbackChannel, items };
+  }
   app.get("/api/youtube/search", async (req, res) => {
     const contToken = String(req.query.token || "").trim();
     if (contToken) {
@@ -1497,10 +2599,73 @@ async function startServer() {
       const freshLives = livePass.items.filter((i) => i?.id && !seenIds.has(i.id)).slice(0, 8);
       mergedItems.unshift(...freshLives);
     }
-    if (mergedItems.length > 0 || liveData.channels.length > 0) {
+    const normQ = normChannelKey(query);
+    const isShortQuery = normQ.length <= 6;
+    let matchedChanId = null;
+    if (liveData.channels && liveData.channels.length > 0) {
+      const matchedChan = liveData.channels.find((c) => {
+        const cKey = normChannelKey(c.title || "");
+        if (isShortQuery) {
+          const words = (c.title || "").toLowerCase().split(/\s+/);
+          return words.includes(query.toLowerCase()) || cKey === normQ || cKey.startsWith(normQ);
+        }
+        return normQ.length >= 2 && (cKey.includes(normQ) || normQ.includes(cKey));
+      }) || liveData.channels[0];
+      if (matchedChan && matchedChan.id) {
+        matchedChanId = matchedChan.id;
+        try {
+          const chanData = await scrapeYouTubeChannelVideos(matchedChan.id, matchedChan.title);
+          if (chanData && chanData.items && chanData.items.length > 0) {
+            const seenIds = new Set(mergedItems.map((i) => i.id));
+            const chanVideos = chanData.items.filter((i) => i?.id && !seenIds.has(i.id));
+            mergedItems.unshift(...chanVideos);
+          }
+        } catch (e) {
+          console.warn("Channel video fetch error for search:", e);
+        }
+      }
+    }
+    if (isShortQuery) {
+      try {
+        const vnQueryRes = await scrapeYouTubeSearch(`${query} vi\u1EC7t nam`);
+        if (vnQueryRes.items && vnQueryRes.items.length > 0) {
+          const seenIds = new Set(mergedItems.map((i) => i.id));
+          const freshVn = vnQueryRes.items.filter((i) => i?.id && !seenIds.has(i.id));
+          mergedItems.unshift(...freshVn.slice(0, 10));
+          if (liveData.channels.length === 0 && vnQueryRes.channels.length > 0) {
+            liveData.channels = vnQueryRes.channels;
+          }
+        }
+      } catch (e) {
+      }
+    }
+    let filteredItems = mergedItems;
+    if (normQ === "ttg") {
+      filteredItems = mergedItems.filter((item) => {
+        const titleLower = (item.title || "").toLowerCase();
+        return !titleLower.includes("teen titans") && !titleLower.includes("titan go");
+      });
+    } else if (normQ === "levi") {
+      filteredItems = mergedItems.filter((item) => {
+        const titleLower = (item.title || "").toLowerCase();
+        return !titleLower.includes("jeans") && !titleLower.includes("attack on titan") && !titleLower.includes("ackerman");
+      });
+    }
+    filteredItems.sort((a, b) => {
+      const aChanMatch = normChannelKey(a.channelTitle || "").includes(normQ);
+      const bChanMatch = normChannelKey(b.channelTitle || "").includes(normQ);
+      if (aChanMatch && !bChanMatch) return -1;
+      if (!aChanMatch && bChanMatch) return 1;
+      const aTitleMatch = (a.title || "").toLowerCase().includes(query.toLowerCase());
+      const bTitleMatch = (b.title || "").toLowerCase().includes(query.toLowerCase());
+      if (aTitleMatch && !bTitleMatch) return -1;
+      if (!aTitleMatch && bTitleMatch) return 1;
+      return 0;
+    });
+    if (filteredItems.length > 0 || liveData.channels.length > 0) {
       return res.json({
         channels: liveData.channels,
-        items: mergedItems,
+        items: filteredItems,
         nextToken: liveData.nextToken
       });
     }
@@ -1539,10 +2704,15 @@ async function startServer() {
   app.get("/api/youtube/channel", async (req, res) => {
     const channelId = String(req.query.id || "").trim();
     const channelName = String(req.query.name || "").trim();
+    const query = String(req.query.q || req.query.query || "").trim();
     if (!channelId && !channelName) {
       return res.json({ channel: null, items: [] });
     }
     try {
+      if (query) {
+        const searchResult = await scrapeYouTubeChannelSearch(channelId, channelName, query);
+        return res.json(searchResult);
+      }
       const result = await scrapeYouTubeChannelVideos(channelId, channelName);
       return res.json(result);
     } catch (err) {
@@ -1622,10 +2792,29 @@ async function startServer() {
       nextToken: liveData.items.length > 0 ? buildTrendingFallbackToken(1, category) : null
     });
   });
+  app.get("/api/youtube/suggest", async (req, res) => {
+    try {
+      const query = String(req.query.q || "").trim();
+      if (!query) {
+        return res.json([]);
+      }
+      const response = await fetch(
+        `https://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q=${encodeURIComponent(query)}`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        return res.json(data[1] || []);
+      }
+      return res.json([]);
+    } catch (err) {
+      console.error("Suggestions fetch error:", err);
+      return res.json([]);
+    }
+  });
   const isProd = process.env.NODE_ENV === "production";
   if (!isProd) {
     const vite = await (0, import_vite.createServer)({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: "spa"
     });
     app.use(vite.middlewares);

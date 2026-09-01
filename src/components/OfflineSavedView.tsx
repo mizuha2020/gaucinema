@@ -85,7 +85,17 @@ export const OfflineSavedView: React.FC<OfflineSavedViewProps> = ({
     onShowToast?.('Đã xóa toàn bộ danh sách offline', 'info');
   };
 
-  const handlePlay = (item: OfflineSavedMovie) => {
+  const isOffline = typeof navigator !== 'undefined' ? !navigator.onLine : false;
+
+  const handlePlay = async (item: OfflineSavedMovie) => {
+    // If offline and has downloaded file, try to play local
+    if (isOffline && item.episodes && item.episodes.length > 0) {
+      const hasLocal = item.episodes.some(e => e.status === 'completed' && e.localPath);
+      if (!hasLocal) {
+        onShowToast?.('Phim chưa tải xong, cần mạng để phát', 'warning');
+        return;
+      }
+    }
     const movie: Movie = item.movieSnapshot || {
       name: item.name,
       slug: item.slug,
@@ -182,6 +192,9 @@ export const OfflineSavedView: React.FC<OfflineSavedViewProps> = ({
             const remainingMs = Math.max(0, item.expiresAt - now);
             const pct = Math.max(0, Math.min(100, ((OFFLINE_TTL_MS - remainingMs) / OFFLINE_TTL_MS) * 100));
             const isExpiringSoon = remainingMs < 24 * 60 * 60 * 1000; // <1 ngày
+            const hasVideoFile = item.episodes && item.episodes.some(e => e.status === 'completed');
+            const downloadingEp = item.episodes?.find(e => e.status === 'downloading');
+            const downloadPct = downloadingEp ? downloadingEp.progress : (item.downloadStatus === 'completed' ? 100 : 0);
             return (
               <div
                 key={item.slug}
@@ -205,6 +218,16 @@ export const OfflineSavedView: React.FC<OfflineSavedViewProps> = ({
                     <span>{offlineMovieService.formatRemaining(remainingMs)}</span>
                   </div>
 
+                  {/* Offline badge */}
+                  {hasVideoFile && (
+                    <div className="absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold shadow">
+                      <HardDrive className="w-3 h-3" /> OFFLINE
+                    </div>
+                  )}
+                  {isOffline && !hasVideoFile && (
+                    <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-slate-700 text-slate-300 text-[10px] font-bold">Cần mạng</div>
+                  )}
+
                   {/* Play overlay */}
                   <button
                     onClick={() => handlePlay(item)}
@@ -215,13 +238,19 @@ export const OfflineSavedView: React.FC<OfflineSavedViewProps> = ({
                     </span>
                   </button>
 
-                  {/* Progress bar 7 days */}
-                  <div className="absolute bottom-0 left-0 right-0 h-1 bg-slate-800">
-                    <div
-                      className={`h-full transition-all ${isExpiringSoon ? 'bg-red-500' : 'bg-amber-500'}`}
-                      style={{ width: `${100 - pct}%` }}
-                    />
-                  </div>
+                  {/* Progress bar: download vs TTL */}
+                  {downloadingEp ? (
+                    <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800">
+                      <div className="h-full bg-sky-500 transition-all" style={{ width: `${downloadPct}%` }} />
+                    </div>
+                  ) : (
+                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-slate-800">
+                      <div
+                        className={`h-full transition-all ${isExpiringSoon ? 'bg-red-500' : 'bg-amber-500'}`}
+                        style={{ width: `${100 - pct}%` }}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div className="p-3 flex flex-col flex-1 gap-2">
@@ -247,6 +276,22 @@ export const OfflineSavedView: React.FC<OfflineSavedViewProps> = ({
                     <Info className="w-3 h-3" />
                     <span>Lưu: {new Date(item.savedAt).toLocaleDateString('vi-VN')} • Hết hạn: {new Date(item.expiresAt).toLocaleDateString('vi-VN')}</span>
                   </div>
+                  {item.episodes && item.episodes.length > 0 && (
+                    <div className="text-[11px] flex items-center gap-2">
+                      {downloadingEp ? (
+                        <span className="text-sky-400 font-bold flex items-center gap-1"><Download className="w-3 h-3 animate-bounce" /> Đang tải {downloadingEp.episodeName} {downloadPct}%</span>
+                      ) : hasVideoFile ? (
+                        <span className="text-emerald-400 font-bold">✓ Đã tải {item.episodes.filter(e=>e.status==='completed').length}/{item.episodes.length} tập • {offlineMovieService.formatSize(item.totalSizeBytes)}</span>
+                      ) : item.downloadStatus === 'error' ? (
+                        <span className="text-red-400">Lỗi tải</span>
+                      ) : (
+                        <span className="text-slate-500">Chưa tải video (chỉ lưu info)</span>
+                      )}
+                    </div>
+                  )}
+                  {isOffline && (
+                    <div className="text-[11px] text-amber-400 font-bold">● Chế độ offline {hasVideoFile ? '- có thể xem' : '- cần video đã tải'}</div>
+                  )}
 
                   <div className="flex items-center gap-2 pt-2 mt-auto">
                     <button

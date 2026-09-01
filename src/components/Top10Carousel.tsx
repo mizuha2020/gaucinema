@@ -37,6 +37,9 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
   const top10Movies = useMemo(() => movies.slice(0, 10), [movies]);
   const loopMovies = useMemo(() => [...top10Movies, ...top10Movies, ...top10Movies], [top10Movies]);
 
+  const singleWidthRef = useRef(0);
+  const maxSingleRef = useRef(0);
+
   const getSingleWidth = useCallback(() => {
     const track = trackRef.current;
     if (!track) return 0;
@@ -45,15 +48,25 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
 
   const getMaxSingle = useCallback(() => {
     const vp = viewportRef.current;
-    const single = getSingleWidth();
+    const single = singleWidthRef.current || getSingleWidth();
     if (!vp || single === 0) return 0;
     return Math.max(0, single - vp.clientWidth);
   }, [getSingleWidth]);
 
-  // Init at middle page 0 (single) — 1-6
+  const refreshMetrics = useCallback(() => {
+    const single = getSingleWidth();
+    const vp = viewportRef.current;
+    if (single > 0 && vp) {
+      singleWidthRef.current = single;
+      maxSingleRef.current = Math.max(0, single - vp.clientWidth);
+    }
+  }, [getSingleWidth]);
+
+  // Init at middle page 0 (single) — 1-6, cache metrics to avoid forced reflow on first click
   useLayoutEffect(() => {
     const init = () => {
-      const single = getSingleWidth();
+      refreshMetrics();
+      const single = singleWidthRef.current;
       if (single > 0) {
         setDisableTransition(true);
         setOffset(single);
@@ -67,11 +80,11 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
       clearTimeout(id);
       window.removeEventListener("resize", init);
     };
-  }, [getSingleWidth, loopMovies]);
+  }, [refreshMetrics, loopMovies]);
 
   const handleScrollBtn = (direction: "left" | "right") => {
-    const single = getSingleWidth();
-    const maxSingle = getMaxSingle();
+    const single = singleWidthRef.current || getSingleWidth();
+    const maxSingle = maxSingleRef.current || getMaxSingle();
     if (single === 0) return;
 
     if (direction === "right") {
@@ -123,8 +136,8 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
     if (isDraggingRef.current) {
       isDraggingRef.current = false;
       setIsDragging(false);
-      const single = getSingleWidth();
-      const maxSingle = getMaxSingle();
+      const single = singleWidthRef.current || getSingleWidth();
+      const maxSingle = maxSingleRef.current || getMaxSingle();
       if (single === 0) return;
       const middle0 = single;
       const middle1 = single + maxSingle;
@@ -195,6 +208,7 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
           >
             {loopMovies.map((movie, idx) => {
               const origIndex = idx % 10;
+              const isMiddleSet = idx >= 10 && idx < 20;
               return (
                 <div
                   key={`${movie.slug || "top10"}-${idx}`}
@@ -227,8 +241,9 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
                       src={getImageUrl(movie.thumb_url || movie.poster_url)}
                       alt={movie.name}
                       className="w-full h-full object-cover pointer-events-none"
-                      loading="lazy"
+                      loading={isMiddleSet ? "eager" : "lazy"}
                       decoding="async"
+                      fetchPriority={isMiddleSet ? "high" : "low" as any}
                       style={{ transform: "translateZ(0)" } as React.CSSProperties}
                     />
 
