@@ -1649,7 +1649,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
                                   : 'bg-gray-800/50 text-gray-300 hover:bg-gray-700 hover:text-white'
                               }`}
                             >
-                              {ep.name}
+                              {(() => { const c = ep.name.replace(/^Tập\s*/i, '').trim(); return /^\d+$/.test(c) ? c.padStart(2, '0') : c; })()}
                             </button>
                           ))}
                         </div>
