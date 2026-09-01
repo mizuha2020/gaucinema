@@ -1,7 +1,17 @@
-import React, { useRef, useCallback, useEffect, useState, useMemo, useLayoutEffect } from 'react';
-import { MangaItem, getFallbackMangaImageUrl, handleMangaImageError } from '../../services/mangaApi';
-import { ChevronLeft, ChevronRight, BookOpen } from 'lucide-react';
-import { MangaSourceBadge } from './MangaSourceBadge';
+import React, {
+  useRef,
+  useCallback,
+  useEffect,
+  useState,
+  useMemo,
+} from "react";
+import {
+  MangaItem,
+  getFallbackMangaImageUrl,
+  handleMangaImageError,
+} from "../../services/mangaApi";
+import { ChevronLeft, ChevronRight, BookOpen } from "lucide-react";
+import { MangaSourceBadge } from "./MangaSourceBadge";
 
 interface MangaRowProps {
   title: string;
@@ -10,7 +20,12 @@ interface MangaRowProps {
   icon?: React.ReactNode;
 }
 
-export const MangaRow: React.FC<MangaRowProps> = ({ title, mangas, onOpenDetail, icon }) => {
+export const MangaRow: React.FC<MangaRowProps> = ({
+  title,
+  mangas,
+  onOpenDetail,
+  icon,
+}) => {
   const viewportRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
@@ -33,40 +48,27 @@ export const MangaRow: React.FC<MangaRowProps> = ({ title, mangas, onOpenDetail,
     return track.scrollWidth / 3;
   }, [loopMangas.length]);
 
-  useLayoutEffect(() => {
-    const init = () => {
-      const single = getSingleWidth();
-      if (single > 0) {
-        setDisableTransition(true);
-        setOffset(single);
-        requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
-      }
-    };
-    const id = setTimeout(init, 60);
-    window.addEventListener("resize", init);
-    return () => {
-      clearTimeout(id);
-      window.removeEventListener("resize", init);
-    };
-  }, [getSingleWidth, loopMangas]);
-
-  const handleScrollBtn = (direction: 'left' | 'right') => {
+  const handleScrollBtn = (direction: "left" | "right") => {
     const vp = viewportRef.current;
     const single = getSingleWidth();
     if (!vp || single === 0) return;
     const scrollAmount = Math.round(vp.clientWidth * 0.78);
-    const delta = direction === 'left' ? -scrollAmount : scrollAmount;
+    const delta = direction === "left" ? -scrollAmount : scrollAmount;
     const next = offset + delta;
     setOffset(next);
     setTimeout(() => {
       if (next >= single * 2) {
         setDisableTransition(true);
         setOffset(next - single);
-        requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => setDisableTransition(false)),
+        );
       } else if (next < 0) {
         setDisableTransition(true);
         setOffset(next + single);
-        requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => setDisableTransition(false)),
+        );
       }
     }, 760);
   };
@@ -95,16 +97,22 @@ export const MangaRow: React.FC<MangaRowProps> = ({ title, mangas, onOpenDetail,
         setTimeout(() => {
           if (offset >= single * 2) {
             setDisableTransition(true);
-            setOffset(o => o - single);
-            requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
+            setOffset((o) => o - single);
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => setDisableTransition(false)),
+            );
           } else if (offset < 0) {
             setDisableTransition(true);
-            setOffset(o => o + single);
-            requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
+            setOffset((o) => o + single);
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => setDisableTransition(false)),
+            );
           }
         }, 0);
       }
-      setTimeout(() => { hasMovedRef.current = false; }, 50);
+      setTimeout(() => {
+        hasMovedRef.current = false;
+      }, 50);
     }
   };
 
@@ -121,13 +129,15 @@ export const MangaRow: React.FC<MangaRowProps> = ({ title, mangas, onOpenDetail,
     <div className="relative group/row my-8 px-4 sm:px-6 lg:px-8 select-none">
       <div className="flex items-center gap-2 mb-4">
         {icon && <span className="text-purple-500">{icon}</span>}
-        <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">{title}</h2>
+        <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+          {title}
+        </h2>
       </div>
 
       <div className="relative -mx-2 px-2">
         {canScroll && (
           <button
-            onClick={() => handleScrollBtn('left')}
+            onClick={() => handleScrollBtn("left")}
             className="absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b0c16]/85 hover:bg-purple-600 text-white flex items-center justify-center transition-all opacity-0 group-hover/row:opacity-100 backdrop-blur-md rounded-full border border-white/10 shadow-xl cursor-pointer hover:scale-105 active:scale-95"
             aria-label="Cuộn sang trái"
           >
@@ -135,7 +145,10 @@ export const MangaRow: React.FC<MangaRowProps> = ({ title, mangas, onOpenDetail,
           </button>
         )}
 
-        <div ref={viewportRef} className="overflow-hidden py-2 cursor-grab active:cursor-grabbing">
+        <div
+          ref={viewportRef}
+          className="overflow-hidden py-2 cursor-grab active:cursor-grabbing"
+        >
           <div
             ref={trackRef}
             onMouseDown={onMouseDown}
@@ -143,17 +156,22 @@ export const MangaRow: React.FC<MangaRowProps> = ({ title, mangas, onOpenDetail,
             onMouseUp={onMouseUpOrLeave}
             onMouseLeave={onMouseUpOrLeave}
             className="flex w-max gap-4 sm:gap-5 will-change-transform"
-            style={{
-              display: "flex",
-              flexWrap: "nowrap",
-              transform: `translateX(-${offset}px)`,
-              transition: isDragging || disableTransition ? "none" : "transform 750ms cubic-bezier(0.4, 0, 0.2, 1)",
-              willChange: "transform",
-            } as React.CSSProperties}
+            style={
+              {
+                display: "flex",
+                flexWrap: "nowrap",
+                transform: `translateX(-${offset}px)`,
+                transition:
+                  isDragging || disableTransition
+                    ? "none"
+                    : "transform 750ms cubic-bezier(0.4, 0, 0.2, 1)",
+                willChange: "transform",
+              } as React.CSSProperties
+            }
           >
             {loopMangas.map((manga, idx) => (
               <div
-                key={`${manga.id || manga.slug || 'manga'}-${idx}`}
+                key={`${manga.id || manga.slug || "manga"}-${idx}`}
                 onClick={() => handleClickItem(manga)}
                 className="group relative flex-shrink-0 w-32 sm:w-40 md:w-44 flex flex-col cursor-pointer"
               >
@@ -173,8 +191,12 @@ export const MangaRow: React.FC<MangaRowProps> = ({ title, mangas, onOpenDetail,
                   </div>
                   <div className="absolute top-2 left-2 right-2 flex items-start justify-between gap-1.5">
                     {manga.status ? (
-                      <span className="px-1.5 py-0.5 bg-black/70 backdrop-blur-md border border-white/10 rounded text-[8px] font-bold text-gray-200 uppercase tracking-wider line-clamp-1 max-w-[60%]">{manga.status}</span>
-                    ) : <span />}
+                      <span className="px-1.5 py-0.5 bg-black/70 backdrop-blur-md border border-white/10 rounded text-[8px] font-bold text-gray-200 uppercase tracking-wider line-clamp-1 max-w-[60%]">
+                        {manga.status}
+                      </span>
+                    ) : (
+                      <span />
+                    )}
                     <MangaSourceBadge source={manga.source} size="xs" />
                   </div>
                 </div>
@@ -188,7 +210,7 @@ export const MangaRow: React.FC<MangaRowProps> = ({ title, mangas, onOpenDetail,
 
         {canScroll && (
           <button
-            onClick={() => handleScrollBtn('right')}
+            onClick={() => handleScrollBtn("right")}
             className="absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b0c16]/85 hover:bg-purple-600 text-white flex items-center justify-center transition-all opacity-0 group-hover/row:opacity-100 backdrop-blur-md rounded-full border border-white/10 shadow-xl cursor-pointer hover:scale-105 active:scale-95"
             aria-label="Cuộn sang phải"
           >
