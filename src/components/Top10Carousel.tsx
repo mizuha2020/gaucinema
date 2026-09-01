@@ -23,13 +23,22 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
   movies,
   onOpenDetail,
 }) => {
-  const [isMobile, setIsMobile] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth < 768 : false,
-  );
+  const checkIsMobileOrTablet = () => {
+    if (typeof window === "undefined") return false;
+    const isTouch =
+      "ontouchstart" in window ||
+      (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0);
+    return window.innerWidth < 1024 || (isTouch && window.innerWidth < 1366);
+  };
+  const [isMobile, setIsMobile] = useState(checkIsMobileOrTablet);
   useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < 768);
+    const onResize = () => setIsMobile(checkIsMobileOrTablet());
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
   }, []);
 
   const top10Movies = useMemo(() => movies.slice(0, 10), [movies]);
@@ -331,15 +340,6 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
       <div className="bg-black py-8 px-4 sm:px-8 select-none">
         <h2 className="text-white text-2xl font-bold mb-6">{title}</h2>
         <div className="relative group">
-          {canScrollLeft && (
-            <button
-              className="absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white hidden sm:flex items-center justify-center transition-all backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer"
-              onClick={() => handleMobileScrollBtn("left")}
-              aria-label="Cuộn sang trái"
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-          )}
           <div
             ref={rowRef}
             onScroll={checkScrollBounds}
@@ -386,15 +386,6 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
               </div>
             ))}
           </div>
-          {canScrollRight && (
-            <button
-              className="absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white hidden sm:flex items-center justify-center transition-all backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer"
-              onClick={() => handleMobileScrollBtn("right")}
-              aria-label="Cuộn sang phải"
-            >
-              <ChevronRight className="w-5 h-5" />
-            </button>
-          )}
         </div>
       </div>
     );

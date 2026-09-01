@@ -40,13 +40,22 @@ export const MovieRow: React.FC<MovieRowProps> = ({
   subtitle,
 }) => {
   const isTv = useTvMode();
-  const [isMobile, setIsMobile] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth < 768 : false,
-  );
+  const checkIsMobileOrTablet = () => {
+    if (typeof window === "undefined") return false;
+    const isTouch =
+      "ontouchstart" in window ||
+      (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0);
+    return window.innerWidth < 1024 || (isTouch && window.innerWidth < 1366);
+  };
+  const [isMobile, setIsMobile] = useState(checkIsMobileOrTablet);
   useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < 768);
+    const onResize = () => setIsMobile(checkIsMobileOrTablet());
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
   }, []);
 
   // Shared dimensions
@@ -56,7 +65,7 @@ export const MovieRow: React.FC<MovieRowProps> = ({
   useEffect(() => {
     const updateDimensions = () => {
       const mobile = window.innerWidth < 640;
-      const isTablet = window.innerWidth >= 640 && window.innerWidth < 768;
+      const isTablet = window.innerWidth >= 640 && window.innerWidth < 1024;
       const isTvScreen =
         window.innerWidth >= 1920 ||
         document.documentElement.classList.contains("tv-mode");
@@ -376,15 +385,6 @@ export const MovieRow: React.FC<MovieRowProps> = ({
           )}
         </div>
         <div className="relative -mx-2 px-2">
-          {canScrollLeft && (
-            <button
-              onClick={() => handleMobileScrollBtn("left")}
-              className={`absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white hidden sm:flex items-center justify-center transition-all backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer`}
-              aria-label="Cuộn sang trái"
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-          )}
           <div
             ref={containerRef}
             onScroll={checkScrollBounds}
@@ -417,15 +417,6 @@ export const MovieRow: React.FC<MovieRowProps> = ({
               </div>
             ))}
           </div>
-          {canScrollRight && (
-            <button
-              onClick={() => handleMobileScrollBtn("right")}
-              className={`absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white hidden sm:flex items-center justify-center transition-all backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer`}
-              aria-label="Cuộn sang phải"
-            >
-              <ChevronRight className="w-5 h-5" />
-            </button>
-          )}
         </div>
       </div>
     );
