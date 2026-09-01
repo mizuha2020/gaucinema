@@ -321,10 +321,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                   e.preventDefault();
                   onTabChange(item.tab);
                 }}
-                className={`transition-all cursor-pointer whitespace-nowrap px-1.5 py-1 rounded text-xs lg:text-sm shrink-0 ${
+                className={`cursor-pointer whitespace-nowrap px-2 py-1.5 rounded-lg text-xs lg:text-sm flex items-center gap-1.5 transition-[background-color,box-shadow,border-color,color,transform] duration-200 ease-out shrink-0 ${
                   activeTab === item.tab
-                    ? 'text-sky-300 font-bold border-b-2 border-blue-500 drop-shadow-[0_0_8px_rgba(56,189,248,0.5)]'
-                    : 'text-slate-300 hover:text-white hover:text-sky-200'
+                    ? 'text-sky-300 font-bold bg-blue-900/30 border border-blue-700/40 shadow-sm scale-[1.01]'
+                    : 'text-slate-300 hover:text-white hover:bg-white/5'
                 }`}
               >
                 {item.label}
@@ -347,10 +347,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                       key={item.tab}
                       id={`nav-link-${item.tab}`}
                       onClick={() => onTabChange(item.tab)}
-                      className={`transition-all cursor-pointer whitespace-nowrap px-1.5 py-1 rounded text-xs lg:text-sm ${
+                      className={`cursor-pointer whitespace-nowrap px-2 py-1.5 rounded-lg text-xs lg:text-sm flex items-center gap-1.5 transition-[background-color,box-shadow,border-color,color,transform] duration-200 ease-out ${
                         activeTab === item.tab
-                          ? 'text-sky-300 font-bold border-b-2 border-blue-500 drop-shadow-[0_0_8px_rgba(56,189,248,0.5)]'
-                          : 'text-slate-300 hover:text-white hover:text-sky-200'
+                          ? 'text-sky-300 font-bold bg-blue-900/30 border border-blue-700/40 shadow-sm scale-[1.01]'
+                          : 'text-slate-300 hover:text-white hover:bg-white/5'
                       }`}
                     >
                       {item.label}

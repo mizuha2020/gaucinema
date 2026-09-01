@@ -1571,587 +1571,604 @@ export default function App() {
           />
         )}
 
-        {/* 4. Tab Views Content */}
+        {/* 4. Tab Views Content - transition mượt như gấu manga, chống flash */}
         {!showProfileSelector && !playingMovie && (
           <main className="relative min-h-[calc(100vh-160px)] pb-24 md:pb-16">
-            {/* HOME TAB */}
-            {activeTab === "home" && (
-              <>
-                {/* Featured Cinematic Hero Banner */}
-                <HeroBanner
-                  movies={newUpdated.slice(0, 5)}
-                  onPlay={handlePlayMovie}
-                  onOpenDetail={(m) => openDetailModal(m)}
-                  onToggleMyList={handleToggleMyList}
-                  isInMyList={isInMyList}
-                />
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={`tab-${activeTab}`}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+                style={{ willChange: "opacity" }}
+              >
+                {/* HOME TAB */}
+                {activeTab === "home" && (
+                  <>
+                    {/* Featured Cinematic Hero Banner */}
+                    <HeroBanner
+                      movies={newUpdated.slice(0, 5)}
+                      onPlay={handlePlayMovie}
+                      onOpenDetail={(m) => openDetailModal(m)}
+                      onToggleMyList={handleToggleMyList}
+                      isInMyList={isInMyList}
+                    />
 
-                {/* Followed - Báo tập mới */}
-                {followedMovies.length > 0 && (
-                  <FollowedRow
-                    items={followedMovies}
-                    onOpenDetail={(m) => openDetailModal(m)}
-                    onPlay={(m) => {
-                      handlePlayMovie(m);
-                      handleFollowSeen(m.slug);
-                    }}
-                    onClearNew={(slug) => handleFollowSeen(slug)}
-                    onUnfollow={(slug) => {
-                      followMovieService.unfollow(
-                        currentAccount!.id,
-                        activeProfile!.id,
-                        slug,
-                      );
-                      showToast("Đã bỏ theo dõi", "info");
-                    }}
-                  />
-                )}
-
-                {/* Continue Watching Row - Chính xác hơn */}
-                {(() => {
-                  const filtered = [...watchHistory]
-                    .filter((h) => {
-                      // ẩn phim đã xem xong >92% hoặc mới bấm nhầm <2%
-                      if (h.progressPercent >= 92) return false;
-                      if (h.progressPercent < 2 && h.currentTime < 15)
-                        return false;
-                      return true;
-                    })
-                    .sort((a, b) => b.updatedAt - a.updatedAt)
-                    .slice(0, 6);
-                  if (filtered.length === 0) return null;
-                  const fmt = (s: number) => {
-                    if (!s || s < 0) return "00:00";
-                    const h = Math.floor(s / 3600),
-                      m = Math.floor((s % 3600) / 60);
-                    const sec = Math.floor(s % 60);
-                    if (h > 0)
-                      return `${h}:${String(m).padStart(2, "0")}:${String(
-                        sec,
-                      ).padStart(2, "0")}`;
-                    return `${String(m).padStart(2, "0")}:${String(
-                      sec,
-                    ).padStart(2, "0")}`;
-                  };
-                  return (
-                    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-2 mb-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
-                          <Sparkles className="w-5 h-5 text-sky-400" />
-                          <span>Tiếp Tục Xem ({activeProfile?.name})</span>
-                          <span className="text-[11px] font-bold text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">
-                            {filtered.length}
-                          </span>
-                        </h2>
-                        <div className="flex items-center gap-2">
-                          {isCheckingFollow && (
-                            <span className="text-[11px] text-violet-300 animate-pulse">
-                              Đang kiểm tra tập mới...
-                            </span>
-                          )}
-                          <button
-                            onClick={() => {
-                              handleCheckFollowUpdates();
-                              showToast("Đang kiểm tra tập mới...", "info");
-                            }}
-                            className="text-[11px] text-violet-300 hover:text-violet-200 border border-violet-800/60 bg-violet-950/40 px-2 py-1 rounded-full cursor-pointer"
-                          >
-                            Kiểm tra tập mới
-                          </button>
-                          <button
-                            onClick={() => handleTabChange("history")}
-                            className="text-xs text-slate-400 hover:text-white cursor-pointer"
-                          >
-                            Xem tất cả →
-                          </button>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4 overflow-x-auto pb-3 scrollbar-none">
-                        {filtered.map((item, idx) => {
-                          const remaining = Math.max(
-                            0,
-                            (item.duration || 0) - (item.currentTime || 0),
-                          );
-                          const pct = Math.round(item.progressPercent || 0);
-                          return (
-                            <div
-                              key={`${item.movieSlug}-${idx}`}
-                              onClick={() => {
-                                handleResumeHistoryItem(item);
-                                handleFollowSeen(
-                                  item.movieSlug,
-                                  item.episodeName,
-                                );
-                              }}
-                              className="group relative w-64 shrink-0 bg-[#0f172a] rounded-2xl overflow-hidden border border-blue-900/50 hover:border-blue-500/80 transition-all cursor-pointer shadow-md hover:scale-105"
-                            >
-                              <div className="relative aspect-video w-full">
-                                <img
-                                  src={item.movieThumb || item.moviePoster}
-                                  alt={item.movieName}
-                                  className="w-full h-full object-cover"
-                                />
-                                <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                  <span className="bg-blue-600 text-white p-2.5 rounded-full shadow-xl shadow-blue-600/40">
-                                    ▶
-                                  </span>
-                                </div>
-                                <div className="absolute top-2 left-2 bg-black/70 text-white text-[10px] font-bold px-1.5 py-0.5 rounded border border-white/20">
-                                  {item.episodeName.startsWith("Tập")
-                                    ? item.episodeName
-                                    : `Tập ${item.episodeName}`}{" "}
-                                  • {pct}%
-                                </div>
-                                {remaining > 0 && (
-                                  <div className="absolute top-2 right-2 bg-blue-600/90 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
-                                    Còn {fmt(remaining)}
-                                  </div>
-                                )}
-                                <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800">
-                                  <div
-                                    className="h-full bg-gradient-to-r from-blue-500 to-cyan-400"
-                                    style={{ width: `${Math.min(100, pct)}%` }}
-                                  />
-                                </div>
-                              </div>
-                              <div className="p-3">
-                                <h4 className="font-semibold text-xs text-white truncate">
-                                  {item.movieName}
-                                </h4>
-                                <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1">
-                                  {item.serverName} • {fmt(item.currentTime)} /{" "}
-                                  {fmt(item.duration)}{" "}
-                                  <span className="text-sky-400 font-semibold">
-                                    {pct}%
-                                  </span>
-                                </p>
-                                <p className="text-[10px] text-slate-500">
-                                  {new Date(item.updatedAt).toLocaleString(
-                                    "vi-VN",
-                                  )}
-                                </p>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* "Dành Riêng Cho Bạn" Personalized Recommendation Row */}
-                <ForYouRow
-                  watchHistory={watchHistory}
-                  activeProfileName={activeProfile?.name}
-                  onOpenDetail={(m) => openDetailModal(m)}
-                  onPlay={handlePlayMovie}
-                  onToggleMyList={handleToggleMyList}
-                  isInMyList={isInMyList}
-                />
-
-                {/* Categorized Rows */}
-                <div className="space-y-4">
-                  <Theater3DCarousel
-                    title="Top Phim Hot Nhất Hôm Nay"
-                    movies={topHotAll}
-                    onOpenDetail={(m) => openDetailModal(m)}
-                    onPlay={handlePlayMovie}
-                  />
-
-                  <Top10Carousel
-                    title="Top 10 Phim Bộ Hôm Nay"
-                    movies={topSeries}
-                    onOpenDetail={(m) => openDetailModal(m)}
-                    onPlay={handlePlayMovie}
-                  />
-
-                  <MovieRow
-                    title="Anime & Hoạt Hình"
-                    icon={<Smile className="w-5 h-5 text-emerald-400" />}
-                    movies={animeList}
-                    onOpenDetail={(m) => openDetailModal(m)}
-                    onSelectMovie={(m) => openDetailModal(m)}
-                    onPlay={handlePlayMovie}
-                    onPlayMovie={handlePlayMovie}
-                    onToggleMyList={handleToggleMyList}
-                    isInMyList={isInMyList}
-                  />
-
-                  <MovieRow
-                    title="Điện Ảnh Hàn Quốc"
-                    icon={<Clapperboard className="w-5 h-5 text-blue-400" />}
-                    movies={koreanList}
-                    onOpenDetail={(m) => openDetailModal(m)}
-                    onSelectMovie={(m) => openDetailModal(m)}
-                    onPlay={handlePlayMovie}
-                    onPlayMovie={handlePlayMovie}
-                    onToggleMyList={handleToggleMyList}
-                    isInMyList={isInMyList}
-                  />
-
-                  <MovieRow
-                    title="Hành Động Đỉnh Cao"
-                    icon={<Sword className="w-5 h-5 text-red-400" />}
-                    movies={actionList}
-                    onOpenDetail={(m) => openDetailModal(m)}
-                    onSelectMovie={(m) => openDetailModal(m)}
-                    onPlay={handlePlayMovie}
-                    onPlayMovie={handlePlayMovie}
-                    onToggleMyList={handleToggleMyList}
-                    isInMyList={isInMyList}
-                  />
-
-                  <Top10Carousel
-                    title="Top 10 Phim Lẻ Hôm Nay"
-                    movies={topSingle}
-                    onOpenDetail={(m) => openDetailModal(m)}
-                    onPlay={handlePlayMovie}
-                  />
-
-                  <MovieRow
-                    title="Phim Mới Cập Nhật"
-                    icon={<Flame className="w-5 h-5 text-amber-400" />}
-                    movies={newUpdated}
-                    onOpenDetail={(m) => openDetailModal(m)}
-                    onSelectMovie={(m) => openDetailModal(m)}
-                    onPlay={handlePlayMovie}
-                    onPlayMovie={handlePlayMovie}
-                    onToggleMyList={handleToggleMyList}
-                    isInMyList={isInMyList}
-                  />
-
-                  <MovieRow
-                    title="Phim Bộ Hot"
-                    icon={<Tv className="w-5 h-5 text-sky-400" />}
-                    movies={seriesList}
-                    onOpenDetail={(m) => openDetailModal(m)}
-                    onSelectMovie={(m) => openDetailModal(m)}
-                    onPlay={handlePlayMovie}
-                    onPlayMovie={handlePlayMovie}
-                    onToggleMyList={handleToggleMyList}
-                    isInMyList={isInMyList}
-                  />
-
-                  <MovieRow
-                    title="Phim Lẻ Đặc Sắc"
-                    icon={<Film className="w-5 h-5 text-indigo-400" />}
-                    movies={singleList}
-                    onOpenDetail={(m) => openDetailModal(m)}
-                    onSelectMovie={(m) => openDetailModal(m)}
-                    onPlay={handlePlayMovie}
-                    onPlayMovie={handlePlayMovie}
-                    onToggleMyList={handleToggleMyList}
-                    isInMyList={isInMyList}
-                  />
-
-                  <MovieRow
-                    title="Tình Cảm & Lãng Mạn"
-                    icon={<Heart className="w-5 h-5 text-pink-400" />}
-                    movies={romanceList}
-                    onOpenDetail={(m) => openDetailModal(m)}
-                    onSelectMovie={(m) => openDetailModal(m)}
-                    onPlay={handlePlayMovie}
-                    onPlayMovie={handlePlayMovie}
-                    onToggleMyList={handleToggleMyList}
-                    isInMyList={isInMyList}
-                  />
-
-                  <MovieRow
-                    title="Kinh Dị & Bí Ẩn"
-                    icon={<Flame className="w-5 h-5 text-purple-400" />}
-                    movies={horrorList}
-                    onOpenDetail={(m) => openDetailModal(m)}
-                    onSelectMovie={(m) => openDetailModal(m)}
-                    onPlay={handlePlayMovie}
-                    onPlayMovie={handlePlayMovie}
-                    onToggleMyList={handleToggleMyList}
-                    isInMyList={isInMyList}
-                  />
-
-                  <MovieRow
-                    title="Viễn Tưởng & Phiêu Lưu"
-                    icon={<Sparkles className="w-5 h-5 text-cyan-400" />}
-                    movies={sciFiList}
-                    onOpenDetail={(m) => openDetailModal(m)}
-                    onSelectMovie={(m) => openDetailModal(m)}
-                    onPlay={handlePlayMovie}
-                    onPlayMovie={handlePlayMovie}
-                    onToggleMyList={handleToggleMyList}
-                    isInMyList={isInMyList}
-                  />
-
-                  <CinematicCarousel
-                    title="Mãn Nhãn Phim Chiếu Rạp"
-                    movies={theaterList}
-                    onOpenDetail={(m) => openDetailModal(m)}
-                    onPlay={handlePlayMovie}
-                  />
-                </div>
-              </>
-            )}
-
-            {/* SERIES TAB */}
-            {activeTab === "series" && (
-              <div className="pt-20">
-                <FilterSection
-                  key="tab-series"
-                  fixedType="series"
-                  onOpenDetail={(m) => openDetailModal(m)}
-                  onSelectMovie={(m) => openDetailModal(m)}
-                  onPlay={handlePlayMovie}
-                  onPlayMovie={handlePlayMovie}
-                  onToggleMyList={handleToggleMyList}
-                  isInMyList={isInMyList}
-                />
-              </div>
-            )}
-
-            {/* SINGLE MOVIES TAB */}
-            {activeTab === "single" && (
-              <div className="pt-20">
-                <FilterSection
-                  key="tab-single"
-                  fixedType="single"
-                  onOpenDetail={(m) => openDetailModal(m)}
-                  onSelectMovie={(m) => openDetailModal(m)}
-                  onPlay={handlePlayMovie}
-                  onPlayMovie={handlePlayMovie}
-                  onToggleMyList={handleToggleMyList}
-                  isInMyList={isInMyList}
-                />
-              </div>
-            )}
-
-            {/* ANIME TAB */}
-            {activeTab === "anime" && (
-              <div className="pt-20">
-                <FilterSection
-                  key="tab-anime"
-                  fixedType="anime"
-                  onOpenDetail={(m) => openDetailModal(m)}
-                  onSelectMovie={(m) => openDetailModal(m)}
-                  onPlay={handlePlayMovie}
-                  onPlayMovie={handlePlayMovie}
-                  onToggleMyList={handleToggleMyList}
-                  isInMyList={isInMyList}
-                />
-              </div>
-            )}
-
-            {/* TV SHOWS TAB */}
-            {activeTab === "tv-shows" && (
-              <div className="pt-20">
-                <FilterSection
-                  key="tab-tv-shows"
-                  fixedType="tv-shows"
-                  onOpenDetail={(m) => openDetailModal(m)}
-                  onSelectMovie={(m) => openDetailModal(m)}
-                  onPlay={handlePlayMovie}
-                  onPlayMovie={handlePlayMovie}
-                  onToggleMyList={handleToggleMyList}
-                  isInMyList={isInMyList}
-                />
-              </div>
-            )}
-
-            {/* FILTER & EXPLORE TAB */}
-            {activeTab === "filter" && (
-              <div className="pt-20">
-                <FilterSection
-                  initialKeyword={searchKeyword}
-                  onOpenDetail={(m) => openDetailModal(m)}
-                  onSelectMovie={(m) => openDetailModal(m)}
-                  onPlay={handlePlayMovie}
-                  onPlayMovie={handlePlayMovie}
-                  onToggleMyList={handleToggleMyList}
-                  isInMyList={isInMyList}
-                />
-              </div>
-            )}
-
-            {/* WATCH TOGETHER TAB */}
-            {activeTab === "xem-chung" && (
-              <div className="pt-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
-                <div className="flex items-center gap-3 mb-6">
-                  <Users className="w-6 h-6 text-emerald-400" />
-                  <h1 className="text-2xl font-bold text-white">
-                    Phòng đang xem chung
-                  </h1>
-                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 text-xs font-bold">
-                    {allActiveRooms.length}
-                  </span>
-                </div>
-
-                {allActiveRooms.length === 0 ? (
-                  <div className="text-center py-20">
-                    <Users className="w-12 h-12 text-slate-600 mx-auto mb-4" />
-                    <p className="text-slate-400 text-sm">
-                      Chưa có phòng xem chung nào đang hoạt động.
-                    </p>
-                    <p className="text-slate-500 text-xs mt-1">
-                      Hãy tạo phòng từ trang chi tiết phim!
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {allActiveRooms.map((room) => (
-                      <div
-                        key={room.roomId}
-                        className="p-4 rounded-2xl bg-[#0f172a] border border-slate-700/40 hover:border-emerald-500/30 transition-all cursor-pointer group"
-                        onClick={() => {
-                          if (activeRoomId) {
-                            showToast(
-                              "Bạn đang ở trong một phòng khác. Vui lòng rời phòng trước.",
-                              "warning",
-                            );
-                            return;
-                          }
-                          if (room.visibility === "public") {
-                            handleJoinRoom(room.roomId, "");
-                          } else {
-                            setJoinRoomTarget(room);
-                          }
+                    {/* Followed - Báo tập mới */}
+                    {followedMovies.length > 0 && (
+                      <FollowedRow
+                        items={followedMovies}
+                        onOpenDetail={(m) => openDetailModal(m)}
+                        onPlay={(m) => {
+                          handlePlayMovie(m);
+                          handleFollowSeen(m.slug);
                         }}
-                      >
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="min-w-0 flex-1">
-                            <h3 className="text-sm font-bold text-white truncate group-hover:text-emerald-300 transition-colors">
-                              {room.filmName}
-                            </h3>
-                            <p className="text-xs text-sky-400 mt-0.5">
-                              {room.episode}
-                            </p>
+                        onClearNew={(slug) => handleFollowSeen(slug)}
+                        onUnfollow={(slug) => {
+                          followMovieService.unfollow(
+                            currentAccount!.id,
+                            activeProfile!.id,
+                            slug,
+                          );
+                          showToast("Đã bỏ theo dõi", "info");
+                        }}
+                      />
+                    )}
+
+                    {/* Continue Watching Row - Chính xác hơn */}
+                    {(() => {
+                      const filtered = [...watchHistory]
+                        .filter((h) => {
+                          // ẩn phim đã xem xong >92% hoặc mới bấm nhầm <2%
+                          if (h.progressPercent >= 92) return false;
+                          if (h.progressPercent < 2 && h.currentTime < 15)
+                            return false;
+                          return true;
+                        })
+                        .sort((a, b) => b.updatedAt - a.updatedAt)
+                        .slice(0, 6);
+                      if (filtered.length === 0) return null;
+                      const fmt = (s: number) => {
+                        if (!s || s < 0) return "00:00";
+                        const h = Math.floor(s / 3600),
+                          m = Math.floor((s % 3600) / 60);
+                        const sec = Math.floor(s % 60);
+                        if (h > 0)
+                          return `${h}:${String(m).padStart(2, "0")}:${String(
+                            sec,
+                          ).padStart(2, "0")}`;
+                        return `${String(m).padStart(2, "0")}:${String(
+                          sec,
+                        ).padStart(2, "0")}`;
+                      };
+                      return (
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-2 mb-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                              <Sparkles className="w-5 h-5 text-sky-400" />
+                              <span>Tiếp Tục Xem ({activeProfile?.name})</span>
+                              <span className="text-[11px] font-bold text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">
+                                {filtered.length}
+                              </span>
+                            </h2>
+                            <div className="flex items-center gap-2">
+                              {isCheckingFollow && (
+                                <span className="text-[11px] text-violet-300 animate-pulse">
+                                  Đang kiểm tra tập mới...
+                                </span>
+                              )}
+                              <button
+                                onClick={() => {
+                                  handleCheckFollowUpdates();
+                                  showToast("Đang kiểm tra tập mới...", "info");
+                                }}
+                                className="text-[11px] text-violet-300 hover:text-violet-200 border border-violet-800/60 bg-violet-950/40 px-2 py-1 rounded-full cursor-pointer"
+                              >
+                                Kiểm tra tập mới
+                              </button>
+                              <button
+                                onClick={() => handleTabChange("history")}
+                                className="text-xs text-slate-400 hover:text-white cursor-pointer"
+                              >
+                                Xem tất cả →
+                              </button>
+                            </div>
                           </div>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-700/50 text-slate-400 shrink-0 ml-2">
-                            {room.visibility === "private"
-                              ? "🔒 Private"
-                              : "🌐 Public"}
-                          </span>
+                          <div className="flex items-center gap-4 overflow-x-auto pb-3 scrollbar-none">
+                            {filtered.map((item, idx) => {
+                              const remaining = Math.max(
+                                0,
+                                (item.duration || 0) - (item.currentTime || 0),
+                              );
+                              const pct = Math.round(item.progressPercent || 0);
+                              return (
+                                <div
+                                  key={`${item.movieSlug}-${idx}`}
+                                  onClick={() => {
+                                    handleResumeHistoryItem(item);
+                                    handleFollowSeen(
+                                      item.movieSlug,
+                                      item.episodeName,
+                                    );
+                                  }}
+                                  className="group relative w-64 shrink-0 bg-[#0f172a] rounded-2xl overflow-hidden border border-blue-900/50 hover:border-blue-500/80 transition-all cursor-pointer shadow-md hover:scale-105"
+                                >
+                                  <div className="relative aspect-video w-full">
+                                    <img
+                                      src={item.movieThumb || item.moviePoster}
+                                      alt={item.movieName}
+                                      className="w-full h-full object-cover"
+                                    />
+                                    <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                      <span className="bg-blue-600 text-white p-2.5 rounded-full shadow-xl shadow-blue-600/40">
+                                        ▶
+                                      </span>
+                                    </div>
+                                    <div className="absolute top-2 left-2 bg-black/70 text-white text-[10px] font-bold px-1.5 py-0.5 rounded border border-white/20">
+                                      {item.episodeName.startsWith("Tập")
+                                        ? item.episodeName
+                                        : `Tập ${item.episodeName}`}{" "}
+                                      • {pct}%
+                                    </div>
+                                    {remaining > 0 && (
+                                      <div className="absolute top-2 right-2 bg-blue-600/90 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                                        Còn {fmt(remaining)}
+                                      </div>
+                                    )}
+                                    <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800">
+                                      <div
+                                        className="h-full bg-gradient-to-r from-blue-500 to-cyan-400"
+                                        style={{
+                                          width: `${Math.min(100, pct)}%`,
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="p-3">
+                                    <h4 className="font-semibold text-xs text-white truncate">
+                                      {item.movieName}
+                                    </h4>
+                                    <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1">
+                                      {item.serverName} •{" "}
+                                      {fmt(item.currentTime)} /{" "}
+                                      {fmt(item.duration)}{" "}
+                                      <span className="text-sky-400 font-semibold">
+                                        {pct}%
+                                      </span>
+                                    </p>
+                                    <p className="text-[10px] text-slate-500">
+                                      {new Date(item.updatedAt).toLocaleString(
+                                        "vi-VN",
+                                      )}
+                                    </p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
-                        <div className="flex items-center justify-between text-xs text-slate-400">
-                          <span className="flex items-center gap-1">
-                            <Users className="w-3 h-3" />
-                            {room.viewersCount} đang xem
-                          </span>
-                          <span>Host: {room.hostName}</span>
-                        </div>
-                        <div className="mt-3 flex items-center justify-between">
-                          <span className="text-[10px] text-slate-500">
-                            {new Date(room.createdAt).toLocaleTimeString(
-                              "vi-VN",
-                              { hour: "2-digit", minute: "2-digit" },
-                            )}
-                          </span>
-                          <button
-                            disabled={!!activeRoomId}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                              activeRoomId
-                                ? "bg-slate-700/30 text-slate-500 cursor-not-allowed"
-                                : "bg-emerald-600 hover:bg-emerald-500 text-white"
-                            }`}
-                          >
-                            Vào phòng
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })()}
+
+                    {/* "Dành Riêng Cho Bạn" Personalized Recommendation Row */}
+                    <ForYouRow
+                      watchHistory={watchHistory}
+                      activeProfileName={activeProfile?.name}
+                      onOpenDetail={(m) => openDetailModal(m)}
+                      onPlay={handlePlayMovie}
+                      onToggleMyList={handleToggleMyList}
+                      isInMyList={isInMyList}
+                    />
+
+                    {/* Categorized Rows */}
+                    <div className="space-y-4">
+                      <Theater3DCarousel
+                        title="Top Phim Hot Nhất Hôm Nay"
+                        movies={topHotAll}
+                        onOpenDetail={(m) => openDetailModal(m)}
+                        onPlay={handlePlayMovie}
+                      />
+
+                      <Top10Carousel
+                        title="Top 10 Phim Bộ Hôm Nay"
+                        movies={topSeries}
+                        onOpenDetail={(m) => openDetailModal(m)}
+                        onPlay={handlePlayMovie}
+                      />
+
+                      <MovieRow
+                        title="Anime & Hoạt Hình"
+                        icon={<Smile className="w-5 h-5 text-emerald-400" />}
+                        movies={animeList}
+                        onOpenDetail={(m) => openDetailModal(m)}
+                        onSelectMovie={(m) => openDetailModal(m)}
+                        onPlay={handlePlayMovie}
+                        onPlayMovie={handlePlayMovie}
+                        onToggleMyList={handleToggleMyList}
+                        isInMyList={isInMyList}
+                      />
+
+                      <MovieRow
+                        title="Điện Ảnh Hàn Quốc"
+                        icon={
+                          <Clapperboard className="w-5 h-5 text-blue-400" />
+                        }
+                        movies={koreanList}
+                        onOpenDetail={(m) => openDetailModal(m)}
+                        onSelectMovie={(m) => openDetailModal(m)}
+                        onPlay={handlePlayMovie}
+                        onPlayMovie={handlePlayMovie}
+                        onToggleMyList={handleToggleMyList}
+                        isInMyList={isInMyList}
+                      />
+
+                      <MovieRow
+                        title="Hành Động Đỉnh Cao"
+                        icon={<Sword className="w-5 h-5 text-red-400" />}
+                        movies={actionList}
+                        onOpenDetail={(m) => openDetailModal(m)}
+                        onSelectMovie={(m) => openDetailModal(m)}
+                        onPlay={handlePlayMovie}
+                        onPlayMovie={handlePlayMovie}
+                        onToggleMyList={handleToggleMyList}
+                        isInMyList={isInMyList}
+                      />
+
+                      <Top10Carousel
+                        title="Top 10 Phim Lẻ Hôm Nay"
+                        movies={topSingle}
+                        onOpenDetail={(m) => openDetailModal(m)}
+                        onPlay={handlePlayMovie}
+                      />
+
+                      <MovieRow
+                        title="Phim Mới Cập Nhật"
+                        icon={<Flame className="w-5 h-5 text-amber-400" />}
+                        movies={newUpdated}
+                        onOpenDetail={(m) => openDetailModal(m)}
+                        onSelectMovie={(m) => openDetailModal(m)}
+                        onPlay={handlePlayMovie}
+                        onPlayMovie={handlePlayMovie}
+                        onToggleMyList={handleToggleMyList}
+                        isInMyList={isInMyList}
+                      />
+
+                      <MovieRow
+                        title="Phim Bộ Hot"
+                        icon={<Tv className="w-5 h-5 text-sky-400" />}
+                        movies={seriesList}
+                        onOpenDetail={(m) => openDetailModal(m)}
+                        onSelectMovie={(m) => openDetailModal(m)}
+                        onPlay={handlePlayMovie}
+                        onPlayMovie={handlePlayMovie}
+                        onToggleMyList={handleToggleMyList}
+                        isInMyList={isInMyList}
+                      />
+
+                      <MovieRow
+                        title="Phim Lẻ Đặc Sắc"
+                        icon={<Film className="w-5 h-5 text-indigo-400" />}
+                        movies={singleList}
+                        onOpenDetail={(m) => openDetailModal(m)}
+                        onSelectMovie={(m) => openDetailModal(m)}
+                        onPlay={handlePlayMovie}
+                        onPlayMovie={handlePlayMovie}
+                        onToggleMyList={handleToggleMyList}
+                        isInMyList={isInMyList}
+                      />
+
+                      <MovieRow
+                        title="Tình Cảm & Lãng Mạn"
+                        icon={<Heart className="w-5 h-5 text-pink-400" />}
+                        movies={romanceList}
+                        onOpenDetail={(m) => openDetailModal(m)}
+                        onSelectMovie={(m) => openDetailModal(m)}
+                        onPlay={handlePlayMovie}
+                        onPlayMovie={handlePlayMovie}
+                        onToggleMyList={handleToggleMyList}
+                        isInMyList={isInMyList}
+                      />
+
+                      <MovieRow
+                        title="Kinh Dị & Bí Ẩn"
+                        icon={<Flame className="w-5 h-5 text-purple-400" />}
+                        movies={horrorList}
+                        onOpenDetail={(m) => openDetailModal(m)}
+                        onSelectMovie={(m) => openDetailModal(m)}
+                        onPlay={handlePlayMovie}
+                        onPlayMovie={handlePlayMovie}
+                        onToggleMyList={handleToggleMyList}
+                        isInMyList={isInMyList}
+                      />
+
+                      <MovieRow
+                        title="Viễn Tưởng & Phiêu Lưu"
+                        icon={<Sparkles className="w-5 h-5 text-cyan-400" />}
+                        movies={sciFiList}
+                        onOpenDetail={(m) => openDetailModal(m)}
+                        onSelectMovie={(m) => openDetailModal(m)}
+                        onPlay={handlePlayMovie}
+                        onPlayMovie={handlePlayMovie}
+                        onToggleMyList={handleToggleMyList}
+                        isInMyList={isInMyList}
+                      />
+
+                      <CinematicCarousel
+                        title="Mãn Nhãn Phim Chiếu Rạp"
+                        movies={theaterList}
+                        onOpenDetail={(m) => openDetailModal(m)}
+                        onPlay={handlePlayMovie}
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* SERIES TAB */}
+                {activeTab === "series" && (
+                  <div className="pt-20">
+                    <FilterSection
+                      key="tab-series"
+                      fixedType="series"
+                      onOpenDetail={(m) => openDetailModal(m)}
+                      onSelectMovie={(m) => openDetailModal(m)}
+                      onPlay={handlePlayMovie}
+                      onPlayMovie={handlePlayMovie}
+                      onToggleMyList={handleToggleMyList}
+                      isInMyList={isInMyList}
+                    />
                   </div>
                 )}
-              </div>
-            )}
 
-            {/* MY LIST TAB */}
-            {activeTab === "my-list" && (
-              <div className="pt-20">
-                <MyListView
-                  myList={myList}
-                  profileName={activeProfile?.name || "Bạn"}
-                  onSelectMovieSlug={(slug, name, thumb) =>
-                    handleOpenDetailSlug(slug, name, thumb)
-                  }
-                  onPlayMovieSlug={(slug) => handlePlaySlug(slug)}
-                  onRemoveItem={async (slug) => {
-                    if (!currentAccount || !activeProfile) return;
-                    await firestoreStorage.toggleMyList(
-                      currentAccount.id,
-                      activeProfile.id,
-                      {
-                        movieSlug: slug,
-                        movieName: "",
-                        movieThumb: "",
-                      },
-                    );
-                    await refreshProfileData();
-                    showToast("Đã xóa khỏi danh sách yêu thích");
-                  }}
-                  onExploreClick={() => handleTabChange("filter")}
-                />
-              </div>
-            )}
+                {/* SINGLE MOVIES TAB */}
+                {activeTab === "single" && (
+                  <div className="pt-20">
+                    <FilterSection
+                      key="tab-single"
+                      fixedType="single"
+                      onOpenDetail={(m) => openDetailModal(m)}
+                      onSelectMovie={(m) => openDetailModal(m)}
+                      onPlay={handlePlayMovie}
+                      onPlayMovie={handlePlayMovie}
+                      onToggleMyList={handleToggleMyList}
+                      isInMyList={isInMyList}
+                    />
+                  </div>
+                )}
 
-            {/* WATCH HISTORY TAB */}
-            {activeTab === "history" && (
-              <div className="pt-20">
-                <HistoryView
-                  history={watchHistory}
-                  profileName={activeProfile?.name || "Bạn"}
-                  onResumeItem={handleResumeHistoryItem}
-                  onRemoveItem={async (slug) => {
-                    if (!currentAccount || !activeProfile) return;
-                    await firestoreStorage.removeHistoryItem(
-                      currentAccount.id,
-                      activeProfile.id,
-                      slug,
-                    );
-                    await refreshProfileData();
-                    showToast("Đã xóa khỏi lịch sử xem");
-                  }}
-                  onClearAll={async () => {
-                    if (!currentAccount || !activeProfile) return;
-                    await Promise.all(
-                      watchHistory.map((item) =>
-                        firestoreStorage.removeHistoryItem(
+                {/* ANIME TAB */}
+                {activeTab === "anime" && (
+                  <div className="pt-20">
+                    <FilterSection
+                      key="tab-anime"
+                      fixedType="anime"
+                      onOpenDetail={(m) => openDetailModal(m)}
+                      onSelectMovie={(m) => openDetailModal(m)}
+                      onPlay={handlePlayMovie}
+                      onPlayMovie={handlePlayMovie}
+                      onToggleMyList={handleToggleMyList}
+                      isInMyList={isInMyList}
+                    />
+                  </div>
+                )}
+
+                {/* TV SHOWS TAB */}
+                {activeTab === "tv-shows" && (
+                  <div className="pt-20">
+                    <FilterSection
+                      key="tab-tv-shows"
+                      fixedType="tv-shows"
+                      onOpenDetail={(m) => openDetailModal(m)}
+                      onSelectMovie={(m) => openDetailModal(m)}
+                      onPlay={handlePlayMovie}
+                      onPlayMovie={handlePlayMovie}
+                      onToggleMyList={handleToggleMyList}
+                      isInMyList={isInMyList}
+                    />
+                  </div>
+                )}
+
+                {/* FILTER & EXPLORE TAB */}
+                {activeTab === "filter" && (
+                  <div className="pt-20">
+                    <FilterSection
+                      initialKeyword={searchKeyword}
+                      onOpenDetail={(m) => openDetailModal(m)}
+                      onSelectMovie={(m) => openDetailModal(m)}
+                      onPlay={handlePlayMovie}
+                      onPlayMovie={handlePlayMovie}
+                      onToggleMyList={handleToggleMyList}
+                      isInMyList={isInMyList}
+                    />
+                  </div>
+                )}
+
+                {/* WATCH TOGETHER TAB */}
+                {activeTab === "xem-chung" && (
+                  <div className="pt-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
+                    <div className="flex items-center gap-3 mb-6">
+                      <Users className="w-6 h-6 text-emerald-400" />
+                      <h1 className="text-2xl font-bold text-white">
+                        Phòng đang xem chung
+                      </h1>
+                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 text-xs font-bold">
+                        {allActiveRooms.length}
+                      </span>
+                    </div>
+
+                    {allActiveRooms.length === 0 ? (
+                      <div className="text-center py-20">
+                        <Users className="w-12 h-12 text-slate-600 mx-auto mb-4" />
+                        <p className="text-slate-400 text-sm">
+                          Chưa có phòng xem chung nào đang hoạt động.
+                        </p>
+                        <p className="text-slate-500 text-xs mt-1">
+                          Hãy tạo phòng từ trang chi tiết phim!
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {allActiveRooms.map((room) => (
+                          <div
+                            key={room.roomId}
+                            className="p-4 rounded-2xl bg-[#0f172a] border border-slate-700/40 hover:border-emerald-500/30 transition-all cursor-pointer group"
+                            onClick={() => {
+                              if (activeRoomId) {
+                                showToast(
+                                  "Bạn đang ở trong một phòng khác. Vui lòng rời phòng trước.",
+                                  "warning",
+                                );
+                                return;
+                              }
+                              if (room.visibility === "public") {
+                                handleJoinRoom(room.roomId, "");
+                              } else {
+                                setJoinRoomTarget(room);
+                              }
+                            }}
+                          >
+                            <div className="flex items-start justify-between mb-3">
+                              <div className="min-w-0 flex-1">
+                                <h3 className="text-sm font-bold text-white truncate group-hover:text-emerald-300 transition-colors">
+                                  {room.filmName}
+                                </h3>
+                                <p className="text-xs text-sky-400 mt-0.5">
+                                  {room.episode}
+                                </p>
+                              </div>
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-700/50 text-slate-400 shrink-0 ml-2">
+                                {room.visibility === "private"
+                                  ? "🔒 Private"
+                                  : "🌐 Public"}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs text-slate-400">
+                              <span className="flex items-center gap-1">
+                                <Users className="w-3 h-3" />
+                                {room.viewersCount} đang xem
+                              </span>
+                              <span>Host: {room.hostName}</span>
+                            </div>
+                            <div className="mt-3 flex items-center justify-between">
+                              <span className="text-[10px] text-slate-500">
+                                {new Date(room.createdAt).toLocaleTimeString(
+                                  "vi-VN",
+                                  { hour: "2-digit", minute: "2-digit" },
+                                )}
+                              </span>
+                              <button
+                                disabled={!!activeRoomId}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                                  activeRoomId
+                                    ? "bg-slate-700/30 text-slate-500 cursor-not-allowed"
+                                    : "bg-emerald-600 hover:bg-emerald-500 text-white"
+                                }`}
+                              >
+                                Vào phòng
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* MY LIST TAB */}
+                {activeTab === "my-list" && (
+                  <div className="pt-20">
+                    <MyListView
+                      myList={myList}
+                      profileName={activeProfile?.name || "Bạn"}
+                      onSelectMovieSlug={(slug, name, thumb) =>
+                        handleOpenDetailSlug(slug, name, thumb)
+                      }
+                      onPlayMovieSlug={(slug) => handlePlaySlug(slug)}
+                      onRemoveItem={async (slug) => {
+                        if (!currentAccount || !activeProfile) return;
+                        await firestoreStorage.toggleMyList(
                           currentAccount.id,
                           activeProfile.id,
-                          item.movieSlug,
-                        ),
-                      ),
-                    );
-                    await refreshProfileData();
-                    showToast("Đã dọn sạch lịch sử xem của hồ sơ");
-                  }}
-                  onExploreClick={() => handleTabChange("home")}
-                />
-              </div>
-            )}
+                          {
+                            movieSlug: slug,
+                            movieName: "",
+                            movieThumb: "",
+                          },
+                        );
+                        await refreshProfileData();
+                        showToast("Đã xóa khỏi danh sách yêu thích");
+                      }}
+                      onExploreClick={() => handleTabChange("filter")}
+                    />
+                  </div>
+                )}
 
-            {/* OFFLINE SAVED TAB - ONLY ON NATIVE APP */}
-            {activeTab === "offline" && (
-              <div className="pt-2">
-                <OfflineSavedView
-                  currentAccount={currentAccount}
-                  activeProfile={activeProfile}
-                  onPlayMovie={handlePlayMovie}
-                  onOpenDetail={(m) => openDetailModal(m)}
-                  onShowToast={showToast}
-                />
-              </div>
-            )}
+                {/* WATCH HISTORY TAB */}
+                {activeTab === "history" && (
+                  <div className="pt-20">
+                    <HistoryView
+                      history={watchHistory}
+                      profileName={activeProfile?.name || "Bạn"}
+                      onResumeItem={handleResumeHistoryItem}
+                      onRemoveItem={async (slug) => {
+                        if (!currentAccount || !activeProfile) return;
+                        await firestoreStorage.removeHistoryItem(
+                          currentAccount.id,
+                          activeProfile.id,
+                          slug,
+                        );
+                        await refreshProfileData();
+                        showToast("Đã xóa khỏi lịch sử xem");
+                      }}
+                      onClearAll={async () => {
+                        if (!currentAccount || !activeProfile) return;
+                        await Promise.all(
+                          watchHistory.map((item) =>
+                            firestoreStorage.removeHistoryItem(
+                              currentAccount.id,
+                              activeProfile.id,
+                              item.movieSlug,
+                            ),
+                          ),
+                        );
+                        await refreshProfileData();
+                        showToast("Đã dọn sạch lịch sử xem của hồ sơ");
+                      }}
+                      onExploreClick={() => handleTabChange("home")}
+                    />
+                  </div>
+                )}
 
-            {/* LIVE TV & SPORTS TAB (Now handled by Sub-App, but keep fallback) */}
-            {activeTab === "tv-live" && (
-              <div className="pt-20 text-center text-slate-400">
-                Vui lòng sử dụng tính năng App Switcher để chuyển sang Gấu
-                LiveTV
-              </div>
-            )}
+                {/* OFFLINE SAVED TAB - ONLY ON NATIVE APP */}
+                {activeTab === "offline" && (
+                  <div className="pt-2">
+                    <OfflineSavedView
+                      currentAccount={currentAccount}
+                      activeProfile={activeProfile}
+                      onPlayMovie={handlePlayMovie}
+                      onOpenDetail={(m) => openDetailModal(m)}
+                      onShowToast={showToast}
+                    />
+                  </div>
+                )}
 
-            {/* MANGA READER TAB (Now handled by Sub-App, but keep fallback) */}
-            {activeTab === "manga" && (
-              <div className="pt-20 text-center text-slate-400">
-                Vui lòng sử dụng tính năng App Switcher để chuyển sang Gấu Manga
-              </div>
-            )}
+                {/* LIVE TV & SPORTS TAB (Now handled by Sub-App, but keep fallback) */}
+                {activeTab === "tv-live" && (
+                  <div className="pt-20 text-center text-slate-400">
+                    Vui lòng sử dụng tính năng App Switcher để chuyển sang Gấu
+                    LiveTV
+                  </div>
+                )}
+
+                {/* MANGA READER TAB (Now handled by Sub-App, but keep fallback) */}
+                {activeTab === "manga" && (
+                  <div className="pt-20 text-center text-slate-400">
+                    Vui lòng sử dụng tính năng App Switcher để chuyển sang Gấu
+                    Manga
+                  </div>
+                )}
+              </motion.div>
+            </AnimatePresence>
           </main>
         )}
 
