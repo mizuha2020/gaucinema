@@ -1,9 +1,16 @@
-import React, { useRef, useState, useCallback, useEffect, useMemo, useLayoutEffect } from 'react';
-import { Movie } from '../types';
-import { MovieCard } from './MovieCard';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useTvMode } from '../hooks/useTvMode';
-import { smoothScrollHorizontal } from '../utils/scrollUtils';
+import React, {
+  useRef,
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useLayoutEffect,
+} from "react";
+import { Movie } from "../types";
+import { MovieCard } from "./MovieCard";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useTvMode } from "../hooks/useTvMode";
+import { smoothScrollHorizontal } from "../utils/scrollUtils";
 
 interface MovieRowProps {
   title: string;
@@ -33,11 +40,13 @@ export const MovieRow: React.FC<MovieRowProps> = ({
   subtitle,
 }) => {
   const isTv = useTvMode();
-  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth < 768 : false,
+  );
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
 
   // Shared dimensions
@@ -48,13 +57,15 @@ export const MovieRow: React.FC<MovieRowProps> = ({
     const updateDimensions = () => {
       const mobile = window.innerWidth < 640;
       const isTablet = window.innerWidth >= 640 && window.innerWidth < 768;
-      const isTvScreen = window.innerWidth >= 1920 || document.documentElement.classList.contains('tv-mode');
+      const isTvScreen =
+        window.innerWidth >= 1920 ||
+        document.documentElement.classList.contains("tv-mode");
       if (isTvScreen) {
         setGap(isTop10 ? 40 : 28);
         setItemWidth(isTop10 ? 280 : 260);
         return;
       }
-      setGap(mobile ? (isTop10 ? 20 : 16) : (isTop10 ? 32 : 24));
+      setGap(mobile ? (isTop10 ? 20 : 16) : isTop10 ? 32 : 24);
       if (isTop10) {
         setItemWidth(mobile ? 176 : 224);
       } else {
@@ -64,13 +75,17 @@ export const MovieRow: React.FC<MovieRowProps> = ({
       }
     };
     updateDimensions();
-    window.addEventListener('resize', updateDimensions);
-    return () => window.removeEventListener('resize', updateDimensions);
+    window.addEventListener("resize", updateDimensions);
+    return () => window.removeEventListener("resize", updateDimensions);
   }, [isTop10]);
 
   const rowHeightClass = isTv
-    ? (isTop10 ? 'h-[380px]' : 'h-[400px]')
-    : (isTop10 ? 'h-[300px] sm:h-[360px]' : 'h-[250px] sm:h-[330px] md:h-[360px]');
+    ? isTop10
+      ? "h-[380px]"
+      : "h-[400px]"
+    : isTop10
+    ? "h-[300px] sm:h-[360px]"
+    : "h-[250px] sm:h-[330px] md:h-[360px]";
 
   // ========== MOBILE: native scroll (behavior ổn định tại commit 52269b8 / e0ccb2e) ==========
   const containerRef = useRef<HTMLDivElement>(null);
@@ -94,17 +109,22 @@ export const MovieRow: React.FC<MovieRowProps> = ({
     if (!isMobile) return;
     checkScrollBounds();
     const handleResize = () => checkScrollBounds();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, [checkScrollBounds, movies, isMobile]);
 
-  const handleMobileScrollBtn = (direction: 'left' | 'right') => {
+  const handleMobileScrollBtn = (direction: "left" | "right") => {
     const el = containerRef.current;
     if (!el) return;
     if (scrollAnimCancelRef.current) scrollAnimCancelRef.current();
     const scrollAmount = Math.round(el.clientWidth * 0.75);
-    const delta = direction === 'left' ? -scrollAmount : scrollAmount;
-    scrollAnimCancelRef.current = smoothScrollHorizontal(el, delta, 460, checkScrollBounds);
+    const delta = direction === "left" ? -scrollAmount : scrollAmount;
+    scrollAnimCancelRef.current = smoothScrollHorizontal(
+      el,
+      delta,
+      460,
+      checkScrollBounds,
+    );
   };
 
   const onMobileMouseDown = (e: React.MouseEvent) => {
@@ -126,7 +146,9 @@ export const MovieRow: React.FC<MovieRowProps> = ({
   };
   const onMobileMouseUpOrLeave = () => {
     isDraggingRef.current = false;
-    setTimeout(() => { hasMovedRef.current = false; }, 50);
+    setTimeout(() => {
+      hasMovedRef.current = false;
+    }, 50);
   };
 
   // ========== DESKTOP: transform infinite loop (giữ như hiện tại) ==========
@@ -139,7 +161,9 @@ export const MovieRow: React.FC<MovieRowProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [disableTransition, setDisableTransition] = useState(false);
   const offsetRef = useRef(0);
-  useEffect(() => { offsetRef.current = offset; }, [offset]);
+  useEffect(() => {
+    offsetRef.current = offset;
+  }, [offset]);
 
   const loopMovies = useMemo(() => {
     if (movies.length <= 1) return movies;
@@ -160,8 +184,11 @@ export const MovieRow: React.FC<MovieRowProps> = ({
         setDisableTransition(true);
         setOffset(single);
         offsetRef.current = single;
-        if (trackRef.current) trackRef.current.style.transform = `translateX(-${single}px)`;
-        requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
+        if (trackRef.current)
+          trackRef.current.style.transform = `translateX(-${single}px)`;
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => setDisableTransition(false)),
+        );
       }
     };
     const id = setTimeout(init, 60);
@@ -172,30 +199,37 @@ export const MovieRow: React.FC<MovieRowProps> = ({
     };
   }, [getSingleWidth, loopMovies, isMobile]);
 
-  const handleDesktopScrollBtn = (direction: 'left' | 'right') => {
+  const handleDesktopScrollBtn = (direction: "left" | "right") => {
     const vp = viewportRef.current;
     const single = getSingleWidth();
     if (!vp || single === 0) return;
     const scrollAmount = Math.round(vp.clientWidth * 0.78);
-    const delta = direction === 'left' ? -scrollAmount : scrollAmount;
+    const delta = direction === "left" ? -scrollAmount : scrollAmount;
     const next = offsetRef.current + delta;
     setOffset(next);
     offsetRef.current = next;
-    if (trackRef.current) trackRef.current.style.transform = `translateX(-${next}px)`;
+    if (trackRef.current)
+      trackRef.current.style.transform = `translateX(-${next}px)`;
     setTimeout(() => {
       const cur = next;
       if (cur >= single * 2) {
         setDisableTransition(true);
         setOffset(cur - single);
         offsetRef.current = cur - single;
-        if (trackRef.current) trackRef.current.style.transform = `translateX(-${cur - single}px)`;
-        requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
+        if (trackRef.current)
+          trackRef.current.style.transform = `translateX(-${cur - single}px)`;
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => setDisableTransition(false)),
+        );
       } else if (cur < 0) {
         setDisableTransition(true);
         setOffset(cur + single);
         offsetRef.current = cur + single;
-        if (trackRef.current) trackRef.current.style.transform = `translateX(-${cur + single}px)`;
-        requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
+        if (trackRef.current)
+          trackRef.current.style.transform = `translateX(-${cur + single}px)`;
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => setDisableTransition(false)),
+        );
       }
     }, 760);
   };
@@ -214,7 +248,8 @@ export const MovieRow: React.FC<MovieRowProps> = ({
     if (Math.abs(dx) > 5) hasMovedRef.current = true;
     const next = startOffsetRef.current - dx;
     offsetRef.current = next;
-    if (trackRef.current) trackRef.current.style.transform = `translateX(-${next}px)`;
+    if (trackRef.current)
+      trackRef.current.style.transform = `translateX(-${next}px)`;
   };
   const onDesktopMouseUpOrLeave = () => {
     if (isDraggingRef.current) {
@@ -225,24 +260,38 @@ export const MovieRow: React.FC<MovieRowProps> = ({
       if (single > 0) {
         let snapped = cur;
         let needsSnap = false;
-        if (cur >= single * 2) { snapped = cur - single; needsSnap = true; }
-        else if (cur < 0) { snapped = cur + single; needsSnap = true; }
-        else if (cur < single * 0.5) { snapped = cur + single; needsSnap = true; }
+        if (cur >= single * 2) {
+          snapped = cur - single;
+          needsSnap = true;
+        } else if (cur < 0) {
+          snapped = cur + single;
+          needsSnap = true;
+        } else if (cur < single * 0.5) {
+          snapped = cur + single;
+          needsSnap = true;
+        }
         if (needsSnap) {
           setOffset(snapped);
           offsetRef.current = snapped;
-          if (trackRef.current) trackRef.current.style.transform = `translateX(-${snapped}px)`;
+          if (trackRef.current)
+            trackRef.current.style.transform = `translateX(-${snapped}px)`;
           setDisableTransition(true);
-          requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => setDisableTransition(false)),
+          );
         } else {
           setOffset(cur);
-          requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => setDisableTransition(false)),
+          );
         }
       } else {
         setOffset(cur);
         setDisableTransition(false);
       }
-      setTimeout(() => { hasMovedRef.current = false; }, 50);
+      setTimeout(() => {
+        hasMovedRef.current = false;
+      }, 50);
     } else {
       setDisableTransition(false);
     }
@@ -269,25 +318,37 @@ export const MovieRow: React.FC<MovieRowProps> = ({
     if (Math.abs(dx) > 5) hasMovedRef.current = true;
     const next = startOffsetRef.current - dx;
     offsetRef.current = next;
-    if (trackRef.current) trackRef.current.style.transform = `translateX(-${next}px)`;
+    if (trackRef.current)
+      trackRef.current.style.transform = `translateX(-${next}px)`;
   };
   const onDesktopTouchEnd = () => onDesktopMouseUpOrLeave();
 
-  const handlePlay = useCallback((movie: Movie) => {
-    if (hasMovedRef.current) return;
-    if (onPlay) onPlay(movie);
-    else if (onPlayMovie) onPlayMovie(movie);
-  }, [onPlay, onPlayMovie]);
+  const handlePlay = useCallback(
+    (movie: Movie) => {
+      if (hasMovedRef.current) return;
+      if (onPlay) onPlay(movie);
+      else if (onPlayMovie) onPlayMovie(movie);
+    },
+    [onPlay, onPlayMovie],
+  );
 
-  const handleOpenDetail = useCallback((movie: Movie) => {
-    if (hasMovedRef.current) return;
-    if (onOpenDetail) onOpenDetail(movie);
-    else if (onSelectMovie) onSelectMovie(movie);
-  }, [onOpenDetail, onSelectMovie]);
+  const handleOpenDetail = useCallback(
+    (movie: Movie) => {
+      if (hasMovedRef.current) return;
+      if (onOpenDetail) onOpenDetail(movie);
+      else if (onSelectMovie) onSelectMovie(movie);
+    },
+    [onOpenDetail, onSelectMovie],
+  );
 
-  const checkIsInMyList = useCallback((slug: string) => {
-    return typeof isInMyList === 'function' ? isInMyList(slug) : Boolean(isInMyList);
-  }, [isInMyList]);
+  const checkIsInMyList = useCallback(
+    (slug: string) => {
+      return typeof isInMyList === "function"
+        ? isInMyList(slug)
+        : Boolean(isInMyList);
+    },
+    [isInMyList],
+  );
 
   if (!movies || movies.length === 0) return null;
   const canScroll = movies.length > 2;
@@ -308,12 +369,16 @@ export const MovieRow: React.FC<MovieRowProps> = ({
               )}
             </h2>
           </div>
-          {subtitle && <span className="text-xs text-slate-400 font-medium">{subtitle}</span>}
+          {subtitle && (
+            <span className="text-xs text-slate-400 font-medium">
+              {subtitle}
+            </span>
+          )}
         </div>
         <div className="relative -mx-2 px-2">
           {canScrollLeft && (
             <button
-              onClick={() => handleMobileScrollBtn('left')}
+              onClick={() => handleMobileScrollBtn("left")}
               className={`absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white hidden sm:flex items-center justify-center transition-all backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer`}
               aria-label="Cuộn sang trái"
             >
@@ -328,11 +393,15 @@ export const MovieRow: React.FC<MovieRowProps> = ({
             onMouseUp={onMobileMouseUpOrLeave}
             onMouseLeave={onMobileMouseUpOrLeave}
             className={`flex w-full overflow-x-auto scrollbar-none overscroll-x-contain ${rowHeightClass} py-4 cursor-grab active:cursor-grabbing`}
-            style={{ WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none', gap: `${gap}px` }}
+            style={{
+              WebkitOverflowScrolling: "touch",
+              scrollbarWidth: "none",
+              gap: `${gap}px`,
+            }}
           >
             {movies.map((movie, index) => (
               <div
-                key={`${movie.slug || movie._id || 'movie'}-${index}`}
+                key={`${movie.slug || movie._id || "movie"}-${index}`}
                 className="flex-shrink-0 h-full"
                 style={{ width: `${itemWidth}px` }}
               >
@@ -343,14 +412,14 @@ export const MovieRow: React.FC<MovieRowProps> = ({
                   onPlay={handlePlay}
                   onOpenDetail={handleOpenDetail}
                   onToggleMyList={onToggleMyList}
-                  isInMyList={checkIsInMyList(movie.slug || '')}
+                  isInMyList={checkIsInMyList(movie.slug || "")}
                 />
               </div>
             ))}
           </div>
           {canScrollRight && (
             <button
-              onClick={() => handleMobileScrollBtn('right')}
+              onClick={() => handleMobileScrollBtn("right")}
               className={`absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white hidden sm:flex items-center justify-center transition-all backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer`}
               aria-label="Cuộn sang phải"
             >
@@ -377,21 +446,35 @@ export const MovieRow: React.FC<MovieRowProps> = ({
             )}
           </h2>
         </div>
-        {subtitle && <span className="text-xs text-slate-400 font-medium">{subtitle}</span>}
+        {subtitle && (
+          <span className="text-xs text-slate-400 font-medium">{subtitle}</span>
+        )}
       </div>
 
       <div className="relative -mx-2 px-2">
         {canScroll && (
           <button
-            onClick={() => handleDesktopScrollBtn('left')}
-            className={`absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 ${isTv ? 'w-11 h-20 opacity-100' : 'h-14 sm:h-16 opacity-0 group-hover/row:opacity-100'} bg-[#0b1329]/85 hover:bg-blue-600 text-white flex items-center justify-center transition-all backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer focus:opacity-100 focus:ring-2 focus:ring-blue-500 hover:scale-105 active:scale-95`}
+            onClick={() => handleDesktopScrollBtn("left")}
+            className={`absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 ${
+              isTv
+                ? "w-11 h-20 opacity-100"
+                : "h-14 sm:h-16 opacity-0 group-hover/row:opacity-100"
+            } bg-[#0b1329]/85 hover:bg-blue-600 text-white flex items-center justify-center transition-all backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer focus:opacity-100 focus:ring-2 focus:ring-blue-500 hover:scale-105 active:scale-95`}
             aria-label="Cuộn sang trái"
           >
-            <ChevronLeft className={`${isTv ? 'w-6 h-6' : 'w-5 h-5'} hover:scale-110 transition-transform`} />
+            <ChevronLeft
+              className={`${
+                isTv ? "w-6 h-6" : "w-5 h-5"
+              } hover:scale-110 transition-transform`}
+            />
           </button>
         )}
 
-        <div ref={viewportRef} className={`overflow-hidden py-4 ${rowHeightClass} cursor-grab active:cursor-grabbing`} style={{ touchAction: 'pan-y' }}>
+        <div
+          ref={viewportRef}
+          className={`overflow-hidden py-4 ${rowHeightClass} cursor-grab active:cursor-grabbing`}
+          style={{ touchAction: "pan-y" }}
+        >
           <div
             ref={trackRef}
             onMouseDown={onDesktopMouseDown}
@@ -402,31 +485,36 @@ export const MovieRow: React.FC<MovieRowProps> = ({
             onTouchMove={onDesktopTouchMove}
             onTouchEnd={onDesktopTouchEnd}
             className="flex w-max will-change-transform"
-            style={{
-              display: "flex",
-              flexWrap: "nowrap",
-              gap: `${gap}px`,
-              transform: `translateX(-${offset}px)`,
-              transition: isDragging || disableTransition ? "none" : "transform 750ms cubic-bezier(0.4, 0, 0.2, 1)",
-              willChange: "transform",
-            } as React.CSSProperties}
+            style={
+              {
+                display: "flex",
+                flexWrap: "nowrap",
+                gap: `${gap}px`,
+                transform: `translateX(-${offset}px)`,
+                transition:
+                  isDragging || disableTransition
+                    ? "none"
+                    : "transform 750ms cubic-bezier(0.4, 0, 0.2, 1)",
+                willChange: "transform",
+              } as React.CSSProperties
+            }
           >
             {loopMovies.map((movie, index) => {
               const origIndex = index % movies.length;
               return (
                 <div
-                  key={`${movie.slug || movie._id || 'movie'}-${index}`}
+                  key={`${movie.slug || movie._id || "movie"}-${index}`}
                   className="flex-shrink-0 h-full"
                   style={{ width: `${itemWidth}px` }}
                 >
                   <MovieCard
                     movie={movie}
-                    rank={isTop10 ? (origIndex + 1) : undefined}
+                    rank={isTop10 ? origIndex + 1 : undefined}
                     isTop10={isTop10}
                     onPlay={handlePlay}
                     onOpenDetail={handleOpenDetail}
                     onToggleMyList={onToggleMyList}
-                    isInMyList={checkIsInMyList(movie.slug || '')}
+                    isInMyList={checkIsInMyList(movie.slug || "")}
                   />
                 </div>
               );
@@ -436,11 +524,19 @@ export const MovieRow: React.FC<MovieRowProps> = ({
 
         {canScroll && (
           <button
-            onClick={() => handleDesktopScrollBtn('right')}
-            className={`absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 ${isTv ? 'w-11 h-20 opacity-100' : 'h-14 sm:h-16 opacity-0 group-hover/row:opacity-100'} bg-[#0b1329]/85 hover:bg-blue-600 text-white flex items-center justify-center transition-all backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer focus:opacity-100 focus:ring-2 focus:ring-blue-500 hover:scale-105 active:scale-95`}
+            onClick={() => handleDesktopScrollBtn("right")}
+            className={`absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 ${
+              isTv
+                ? "w-11 h-20 opacity-100"
+                : "h-14 sm:h-16 opacity-0 group-hover/row:opacity-100"
+            } bg-[#0b1329]/85 hover:bg-blue-600 text-white flex items-center justify-center transition-all backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer focus:opacity-100 focus:ring-2 focus:ring-blue-500 hover:scale-105 active:scale-95`}
             aria-label="Cuộn sang phải"
           >
-            <ChevronRight className={`${isTv ? 'w-6 h-6' : 'w-5 h-5'} hover:scale-110 transition-transform`} />
+            <ChevronRight
+              className={`${
+                isTv ? "w-6 h-6" : "w-5 h-5"
+              } hover:scale-110 transition-transform`}
+            />
           </button>
         )}
       </div>
