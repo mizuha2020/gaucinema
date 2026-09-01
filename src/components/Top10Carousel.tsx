@@ -1,14 +1,8 @@
-import React, {
-  useRef,
-  useEffect,
-  useMemo,
-  useState,
-  useCallback,
-  useLayoutEffect,
-} from "react";
+import React, { useRef, useEffect, useMemo, useCallback, useState, useLayoutEffect } from "react";
 import { Movie } from "../types";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { getImageUrl } from "../services/movieApi";
+import { smoothScrollHorizontal } from "../utils/scrollUtils";
 
 interface Top10CarouselProps {
   title: string;
@@ -22,37 +16,100 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
   movies,
   onOpenDetail,
 }) => {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const top10Movies = useMemo(() => movies.slice(0, 10), [movies]);
+
+  // ========== MOBILE: native scroll (e0ccb2e / 52269b8) ==========
+  const rowRef = useRef<HTMLDivElement>(null);
+  const isDraggingRef = useRef(false);
+  const startXRef = useRef(0);
+  const scrollLeftStartRef = useRef(0);
+  const hasMovedRef = useRef(false);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(true);
+  const scrollAnimCancelRef = useRef<(() => void) | null>(null);
+
+  const checkScrollBounds = useCallback(() => {
+    if (!isMobile) return;
+    const el = rowRef.current;
+    if (!el) return;
+    const { scrollLeft, scrollWidth, clientWidth } = el;
+    setCanScrollLeft(scrollLeft > 8);
+    setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 8);
+  }, [isMobile]);
+  useEffect(() => {
+    if (!isMobile) return;
+    checkScrollBounds();
+    window.addEventListener('resize', checkScrollBounds);
+    return () => window.removeEventListener('resize', checkScrollBounds);
+  }, [checkScrollBounds, top10Movies, isMobile]);
+
+  const handleMobileScrollBtn = (direction: 'left' | 'right') => {
+    const el = rowRef.current;
+    if (!el) return;
+    if (scrollAnimCancelRef.current) scrollAnimCancelRef.current();
+    const scrollAmount = Math.round(el.clientWidth * 0.75);
+    const delta = direction === 'left' ? -scrollAmount : scrollAmount;
+    scrollAnimCancelRef.current = smoothScrollHorizontal(el, delta, 460, checkScrollBounds);
+  };
+  const onMobileMouseDown = (e: React.MouseEvent) => {
+    const el = rowRef.current;
+    if (!el) return;
+    isDraggingRef.current = true;
+    hasMovedRef.current = false;
+    startXRef.current = e.pageX - el.offsetLeft;
+    scrollLeftStartRef.current = el.scrollLeft;
+  };
+  const onMobileMouseMove = (e: React.MouseEvent) => {
+    if (!isDraggingRef.current) return;
+    const el = rowRef.current;
+    if (!el) return;
+    const x = e.pageX - el.offsetLeft;
+    const walk = (x - startXRef.current) * 1.3;
+    if (Math.abs(walk) > 5) hasMovedRef.current = true;
+    el.scrollLeft = scrollLeftStartRef.current - walk;
+  };
+  const onMobileMouseUpOrLeave = () => {
+    isDraggingRef.current = false;
+    setTimeout(() => { hasMovedRef.current = false; }, 50);
+  };
+  const handleClickItem = (movie: Movie) => {
+    if (hasMovedRef.current) return;
+    onOpenDetail(movie);
+  };
+
+  // ========== DESKTOP: transform 2-page loop giữ nguyên ==========
   const viewportRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
-  const hasMovedRef = useRef(false);
-  const startXRef = useRef(0);
+  const startXDesktopRef = useRef(0);
+  const startYRef = useRef(0);
   const startOffsetRef = useRef(0);
-  const isDraggingRef = useRef(false);
-
   const [offset, setOffset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [disableTransition, setDisableTransition] = useState(false);
-  const [page, setPage] = useState(0); // 0: 1-6, 1: 5-10 (middle set)
-
-  const top10Movies = useMemo(() => movies.slice(0, 10), [movies]);
+  const [page, setPage] = useState(0);
+  const offsetRef = useRef(0);
+  useEffect(() => { offsetRef.current = offset; }, [offset]);
   const loopMovies = useMemo(() => [...top10Movies, ...top10Movies, ...top10Movies], [top10Movies]);
-
   const singleWidthRef = useRef(0);
   const maxSingleRef = useRef(0);
-
   const getSingleWidth = useCallback(() => {
     const track = trackRef.current;
     if (!track) return 0;
     return track.scrollWidth / 3;
   }, [loopMovies.length]);
-
   const getMaxSingle = useCallback(() => {
     const vp = viewportRef.current;
     const single = singleWidthRef.current || getSingleWidth();
     if (!vp || single === 0) return 0;
     return Math.max(0, single - vp.clientWidth);
   }, [getSingleWidth]);
-
   const refreshMetrics = useCallback(() => {
     const single = getSingleWidth();
     const vp = viewportRef.current;
@@ -61,209 +118,188 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
       maxSingleRef.current = Math.max(0, single - vp.clientWidth);
     }
   }, [getSingleWidth]);
-
-  // Init at middle page 0 (single) — 1-6, cache metrics to avoid forced reflow on first click
   useLayoutEffect(() => {
+    if (isMobile) return;
     const init = () => {
       refreshMetrics();
       const single = singleWidthRef.current;
       if (single > 0) {
         setDisableTransition(true);
         setOffset(single);
+        offsetRef.current = single;
+        if (trackRef.current) trackRef.current.style.transform = `translateX(-${single}px)`;
         setPage(0);
         requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
       }
     };
     const id = setTimeout(init, 60);
     window.addEventListener("resize", init);
-    return () => {
-      clearTimeout(id);
-      window.removeEventListener("resize", init);
-    };
-  }, [refreshMetrics, loopMovies]);
+    return () => { clearTimeout(id); window.removeEventListener("resize", init); };
+  }, [refreshMetrics, loopMovies, isMobile]);
 
-  const handleScrollBtn = (direction: "left" | "right") => {
+  const handleDesktopScrollBtn = (direction: "left" | "right") => {
     const single = singleWidthRef.current || getSingleWidth();
     const maxSingle = maxSingleRef.current || getMaxSingle();
     if (single === 0) return;
-
     if (direction === "right") {
       if (page === 0) {
-        setOffset(single + maxSingle);
+        const next = single + maxSingle;
+        setOffset(next); offsetRef.current = next; if (trackRef.current) trackRef.current.style.transform = `translateX(-${next}px)`;
         setPage(1);
       } else {
-        setOffset(single * 2);
+        const next = single * 2;
+        setOffset(next); offsetRef.current = next; if (trackRef.current) trackRef.current.style.transform = `translateX(-${next}px)`;
         setTimeout(() => {
           setDisableTransition(true);
-          setOffset(single);
+          const snap = single;
+          setOffset(snap); offsetRef.current = snap; if (trackRef.current) trackRef.current.style.transform = `translateX(-${snap}px)`;
           setPage(0);
           requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
         }, 760);
       }
     } else {
       if (page === 1) {
-        setOffset(single);
+        const next = single;
+        setOffset(next); offsetRef.current = next; if (trackRef.current) trackRef.current.style.transform = `translateX(-${next}px)`;
         setPage(0);
       } else {
-        setOffset(maxSingle);
+        const next = maxSingle;
+        setOffset(next); offsetRef.current = next; if (trackRef.current) trackRef.current.style.transform = `translateX(-${next}px)`;
         setTimeout(() => {
           setDisableTransition(true);
-          setOffset(single + maxSingle);
+          const snap = single + maxSingle;
+          setOffset(snap); offsetRef.current = snap; if (trackRef.current) trackRef.current.style.transform = `translateX(-${snap}px)`;
           setPage(1);
           requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
         }, 760);
       }
     }
   };
-
-  const onMouseDown = (e: React.MouseEvent) => {
+  const onDesktopMouseDown = (e: React.MouseEvent) => {
     isDraggingRef.current = true;
     hasMovedRef.current = false;
     setIsDragging(true);
-    startXRef.current = e.pageX;
-    startOffsetRef.current = offset;
+    setDisableTransition(true);
+    startXDesktopRef.current = e.pageX;
+    startOffsetRef.current = offsetRef.current;
   };
-
-  const onMouseMove = (e: React.MouseEvent) => {
+  const onDesktopMouseMove = (e: React.MouseEvent) => {
     if (!isDraggingRef.current) return;
-    const dx = e.pageX - startXRef.current;
+    const dx = e.pageX - startXDesktopRef.current;
     if (Math.abs(dx) > 5) hasMovedRef.current = true;
     const next = startOffsetRef.current - dx;
-    setOffset(next);
+    offsetRef.current = next;
+    if (trackRef.current) trackRef.current.style.transform = `translateX(-${next}px)`;
   };
-
-  const onMouseUpOrLeave = () => {
+  const onDesktopMouseUpOrLeave = () => {
     if (isDraggingRef.current) {
       isDraggingRef.current = false;
       setIsDragging(false);
       const single = singleWidthRef.current || getSingleWidth();
       const maxSingle = maxSingleRef.current || getMaxSingle();
-      if (single === 0) return;
+      if (single === 0) { setDisableTransition(false); return; }
+      const cur = offsetRef.current;
       const middle0 = single;
       const middle1 = single + maxSingle;
-      const dist0 = Math.abs(offset - middle0);
-      const dist1 = Math.abs(offset - middle1);
-      let normalizedOffset = offset;
+      const dist0 = Math.abs(cur - middle0);
+      const dist1 = Math.abs(cur - middle1);
+      let normalizedOffset = cur;
       let needsSnap = false;
-      if (offset < single * 0.5) {
-        normalizedOffset = offset + single;
-        needsSnap = true;
-      } else if (offset >= single * 2) {
-        normalizedOffset = offset - single;
-        needsSnap = true;
-      }
+      if (cur < single * 0.5) { normalizedOffset = cur + single; needsSnap = true; }
+      else if (cur >= single * 2) { normalizedOffset = cur - single; needsSnap = true; }
       const snapTo = Math.abs(normalizedOffset - middle0) < Math.abs(normalizedOffset - middle1) ? middle0 : middle1;
       if (needsSnap) {
-        setOffset(snapTo);
+        setOffset(snapTo); offsetRef.current = snapTo; if (trackRef.current) trackRef.current.style.transform = `translateX(-${snapTo}px)`;
         setPage(snapTo === middle0 ? 0 : 1);
+        setDisableTransition(true);
+        requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
       } else {
         const nearest = dist0 < dist1 ? middle0 : middle1;
-        setOffset(nearest);
+        setOffset(nearest); offsetRef.current = nearest; if (trackRef.current) trackRef.current.style.transform = `translateX(-${nearest}px)`;
         setPage(nearest === middle0 ? 0 : 1);
+        setDisableTransition(false);
+        requestAnimationFrame(() => requestAnimationFrame(() => setDisableTransition(false)));
       }
       setTimeout(() => { hasMovedRef.current = false; }, 50);
+    } else setDisableTransition(false);
+  };
+  const onDesktopTouchStart = (e: React.TouchEvent) => {
+    isDraggingRef.current = true;
+    hasMovedRef.current = false;
+    setIsDragging(true);
+    setDisableTransition(true);
+    startXDesktopRef.current = e.touches[0].pageX;
+    startYRef.current = e.touches[0].pageY;
+    startOffsetRef.current = offsetRef.current;
+  };
+  const onDesktopTouchMove = (e: React.TouchEvent) => {
+    if (!isDraggingRef.current) return;
+    const dx = e.touches[0].pageX - startXDesktopRef.current;
+    const dy = e.touches[0].pageY - startYRef.current;
+    if (!hasMovedRef.current && Math.abs(dy) > Math.abs(dx) * 1.2) {
+      isDraggingRef.current = false; setIsDragging(false); setDisableTransition(false); return;
     }
+    if (Math.abs(dx) > 5) hasMovedRef.current = true;
+    const next = startOffsetRef.current - dx;
+    offsetRef.current = next;
+    if (trackRef.current) trackRef.current.style.transform = `translateX(-${next}px)`;
   };
-
-  const handleClickItem = (movie: Movie) => {
-    if (hasMovedRef.current) return;
-    onOpenDetail(movie);
-  };
+  const onDesktopTouchEnd = () => onDesktopMouseUpOrLeave();
 
   if (!top10Movies.length) return null;
+
+  if (isMobile) {
+    return (
+      <div className="bg-black py-8 px-4 sm:px-8 select-none">
+        <h2 className="text-white text-2xl font-bold mb-6">{title}</h2>
+        <div className="relative group">
+          {canScrollLeft && (
+            <button className="absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white hidden sm:flex items-center justify-center transition-all backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer" onClick={() => handleMobileScrollBtn("left")} aria-label="Cuộn sang trái"><ChevronLeft className="w-5 h-5" /></button>
+          )}
+          <div ref={rowRef} onScroll={checkScrollBounds} onMouseDown={onMobileMouseDown} onMouseMove={onMobileMouseMove} onMouseUp={onMobileMouseUpOrLeave} onMouseLeave={onMobileMouseUpOrLeave} className="flex items-end overflow-x-auto scrollbar-none overscroll-x-contain gap-0 cursor-grab active:cursor-grabbing py-2" style={{ WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
+            {top10Movies.map((movie, index) => (
+              <div key={`${movie.slug || 'top10'}-${index}`} className="relative flex-shrink-0 w-64 h-80 flex items-end">
+                <div className="absolute left-0 bottom-0 z-0 flex items-center justify-start h-full"><span className="text-[12rem] font-black italic text-black select-none" style={{ WebkitTextStroke: '3px #2563EB', textShadow: '0 0 24px rgba(37,99,235,0.5)' }}>{index + 1}</span></div>
+                <div className="relative z-10 ml-16 w-48 h-72 rounded-lg overflow-hidden cursor-pointer shadow-2xl transition-transform hover:scale-105" onClick={() => handleClickItem(movie)}>
+                  <img src={getImageUrl(movie.thumb_url || movie.poster_url)} alt={movie.name} className="w-full h-full object-cover pointer-events-none" loading="lazy" decoding="async" />
+                  <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black to-transparent"><p className="text-white font-bold truncate">{movie.name}</p></div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {canScrollRight && (
+            <button className="absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white hidden sm:flex items-center justify-center transition-all backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer" onClick={() => handleMobileScrollBtn("right")} aria-label="Cuộn sang phải"><ChevronRight className="w-5 h-5" /></button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-black py-8 px-4 sm:px-8 select-none">
       <h2 className="text-white text-2xl font-bold mb-6">{title}</h2>
-
       <div className="relative group">
-        <button
-          className="absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95"
-          onClick={() => handleScrollBtn("left")}
-          aria-label="Cuộn sang trái"
-        >
-          <ChevronLeft className="w-5 h-5 hover:scale-110 transition-transform" />
-        </button>
-
-        <div
-          ref={viewportRef}
-          className="overflow-hidden py-2 cursor-grab active:cursor-grabbing"
-        >
-          <div
-            ref={trackRef}
-            onMouseDown={onMouseDown}
-            onMouseMove={onMouseMove}
-            onMouseUp={onMouseUpOrLeave}
-            onMouseLeave={onMouseUpOrLeave}
-            className="flex items-end gap-12 sm:gap-14 py-2 will-change-transform"
-            style={{
-              display: "flex",
-              flexWrap: "nowrap",
-              alignItems: "flex-end",
-              width: "max-content",
-              transform: `translateX(-${offset}px)`,
-              transition: isDragging || disableTransition ? "none" : "transform 750ms cubic-bezier(0.4, 0, 0.2, 1)",
-              willChange: "transform",
-            } as React.CSSProperties}
-          >
+        <button className="absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95" onClick={() => handleDesktopScrollBtn("left")} aria-label="Cuộn sang trái"><ChevronLeft className="w-5 h-5" /></button>
+        <div ref={viewportRef} className="overflow-hidden py-2 cursor-grab active:cursor-grabbing" style={{ touchAction: 'pan-y' }}>
+          <div ref={trackRef} onMouseDown={onDesktopMouseDown} onMouseMove={onDesktopMouseMove} onMouseUp={onDesktopMouseUpOrLeave} onMouseLeave={onDesktopMouseUpOrLeave} onTouchStart={onDesktopTouchStart} onTouchMove={onDesktopTouchMove} onTouchEnd={onDesktopTouchEnd} className="flex items-end gap-12 sm:gap-14 py-2 will-change-transform" style={{ display: "flex", flexWrap: "nowrap", alignItems: "flex-end", width: "max-content", transform: `translateX(-${offset}px)`, transition: isDragging || disableTransition ? "none" : "transform 750ms cubic-bezier(0.4, 0, 0.2, 1)", willChange: "transform" } as React.CSSProperties}>
             {loopMovies.map((movie, idx) => {
               const origIndex = idx % 10;
               const isMiddleSet = idx >= 10 && idx < 20;
               return (
-                <div
-                  key={`${movie.slug || "top10"}-${idx}`}
-                  className="relative flex-shrink-0 w-64 h-80 flex items-end overflow-visible"
-                  style={{ contain: "layout style", transform: "translateZ(0)" } as React.CSSProperties}
-                >
+                <div key={`${movie.slug || "top10"}-${idx}`} className="relative flex-shrink-0 w-64 h-80 flex items-end overflow-visible" style={{ contain: "layout style", transform: "translateZ(0)" } as React.CSSProperties}>
                   <div className="absolute -left-8 bottom-6 z-0 flex items-center justify-start h-72 overflow-visible" style={{ willChange: "transform", transform: "translateZ(0)" } as React.CSSProperties}>
-                    <span
-                      className="text-[15rem] leading-none font-black italic text-black select-none"
-                      style={{
-                        WebkitTextStroke: "3px #2563EB",
-                        textShadow: "0 0 24px rgba(37,99,235,0.5)",
-                        transform: "translateZ(0)",
-                        backfaceVisibility: "hidden",
-                        willChange: "transform",
-                        lineHeight: "1",
-                        display: "block",
-                      } as React.CSSProperties}
-                    >
-                      {origIndex + 1}
-                    </span>
+                    <span className="text-[15rem] leading-none font-black italic text-black select-none" style={{ WebkitTextStroke: "3px #2563EB", textShadow: "0 0 24px rgba(37,99,235,0.5)", transform: "translateZ(0)", backfaceVisibility: "hidden", willChange: "transform", lineHeight: "1", display: "block" } as React.CSSProperties}>{origIndex + 1}</span>
                   </div>
-
-                  <div
-                    className="relative z-10 ml-16 w-48 h-72 rounded-lg overflow-hidden cursor-pointer shadow-2xl transition-transform hover:scale-105 will-change-transform bg-[#0f172a]"
-                    onClick={() => handleClickItem(movie)}
-                    style={{ transform: "translateZ(0)", backfaceVisibility: "hidden" } as React.CSSProperties}
-                  >
-                    <img
-                      src={getImageUrl(movie.thumb_url || movie.poster_url)}
-                      alt={movie.name}
-                      className="w-full h-full object-cover pointer-events-none"
-                      loading={isMiddleSet ? "eager" : "lazy"}
-                      decoding="async"
-                      fetchPriority={isMiddleSet ? "high" : "low" as any}
-                      style={{ transform: "translateZ(0)" } as React.CSSProperties}
-                    />
-
-                    <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black to-transparent">
-                      <p className="text-white font-bold truncate">{movie.name}</p>
-                    </div>
+                  <div className="relative z-10 ml-16 w-48 h-72 rounded-lg overflow-hidden cursor-pointer shadow-2xl transition-transform hover:scale-105 will-change-transform bg-[#0f172a]" onClick={() => handleClickItem(movie)} style={{ transform: "translateZ(0)", backfaceVisibility: "hidden" } as React.CSSProperties}>
+                    <img src={getImageUrl(movie.thumb_url || movie.poster_url)} alt={movie.name} className="w-full h-full object-cover pointer-events-none" loading={isMiddleSet ? "eager" : "lazy"} decoding="async" fetchPriority={isMiddleSet ? "high" : "low" as any} style={{ transform: "translateZ(0)" } as React.CSSProperties} />
+                    <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black to-transparent"><p className="text-white font-bold truncate">{movie.name}</p></div>
                   </div>
                 </div>
               );
             })}
           </div>
         </div>
-
-        <button
-          className="absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95"
-          onClick={() => handleScrollBtn("right")}
-          aria-label="Cuộn sang phải"
-        >
-          <ChevronRight className="w-5 h-5 hover:scale-110 transition-transform" />
-        </button>
+        <button className="absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95" onClick={() => handleDesktopScrollBtn("right")} aria-label="Cuộn sang phải"><ChevronRight className="w-5 h-5" /></button>
       </div>
     </div>
   );
