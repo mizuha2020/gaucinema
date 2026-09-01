@@ -1210,11 +1210,12 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
   return (
     <motion.div
       ref={containerRef}
-      initial={{ opacity: 0, scale: 0.98 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.98 }}
-      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-      className="fixed inset-0 bg-black z-50 flex items-center justify-center select-none touch-none"
+      initial={{ opacity: 0, scale: 0.92, y: 20 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.88, y: 16 }}
+      transition={{ type: "spring", stiffness: 300, damping: 30, mass: 1.0 }}
+      className="fixed inset-0 bg-black z-[70] flex items-center justify-center select-none touch-none will-change-transform"
+      style={{ transformOrigin: "center center" } as React.CSSProperties}
       onMouseMove={handleMouseMove}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}

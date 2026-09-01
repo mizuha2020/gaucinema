@@ -989,11 +989,11 @@ export default function App() {
         return;
       }
       if (playingMovie) {
-        const movieToDetail = playingMovie;
         const episodeToSave = playingEpisode;
         const serverToSave = playingServer;
+        const movieToDetail = playingMovie;
         setPlayingMovie(null);
-        setSelectedMovieForDetail(movieToDetail);
+        // Giữ detail ở dưới nếu đã có, tránh re-mount gây zoom ngược (rule: back là thu nhỏ, không phải zoom vào detail mới)
         // Save one final progress snapshot before closing
         if (
           currentAccount &&
@@ -1186,7 +1186,7 @@ export default function App() {
     setPlayingServer(server);
     setAllServers(servers);
     setInitialResumeTime(resumeTime);
-    setSelectedMovieForDetail(null);
+    // Giữ detail ở dưới player để player zoom trên nền detail (đúng rule iOS: mở zoom vào, đóng thu nhỏ)
     window.history.pushState({ playerOpen: true }, "", "");
 
     // Ghi nhận ngay khi bắt đầu xem để mục "Xem tiếp" / "Lịch sử" xuất hiện lập tức.
@@ -1215,9 +1215,7 @@ export default function App() {
     if (window.history.state && window.history.state.playerOpen) {
       window.history.back();
     } else {
-      const currentMovie = playingMovie;
       setPlayingMovie(null);
-      setSelectedMovieForDetail(currentMovie);
       refreshProfileData();
     }
   };

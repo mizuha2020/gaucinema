@@ -425,15 +425,20 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
 
   return (
     <motion.div
-      ref={containerRef}
-      id="movie-detail-fullpage"
-      initial={{ opacity: 0, scale: 0.98, y: 16 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.98, y: 16 }}
-      transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
-      className="fixed inset-0 z-[60] bg-[#060a14] overflow-y-auto text-white flex flex-col selection:bg-blue-600 selection:text-white overscroll-contain"
-      style={{ WebkitOverflowScrolling: 'touch' }}
-    >
+        ref={containerRef}
+        id="movie-detail-fullpage"
+        initial={{ opacity: 0, scale: 0.90, y: 28 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.86, y: 32 }}
+        transition={{
+          type: "spring",
+          stiffness: 300,
+          damping: 30,
+          mass: 1.0,
+        }}
+        className="fixed inset-0 z-[60] bg-[#060a14] overflow-y-auto text-white flex flex-col selection:bg-blue-600 selection:text-white overscroll-contain will-change-transform"
+        style={{ WebkitOverflowScrolling: 'touch', transformOrigin: 'center center' } as React.CSSProperties}
+      >
         {/* Top-Right Circular Close Button (Positioned safely below Mobile Status Bar / PWA Notch & Safe Area) */}
         <button
           id="detail-floating-close-btn"
