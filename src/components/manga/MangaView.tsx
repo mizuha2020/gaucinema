@@ -133,6 +133,13 @@ export const MangaView: React.FC<MangaViewProps> = ({
   const [historyList, setHistoryList] = useState<MangaHistoryItem[]>([]);
   const [historyPage, setHistoryPage] = useState(1);
   const HISTORY_PAGE_SIZE = 20;
+  const tabScrollRef = React.useRef<Record<MangaNavTab, number>>({
+    home: 0,
+    explore: 0,
+    ranking: 0,
+    saved: 0,
+    history: 0,
+  });
   const [disabledSourceAlert, setDisabledSourceAlert] = useState<string | null>(
     null,
   );
@@ -353,6 +360,25 @@ export const MangaView: React.FC<MangaViewProps> = ({
     fetchMixed(page, kw, isAppend, cacheKey);
   }, [page, activeTab, isDetail, searchKeyword, activeSources]);
 
+  useEffect(() => {
+    const handleScroll = () => {
+      if (isDetail || activeReadingSession) return;
+      tabScrollRef.current[activeTab] = window.scrollY;
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+    };
+  }, [activeTab, isDetail, activeReadingSession]);
+
+  useEffect(() => {
+    const target = tabScrollRef.current[activeTab] ?? 0;
+    if (Math.abs(window.scrollY - target) > 1) {
+      window.scrollTo({ top: target, behavior: "auto" });
+    }
+  }, [activeTab]);
+
   // Reset về trang 1 khi searchKeyword đổi (chỉ khi đang ở home)
   useEffect(() => {
     if (activeTab === "home" && !isDetail) {
@@ -501,8 +527,18 @@ export const MangaView: React.FC<MangaViewProps> = ({
   };
 
   const handleTabChange = (tab: MangaNavTab) => {
+    const currentTab = activeTab;
+
+    if (tab === currentTab) {
+      tabScrollRef.current[tab] = 0;
+      window.scrollTo({ top: 0, behavior: "auto" });
+      return;
+    }
+
+    tabScrollRef.current[currentTab] = window.scrollY;
     setSelectedManga(null);
     setActiveTab(tab);
+
     if (tab === "history") setHistoryPage(1);
     if (tab === "home" || tab === "ranking") {
       const cacheKey = tab === "ranking" ? "ranking" : "home:";
@@ -525,10 +561,6 @@ export const MangaView: React.FC<MangaViewProps> = ({
         setPage(1);
         setMangaList([]);
       }
-    }
-    window.scrollTo({ top: 0 });
-    if (tab === "explore") {
-      // keep exploreKeyword synced
     }
   };
 
@@ -913,14 +945,16 @@ export const MangaView: React.FC<MangaViewProps> = ({
       </AnimatePresence>
 
       {/* Detail View */}
-      <AnimatePresence mode="wait">
+      <AnimatePresence mode="wait" initial={false}>
         {isDetail && selectedManga ? (
           <motion.div
             key={`detail-${selectedManga.id}`}
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 16 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="relative"
+            style={{ willChange: "opacity" }}
           >
             <MangaDetailView
               manga={selectedManga}
@@ -942,7 +976,8 @@ export const MangaView: React.FC<MangaViewProps> = ({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18, ease: "easeOut" }}
-            className="pt-20 sm:pt-24 pb-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto space-y-8"
+            className="relative pt-20 sm:pt-24 pb-24 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto space-y-8"
+            style={{ willChange: "opacity" }}
           >
             {/* Tab-specific content */}
             {activeTab === "explore" ? (

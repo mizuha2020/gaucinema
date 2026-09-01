@@ -73,6 +73,7 @@ export const MangaSearchView: React.FC<MangaSearchViewProps> = ({
   const [totalPages, setTotalPages] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isFirstLoadRef = React.useRef(true);
   const [enabledSources, setEnabledSources] = useState<MangaSource[]>([
     "truyenqq",
     "mangadex",
@@ -134,10 +135,11 @@ export const MangaSearchView: React.FC<MangaSearchViewProps> = ({
   useEffect(() => {
     let mounted = true;
     const fetchId = Date.now();
+    const isFirstLoad = isFirstLoadRef.current;
     setError(null);
     const showLoadingTimer = setTimeout(() => {
-      if (mounted) setIsLoading(true);
-    }, 120);
+      if (mounted && !isFirstLoad) setIsLoading(true);
+    }, 220);
     const timeoutGuard = setTimeout(() => {
       if (mounted) setIsLoading(false);
     }, 15000);
@@ -189,7 +191,8 @@ export const MangaSearchView: React.FC<MangaSearchViewProps> = ({
       } finally {
         clearTimeout(showLoadingTimer);
         clearTimeout(timeoutGuard);
-        if (mounted) setIsLoading(false);
+        if (mounted && !isFirstLoad) setIsLoading(false);
+        if (mounted) isFirstLoadRef.current = false;
       }
     };
     load();
