@@ -25,7 +25,7 @@ export const FollowedRow: React.FC<FollowedRowProps> = ({ items, onOpenDetail, o
     return (
       <div className="group relative w-64 shrink-0 bg-[#0f172a] rounded-2xl overflow-hidden border border-violet-900/50 hover:border-violet-500/80 transition-all shadow-md">
         <div className="relative aspect-video w-full cursor-pointer" onClick={()=> onOpenDetail(movie)}>
-          <img src={getImageUrl(it.thumb_url || it.poster_url)} alt={it.name} className="w-full h-full object-cover" />
+          <img src={getImageUrl(it.poster_url || it.thumb_url)} alt={it.name} className="w-full h-full object-cover" />
           <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
             <span className="bg-violet-600 text-white p-2.5 rounded-full shadow-xl shadow-violet-600/40"><Play className="w-4 h-4 fill-white ml-0.5" /></span>
           </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Movie } from '../types';
 import { Play, Info, Plus, Check, Volume2, VolumeX, ChevronRight, ChevronLeft, Sparkles, Star } from 'lucide-react';
-import { getImageUrl, getHeroImageUrl, getTmdbBackdropUrl } from '../services/movieApi';
+import { getImageUrl, getTmdbAssets } from '../services/movieApi';
 import { motion, AnimatePresence } from 'motion/react';
 
 const HERO_LIMIT = 10;
@@ -29,6 +29,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
   const [isMuted, setIsMuted] = useState(true);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [tmdbBackdropMap, setTmdbBackdropMap] = useState<Record<string, string>>({});
+  const [tmdbLogoMap, setTmdbLogoMap] = useState<Record<string, string>>({});
 
   const heroMovies = useMemo(() => (movies || []).slice(0, HERO_LIMIT), [movies]);
 
@@ -58,18 +59,24 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
     }
   }, [heroMovies.length, currentIndex]);
 
-  // Fetch TMDB backdrop/poster for all hero movies (all should have TMDB)
+  // Fetch TMDB backdrop + logo cho hero (backdrop original + logo png)
   useEffect(() => {
     let cancelled = false;
     if (!heroMovies.length) return;
     heroMovies.forEach(async (m) => {
       const tmdbId = (m as any)?.tmdb?.id ? String((m as any).tmdb.id).trim() : '';
       if (!tmdbId || !/^\d+$/.test(tmdbId)) return;
-      if (tmdbBackdropMap[m.slug]) return;
+      const needBackdrop = !tmdbBackdropMap[m.slug];
+      const needLogo = !tmdbLogoMap[m.slug];
+      if (!needBackdrop && !needLogo) return;
       try {
-        const url = await getTmdbBackdropUrl(tmdbId);
-        if (url && !cancelled) {
-          setTmdbBackdropMap((prev) => (prev[m.slug] ? prev : { ...prev, [m.slug]: url }));
+        const assets = await getTmdbAssets(tmdbId);
+        if (cancelled) return;
+        if (assets.backdropUrl && needBackdrop) {
+          setTmdbBackdropMap((prev) => (prev[m.slug] ? prev : { ...prev, [m.slug]: assets.backdropUrl! }));
+        }
+        if (assets.logoUrl && needLogo) {
+          setTmdbLogoMap((prev) => (prev[m.slug] ? prev : { ...prev, [m.slug]: assets.logoUrl! }));
         }
       } catch {}
     });
@@ -114,26 +121,27 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 
   const getHeroSrc = (movie: Movie) => {
     if (!movie) return '';
-    // 1. TMDB backdrop fetched via API (highest priority - original quality)
+    // Chỉ dùng TMDB backdrop original - giống chophim.app
+    // 1. TMDB backdrop đã fetch qua /api/tmdb/backdrop (original quality)
     const tmdbFetched = tmdbBackdropMap[movie.slug];
     if (tmdbFetched) return tmdbFetched;
-    // 2. Direct TMDB backdrop/poster already in payload
+    // 2. Direct TMDB backdrop/poster đã có sẵn trong payload (trường hợp TMDB Hot)
     if (movie.backdrop_url && movie.backdrop_url.includes('image.tmdb.org')) {
-      return movie.backdrop_url;
+      return movie.backdrop_url.includes('/original') ? movie.backdrop_url : movie.backdrop_url.replace(/\/w\d+/, '/original');
+    }
+    if ((movie as any).backdropUrl && String((movie as any).backdropUrl).includes('image.tmdb.org')) {
+      return String((movie as any).backdropUrl);
     }
     if (movie.poster_url && movie.poster_url.includes('image.tmdb.org')) {
-      return movie.poster_url.replace('/w500', '/original');
+      return movie.poster_url.replace(/\/w\d+/, '/original');
     }
-    // 3. backdrop_url field often contains TMDB original path proxy via server
-    if (movie.backdrop_url) {
-      return getHeroImageUrl(movie.backdrop_url, (movie as any).source);
-    }
-    // 4. Fallback to poster/thumb via optimized hero url (still works, but ideally all hero items have TMDB)
-    return getHeroImageUrl(movie.poster_url || movie.thumb_url, (movie as any).source);
+    // 3. Không có TMDB backdrop -> trả về rỗng để hiện placeholder, KHÔNG fallback sang phimimg/ophim
+    // giúp hero banner luôn là backdrop TMDB chất lượng gốc
+    return '';
   };
 
   return (
-    <div id="qtb-hero-banner" className="relative w-full h-[75vh] min-h-[540px] max-h-[780px] bg-[#0b1329] overflow-hidden select-none">
+    <div id="qtb-hero-banner" className="relative w-full h-[75vh] md:h-screen md:min-h-[100vh] md:max-h-none min-h-[540px] max-h-[780px] bg-[#0b1329] overflow-hidden select-none">
       {/* Background Image with Dynamic Fade Transitions */}
       <AnimatePresence mode="wait">
         <motion.div
@@ -144,28 +152,33 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           transition={{ duration: 0.8, ease: 'easeOut' }}
           className="absolute inset-0 w-full h-full"
         >
-          <img
-            src={getHeroSrc(currentMovie)}
-            alt={currentMovie.name}
-            loading="eager"
-            decoding="async"
-            fetchPriority="high"
-            className="w-full h-full object-cover object-top filter brightness-85"
-            onError={(e) => {
-              // fallback to normal poster if TMDB backdrop fails
-              const fallback = getImageUrl(currentMovie.poster_url || currentMovie.thumb_url, (currentMovie as any).source);
-              if ((e.target as HTMLImageElement).src !== fallback) {
-                (e.target as HTMLImageElement).src = fallback;
-              } else {
-                (e.target as HTMLImageElement).src =
-                  'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
-              }
-            }}
-          />
-          {/* Multi-layered Gấu navy cinematic gradients */}
-          <div className="absolute inset-0 bg-gradient-to-r from-[#0b1329] via-[#0b1329]/80 to-transparent w-full md:w-3/4" />
-          <div className="absolute inset-0 bg-gradient-to-t from-[#0b1329] via-[#0b1329]/30 to-transparent" />
-          <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-[#070b16]/90 to-transparent" />
+          {(() => {
+            const tmdbSrc = getHeroSrc(currentMovie);
+            const fallbackThumb = getImageUrl(currentMovie.thumb_url || currentMovie.poster_url, (currentMovie as any).source);
+            const heroSrc = tmdbSrc || fallbackThumb;
+            return (
+              <img
+                src={heroSrc}
+                alt={currentMovie.name}
+                loading="eager"
+                decoding="async"
+                fetchPriority="high"
+                className="w-full h-full object-cover object-top"
+                onError={(e) => {
+                  const img = e.target as HTMLImageElement;
+                  // Nếu TMDB backdrop lỗi thì fallback sang thumb_url
+                  if (tmdbSrc && img.src === tmdbSrc && fallbackThumb && fallbackThumb !== tmdbSrc) {
+                    img.src = fallbackThumb;
+                    return;
+                  }
+                  if (img.src !== 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80') {
+                    img.src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
+                  }
+                }}
+              />
+            );
+          })()}
+
         </motion.div>
       </AnimatePresence>
 
@@ -195,10 +208,27 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
             )}
           </div>
 
-          {/* Title */}
-          <h1 className="text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-black text-white tracking-tight leading-tight drop-shadow-[0_4px_16px_rgba(0,0,0,0.9)] line-clamp-2">
-            {currentMovie.name}
-          </h1>
+          {/* Title - ưu tiên logo TMDB png, fallback tên phim */}
+          {(() => {
+            const logo = tmdbLogoMap[currentMovie.slug];
+            if (logo) {
+              return (
+                <img
+                  src={logo}
+                  alt={currentMovie.name}
+                  className="max-h-16 sm:max-h-20 md:max-h-28 lg:max-h-32 max-w-[80%] sm:max-w-[520px] w-auto object-contain object-left drop-shadow-[0_4px_16px_rgba(0,0,0,0.9)] select-none"
+                  loading="eager"
+                  decoding="async"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
+              );
+            }
+            return (
+              <h1 className="text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-black text-white tracking-tight leading-tight drop-shadow-[0_4px_16px_rgba(0,0,0,0.9)] line-clamp-2">
+                {currentMovie.name}
+              </h1>
+            );
+          })()}
 
           {/* Origin Name */}
           {currentMovie.origin_name && (

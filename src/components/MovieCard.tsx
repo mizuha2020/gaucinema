@@ -43,7 +43,7 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
     }
   };
 
-  const imgUrl = getImageUrl(movie.thumb_url || movie.poster_url);
+  const imgUrl = getImageUrl(movie.poster_url || movie.thumb_url);
 
   const matchPercentage = Math.floor(92 + (((movie.year || 2024) * 7 + (movie.name.length * 3)) % 8));
 

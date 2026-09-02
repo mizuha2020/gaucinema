@@ -126,7 +126,7 @@ export const CinematicCarousel: React.FC<CinematicCarouselProps> = ({ title, mov
                   }}
                 >
                   <img
-                    src={getImageUrl(movie.thumb_url || movie.poster_url)}
+                    src={getImageUrl(movie.poster_url || movie.thumb_url)}
                     alt={movie.name}
                     loading="eager"
                     className="w-full h-full object-cover"

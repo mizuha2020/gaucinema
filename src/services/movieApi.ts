@@ -135,21 +135,38 @@ export function getHeroImageUrl(path?: string, source?: ApiSource | string): str
 }
 
 const tmdbBackdropCacheClient = new Map<string, string | null>();
-export async function getTmdbBackdropUrl(tmdbId: string | number): Promise<string | null> {
+const tmdbLogoCacheClient = new Map<string, string | null>();
+const tmdbAssetsCacheClient = new Map<string, { backdropUrl: string | null; logoUrl: string | null }>();
+export async function getTmdbAssets(tmdbId: string | number): Promise<{ backdropUrl: string | null; logoUrl: string | null }> {
   const id = String(tmdbId || "").trim();
-  if (!id || !/^\d+$/.test(id)) return null;
-  if (tmdbBackdropCacheClient.has(id)) return tmdbBackdropCacheClient.get(id) || null;
+  if (!id || !/^\d+$/.test(id)) return { backdropUrl: null, logoUrl: null };
+  if (tmdbAssetsCacheClient.has(id)) return tmdbAssetsCacheClient.get(id)!;
   try {
     const res = await fetch(getFullApiUrl(`/api/tmdb/backdrop/${id}`));
     if (res.ok) {
       const data = await res.json();
-      const url = data.backdropUrl || null;
-      tmdbBackdropCacheClient.set(id, url);
-      return url;
+      const backdropUrl = data.backdropUrl || null;
+      const logoUrl = data.logoUrl || null;
+      tmdbBackdropCacheClient.set(id, backdropUrl);
+      tmdbLogoCacheClient.set(id, logoUrl);
+      const assets = { backdropUrl, logoUrl };
+      tmdbAssetsCacheClient.set(id, assets);
+      return assets;
     }
   } catch {}
   tmdbBackdropCacheClient.set(id, null);
-  return null;
+  tmdbLogoCacheClient.set(id, null);
+  const empty = { backdropUrl: null, logoUrl: null };
+  tmdbAssetsCacheClient.set(id, empty);
+  return empty;
+}
+export async function getTmdbBackdropUrl(tmdbId: string | number): Promise<string | null> {
+  const assets = await getTmdbAssets(tmdbId);
+  return assets.backdropUrl;
+}
+export async function getTmdbLogoUrl(tmdbId: string | number): Promise<string | null> {
+  const assets = await getTmdbAssets(tmdbId);
+  return assets.logoUrl;
 }
 
 export interface TmdbTrendingItem {
@@ -198,6 +215,19 @@ export const tmdbApi = {
   searchMovie: (query: string, page = 1) => tmdbFetch("search/movie", { query, page }),
   discoverMovie: (params: Record<string, any> = {}) => tmdbFetch("discover/movie", params),
 };
+
+export async function getTmdbHeroPopular(): Promise<Movie[]> {
+  try {
+    const res = await fetch(getFullApiUrl("/api/tmdb/hero-popular"));
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.items && Array.isArray(data.items)) {
+        return data.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
+      }
+    }
+  } catch {}
+  return [];
+}
 
 export function tmdbTrendingToMovie(item: TmdbTrendingItem): any {
   const year = item.release_date ? Number(item.release_date.slice(0, 4)) : new Date().getFullYear();
@@ -1141,7 +1171,21 @@ export const movieApi = {
     });
   },
 
-  // 12. Netflix Vietnam Top 10 Scraped API
+  // 12. Hero Popular TMDB (en-US, region VN) - validated có trong API phim hiện tại
+  async getTmdbHeroPopular(): Promise<Movie[]> {
+    try {
+      const res = await fetch(getFullApiUrl("/api/tmdb/hero-popular"));
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.items && Array.isArray(data.items)) {
+          return data.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
+        }
+      }
+    } catch {}
+    return [];
+  },
+
+  // 13. Netflix Vietnam Top 10 Scraped API
   async getNetflixTop10VN(): Promise<{ movies: Movie[]; tvShows: Movie[]; movieTitles: string[]; tvTitles: string[] }> {
     const cacheKey = 'netflix-top10-vn';
     return cachedFetch(cacheKey, async () => {

@@ -123,7 +123,7 @@ export const Theater3DCarousel: React.FC<Theater3DCarouselProps> = ({ title, mov
                 <div className="relative z-10 w-full h-full border border-slate-700/50 rounded-xl overflow-hidden bg-slate-900">
                   <div className="w-full h-full bg-slate-800 absolute inset-0 -z-10" />
                   <img
-                    src={getImageUrl(movie.thumb_url || movie.poster_url)}
+                    src={getImageUrl(movie.poster_url || movie.thumb_url)}
                     alt={movie.name}
                     loading={isActive ? "eager" : "lazy"}
                     decoding="async"

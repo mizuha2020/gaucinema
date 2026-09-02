@@ -291,6 +291,7 @@ export default function App() {
     netflixTop10TV: [],
   });
   const [isLoadingHome, setIsLoadingHome] = useState<boolean>(true);
+  const [heroTmdbMovies, setHeroTmdbMovies] = useState<Movie[]>([]);
 
   const setMovieCollection = (key: string, value: Movie[]) => {
     setMovieCollections((prev) => ({ ...prev, [key]: value }));
@@ -839,6 +840,13 @@ export default function App() {
   useEffect(() => {
     fetchHomeData();
   }, [fetchHomeData]);
+
+  // Hero Banner: lấy từ TMDB Popular (en-US, region VN) đã validate tồn tại trong API phim hiện tại
+  useEffect(() => {
+    movieApi.getTmdbHeroPopular().then((items) => {
+      if (items && items.length) setHeroTmdbMovies(items);
+    }).catch(() => {});
+  }, []);
 
   // Auth Handlers
   const handleLoginSuccess = (account: Account) => {
@@ -1594,18 +1602,24 @@ export default function App() {
                 {/* HOME TAB */}
                 {activeTab === "home" && (
                   <>
-                    {/* Featured Cinematic Hero Banner - 10 phim, ưu tiên có TMDB để lấy backdrop/poster từ TMDB */}
+                    {/* Featured Cinematic Hero Banner - TMDB Popular (en-US, region VN) đã validate có trong API phim hiện tại */}
                     <HeroBanner
                       movies={(() => {
-                        // Gộp nhiều nguồn để đảm bảo đủ 10 phim có TMDB
+                        // Luôn đảm bảo 10 phim: TMDB hero + bù local nếu thiếu (tránh lúc 8 lúc 10 do validate rớt)
+                        if (heroTmdbMovies && heroTmdbMovies.length > 0) {
+                          if (heroTmdbMovies.length >= 10) return heroTmdbMovies.slice(0, 10);
+                          const merged = [...newUpdated, ...topHotAll, ...theaterList];
+                          const uniq = Array.from(new Map(merged.map((m) => [m.slug, m])).values());
+                          const filler = uniq.filter((m) => !heroTmdbMovies.some((h) => h.slug === m.slug));
+                          return [...heroTmdbMovies, ...filler].slice(0, 10);
+                        }
+                        // Fallback trong lúc chờ TMDB hero load hoặc khi TMDB lỗi: dùng logic cũ (ưu tiên có TMDB)
                         const merged = [...newUpdated, ...topHotAll, ...theaterList, ...topSeries, ...topSingle];
                         const uniq = Array.from(new Map(merged.map((m) => [m.slug, m])).values());
                         const withTmdb = uniq.filter((m: any) => m?.tmdb?.id && String(m.tmdb.id).trim() && /^\d+$/.test(String(m.tmdb.id).trim()));
                         const withoutTmdb = uniq.filter((m: any) => !m?.tmdb?.id || !/^\d+$/.test(String(m?.tmdb?.id || '').trim()));
-                        // Ưu tiên phim có TMDB lên trước, sau đó bù thêm phim thường nếu chưa đủ 10
                         const ordered = [...withTmdb, ...withoutTmdb];
                         const result = ordered.slice(0, 10);
-                        // Fallback: nếu vẫn ít hơn 10 (ví dụ mới load), lấy thêm từ newUpdated
                         if (result.length < 10 && newUpdated.length > result.length) {
                           const extra = newUpdated.filter((m) => !result.some((r) => r.slug === m.slug)).slice(0, 10 - result.length);
                           return [...result, ...extra].slice(0, 10);

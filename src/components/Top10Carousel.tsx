@@ -380,7 +380,7 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
                   onClick={() => handleClickItem(movie)}
                 >
                   <img
-                    src={getImageUrl(movie.thumb_url || movie.poster_url)}
+                    src={getImageUrl(movie.poster_url || movie.thumb_url)}
                     alt={movie.name}
                     className="w-full h-full object-cover pointer-events-none"
                     loading="lazy"
@@ -498,7 +498,7 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
                     }
                   >
                     <img
-                      src={getImageUrl(movie.thumb_url || movie.poster_url)}
+                      src={getImageUrl(movie.poster_url || movie.thumb_url)}
                       alt={movie.name}
                       className="w-full h-full object-cover pointer-events-none"
                       loading={isMiddleSet ? "eager" : "lazy"}

@@ -66,7 +66,7 @@ class LRUCache<K, V> {
 const proxyCache = new LRUCache<string, { data: any; timestamp: number }>(500);
 const imageMemoryCache = new LRUCache<string, { buffer: Buffer; contentType: string }>(400);
 const CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes cache
-const tmdbBackdropCache = new LRUCache<string, { url: string | null; timestamp: number }>(500);
+const tmdbBackdropCache = new LRUCache<string, { url: string | null; logoUrl: string | null; timestamp: number }>(500);
 const TMDB_TTL_MS = 24 * 60 * 60 * 1000; // 24h for TMDB images
 
 async function fetchWithTimeout(url: string, timeoutMs = 12000): Promise<any> {
@@ -118,24 +118,26 @@ async function startServer() {
     res.json({ status: "ok", message: "Gấu Cinema API Server is healthy", timestamp: Date.now() });
   });
 
-  // TMDB Backdrop proxy (like chophim.app) - returns original backdrop/logotype for hero banner
+  // TMDB Backdrop + Logo proxy (like chophim.app) - returns original backdrop/logotype for hero banner
   app.get("/api/tmdb/backdrop/:tmdbId", async (req, res) => {
     const tmdbId = String(req.params.tmdbId || "").trim();
     if (!tmdbId || !/^\d+$/.test(tmdbId)) return res.status(400).json({ error: "Invalid tmdbId" });
     const cached = tmdbBackdropCache.get(tmdbId);
     if (cached && Date.now() - cached.timestamp < TMDB_TTL_MS) {
-      return res.json({ tmdbId, backdropUrl: cached.url, cached: true });
+      return res.json({ tmdbId, backdropUrl: cached.url, logoUrl: cached.logoUrl || null, cached: true });
     }
     const bearer = process.env.TMDB_BEARER_TOKEN || process.env.TMDB_READ_TOKEN || "";
     const apiKey = process.env.TMDB_API_KEY || "";
     const headers: Record<string, string> = { Accept: "application/json", "User-Agent": "GauCinema/1.0" };
     if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
     const tryUrls: string[] = [];
-    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/movie/${tmdbId}/images?include_image_language=null`);
-    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/movie/${tmdbId}/images?api_key=${apiKey}&include_image_language=null`);
+    // Backdrop: mimic web https://www.themoviedb.org/.../images/backdrops?image_language=xx&image_sort=rating.desc
+    // xx = all languages -> không filter include_image_language để lấy hết như web (test 1375646: no param =51 ảnh, allLangs=43, xx=39)
+    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/movie/${tmdbId}/images`);
+    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/movie/${tmdbId}/images?api_key=${apiKey}`);
     // also try TV endpoint if movie fails
-    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/tv/${tmdbId}/images?include_image_language=null`);
-    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/tv/${tmdbId}/images?api_key=${apiKey}&include_image_language=null`);
+    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/tv/${tmdbId}/images`);
+    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/tv/${tmdbId}/images?api_key=${apiKey}`);
 
     for (const url of tryUrls) {
       try {
@@ -146,26 +148,44 @@ async function startServer() {
         if (!r.ok) continue;
         const data: any = await r.json();
         const backdrops: any[] = data.backdrops || [];
-        // pick best backdrop: highest vote_average then largest
+        const logos: any[] = (data.logos || []) as any[];
+        // pick best logo: ưu tiên vi-VN -> en_US (TMDB trả iso_639_1 = "vi"/"en")
+        let logoUrl: string | null = null;
+        if (logos.length > 0) {
+          const sortedLogos = [...logos].sort((a, b) => {
+            const langScore = (iso: string | null) => iso === 'vi' ? 0 : iso === 'en' ? 1 : 2;
+            const ls = langScore(a.iso_639_1) - langScore(b.iso_639_1);
+            if (ls !== 0) return ls;
+            return (b.vote_average || 0) - (a.vote_average || 0) || (b.width || 0) - (a.width || 0);
+          });
+          const bestLogo = sortedLogos[0];
+          if (bestLogo?.file_path) logoUrl = `https://image.tmdb.org/t/p/original${bestLogo.file_path}`;
+        }
+        // pick best backdrop: ưu tiên rating cao nhất sau đó là kích thước lớn (đã bỏ hardcode/override)
         if (backdrops.length > 0) {
           backdrops.sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0) || (b.width || 0) - (a.width || 0));
           const best = backdrops[0];
           const backdropUrl = `https://image.tmdb.org/t/p/original${best.file_path}`;
-          tmdbBackdropCache.set(tmdbId, { url: backdropUrl, timestamp: Date.now() });
-          return res.json({ tmdbId, backdropUrl, width: best.width, height: best.height });
+          tmdbBackdropCache.set(tmdbId, { url: backdropUrl, logoUrl, timestamp: Date.now() });
+          return res.json({ tmdbId, backdropUrl, logoUrl, width: best.width, height: best.height });
         }
         // fallback to poster if no backdrop but has posters
         const posters: any[] = data.posters || [];
         if (posters.length > 0) {
           const best = posters[0];
           const backdropUrl = `https://image.tmdb.org/t/p/original${best.file_path}`;
-          tmdbBackdropCache.set(tmdbId, { url: backdropUrl, timestamp: Date.now() });
-          return res.json({ tmdbId, backdropUrl, width: best.width, height: best.height });
+          tmdbBackdropCache.set(tmdbId, { url: backdropUrl, logoUrl, timestamp: Date.now() });
+          return res.json({ tmdbId, backdropUrl, logoUrl, width: best.width, height: best.height });
+        }
+        // nếu chỉ có logo mà không có backdrop
+        if (logoUrl) {
+          tmdbBackdropCache.set(tmdbId, { url: null, logoUrl, timestamp: Date.now() });
+          return res.json({ tmdbId, backdropUrl: null, logoUrl });
         }
       } catch {}
     }
-    tmdbBackdropCache.set(tmdbId, { url: null, timestamp: Date.now() });
-    return res.json({ tmdbId, backdropUrl: null });
+    tmdbBackdropCache.set(tmdbId, { url: null, logoUrl: null, timestamp: Date.now() });
+    return res.json({ tmdbId, backdropUrl: null, logoUrl: null });
   });
 
   // TMDB Generic Proxy - expose toàn bộ TMDb v3 endpoints bạn liệt kê qua Bearer server-side
@@ -258,6 +278,166 @@ async function startServer() {
       } catch {}
     }
     return res.status(502).json({ results: [], error: "TMDB trending failed" });
+  });
+
+  // Hero Banner - TMDB Discover (vi-VN, region VN, sort popularity.desc) + validate tồn tại trong API phim hiện tại (phimapi.com)
+  const tmdbHeroCache = new LRUCache<string, { data: any; timestamp: number }>(10);
+  app.get("/api/tmdb/hero-popular", async (req, res) => {
+    const cacheKey = "hero:discover:vi-VN:VN:popularity.desc:v3";
+    const cached = tmdbHeroCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 30 * 60 * 1000) {
+      // nếu cache cũ bị thiếu (<10) thì bỏ qua để refill
+      if (cached.data?.items?.length >= 10) return res.json(cached.data);
+    }
+    const bearer = process.env.TMDB_BEARER_TOKEN || process.env.TMDB_READ_TOKEN || "";
+    const apiKey = process.env.TMDB_API_KEY || "";
+    const headers: Record<string, string> = { Accept: "application/json", "User-Agent": "GauCinema/1.0" };
+    if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
+    const urls: string[] = [];
+    // Yêu cầu mới: https://api.themoviedb.org/3/discover/movie?language=vi-VN&region=VN&sort_by=popularity.desc
+    if (bearer) urls.push("https://api.themoviedb.org/3/discover/movie?language=vi-VN&region=VN&sort_by=popularity.desc&page=1");
+    if (apiKey) urls.push(`https://api.themoviedb.org/3/discover/movie?language=vi-VN&region=VN&sort_by=popularity.desc&page=1&api_key=${apiKey}`);
+    // fallback page 2 nếu page 1 không đủ
+    if (bearer) urls.push("https://api.themoviedb.org/3/discover/movie?language=vi-VN&region=VN&sort_by=popularity.desc&page=2");
+    if (apiKey) urls.push(`https://api.themoviedb.org/3/discover/movie?language=vi-VN&region=VN&sort_by=popularity.desc&page=2&api_key=${apiKey}`);
+
+    let tmdbResults: any[] = [];
+    for (const url of urls) {
+      try {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 7000);
+        const r = await fetch(url, { headers, signal: controller.signal });
+        clearTimeout(t);
+        if (!r.ok) continue;
+        const data: any = await r.json();
+        const results = data.results || [];
+        if (results.length) {
+          tmdbResults = tmdbResults.concat(results);
+          if (tmdbResults.length >= 20) break;
+        }
+      } catch {}
+    }
+    if (tmdbResults.length === 0) {
+      if (cached) return res.json(cached.data);
+      return res.status(502).json({ status: false, items: [], error: "TMDB popular fetch failed" });
+    }
+    // Validate từng phim có tồn tại trong API phim hiện tại (KKPhim) mới lấy
+    const items: any[] = [];
+    const usedSlugs = new Set<string>();
+    // Lấy 40 đầu (page1+page2) để tăng tỉ lệ match, tránh chỉ 4/10 như trước
+    for (const it of tmdbResults.slice(0, 40)) {
+      if (items.length >= 10) break;
+      const title: string = (it.title || it.original_title || "").trim();
+      if (!title) continue;
+      const searchQuery = title.replace(/\s*\(.*?\)/, "").replace(/:\s*.*$/, "").trim();
+      if (!searchQuery) continue;
+      try {
+        const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery)}&limit=5`;
+        const searchRes = await fetchWithTimeout(searchUrl, 4000).catch(() => null);
+        const foundItems = searchRes?.data?.items || searchRes?.items || [];
+        if (!foundItems || foundItems.length === 0) continue;
+        const matchedItem = foundItems.find((f: any) => !usedSlugs.has(f.slug)) || foundItems[0];
+        if (!matchedItem || usedSlugs.has(matchedItem.slug)) continue;
+        let resolved: any = null;
+        try { resolved = await resolveMovieSlug(matchedItem.slug); } catch {}
+        const base = resolved || {
+          slug: matchedItem.slug,
+          name: matchedItem.name,
+          origin_name: matchedItem.origin_name || it.original_title || "",
+          poster_url: matchedItem.poster_url || matchedItem.thumb_url || "",
+          thumb_url: matchedItem.thumb_url || matchedItem.poster_url || "",
+          year: matchedItem.year || (it.release_date ? Number(String(it.release_date).slice(0, 4)) : undefined),
+          quality: matchedItem.quality || "FHD",
+          lang: matchedItem.lang || "Vietsub",
+          source: "kkphim",
+          sourceLabel: "KKPhim",
+        };
+        // Enrich với TMDB backdrop original để hero banner dùng backdrop TMDB (đã bỏ hardcode)
+        const enriched = {
+          ...base,
+          tmdb: { id: String(it.id) },
+          tmdbId: String(it.id),
+          backdrop_url: it.backdrop_path ? `https://image.tmdb.org/t/p/original${it.backdrop_path}` : base.backdrop_url || base.poster_url,
+          poster_url: base.poster_url || (it.poster_path ? `https://image.tmdb.org/t/p/w500${it.poster_path}` : ""),
+          thumb_url: base.thumb_url || base.poster_url || (it.poster_path ? `https://image.tmdb.org/t/p/w500${it.poster_path}` : ""),
+          content: it.overview || base.content || "",
+          vote_average: it.vote_average,
+          popularity: it.popularity,
+        };
+        usedSlugs.add(enriched.slug);
+        items.push(enriched);
+        // cache cast index
+        try { if (resolved) indexMovieCast(resolved, 'kkphim'); } catch {}
+      } catch {}
+    }
+    // Fallback: nếu vẫn <10 thì bù bằng phim hot local để luôn đủ 10 hero, tránh lúc 8 lúc 10
+    if (items.length < 10) {
+      const fillerPages = [1, 2, 3];
+      for (const page of fillerPages) {
+        if (items.length >= 10) break;
+        try {
+          const catUrl = `https://phimapi.com/v1/api/danh-sach/phim-le?page=${page}&limit=20`;
+          const catRes = await fetchWithTimeout(catUrl, 6000).catch(() => null);
+          const catItems = catRes?.data?.items || catRes?.items || [];
+          for (const catItem of catItems) {
+            if (items.length >= 10) break;
+            if (!catItem.slug || usedSlugs.has(catItem.slug)) continue;
+            let resolved: any = null;
+            try { resolved = await resolveMovieSlug(catItem.slug); } catch {}
+            const base = resolved || catItem;
+            const tmdbId = (base as any)?.tmdb?.id ? String((base as any).tmdb.id) : (catItem.tmdb?.id ? String(catItem.tmdb.id) : null);
+            // filler không bắt buộc tmdb nữa để luôn đủ 10, thiếu thì HeroBanner sẽ fallback thumb_url
+            const fillerEnriched: any = {
+              slug: base.slug || catItem.slug,
+              name: base.name || catItem.name,
+              origin_name: base.origin_name || catItem.origin_name || "",
+              poster_url: base.poster_url || catItem.poster_url || "",
+              thumb_url: base.thumb_url || catItem.thumb_url || "",
+              backdrop_url: (base as any).backdrop_url || base.poster_url || catItem.poster_url || "",
+              year: base.year || catItem.year,
+              quality: base.quality || "FHD",
+              lang: base.lang || "Vietsub",
+              source: "kkphim",
+              sourceLabel: "KKPhim",
+            };
+            if (tmdbId) {
+              fillerEnriched.tmdb = { id: tmdbId };
+              fillerEnriched.tmdbId = tmdbId;
+            }
+            usedSlugs.add(fillerEnriched.slug);
+            items.push(fillerEnriched);
+          }
+        } catch {}
+      }
+    }
+    // Cuối cùng vẫn <10 (hiếm) thì lấy thêm từ phim bộ để bù
+    if (items.length < 10) {
+      try {
+        const catRes = await fetchWithTimeout(`https://phimapi.com/v1/api/danh-sach/phim-bo?page=1&limit=20`, 6000).catch(() => null);
+        const catItems = catRes?.data?.items || catRes?.items || [];
+        for (const catItem of catItems) {
+          if (items.length >= 10) break;
+          if (!catItem.slug || usedSlugs.has(catItem.slug)) continue;
+          items.push({
+            slug: catItem.slug,
+            name: catItem.name,
+            origin_name: catItem.origin_name || "",
+            poster_url: catItem.poster_url || catItem.thumb_url || "",
+            thumb_url: catItem.thumb_url || catItem.poster_url || "",
+            backdrop_url: catItem.poster_url || catItem.thumb_url || "",
+            tmdb: catItem.tmdb || undefined,
+            year: catItem.year,
+            quality: catItem.quality || "FHD",
+            lang: catItem.lang || "Vietsub",
+            source: "kkphim",
+          });
+          usedSlugs.add(catItem.slug);
+        }
+      } catch {}
+    }
+    const payload = { status: true, items: items.slice(0, 10), total: items.slice(0, 10).length, source: "tmdb_discover_vi-VN_VN_popularity.desc_validated" };
+    tmdbHeroCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+    return res.json(payload);
   });
 
   // Comprehensive System API Health Check & Ping Tester (Backend-based to prevent CORS & accurately measure latency)
@@ -1214,7 +1394,7 @@ setTimeout(seedInitialCastIndex, 2000);
             const searchQuery = titleSearchAlias[lowerTitle] || title.replace(/\s*\(.*?\)/, "").replace(/:\s*.*$/, "").trim();
 
             const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery || title)}&limit=5`;
-            const searchRes = await fetchWithTimeout(searchUrl, 3500).catch(() => null);
+            const searchRes = await fetchWithTimeout(searchUrl, 6000).catch(() => null);
             const foundItems = searchRes?.data?.items || searchRes?.items || [];
             if (foundItems.length > 0) {
               const matchedItem = foundItems.find((f: any) => !usedSlugs.has(f.slug)) || foundItems[0];
@@ -1241,35 +1421,42 @@ setTimeout(seedInitialCastIndex, 2000);
           } catch {}
         }
 
-        // Fill up to 10 items if needed
+        // Fill up to 10 items if needed - robust filler with retries
         if (items.length < 10) {
-          try {
-            const catUrl = isTv
-              ? "https://phimapi.com/v1/api/danh-sach/phim-bo?page=1&limit=20"
-              : "https://phimapi.com/v1/api/danh-sach/phim-le?page=1&limit=20";
-            const catRes = await fetchWithTimeout(catUrl, 3500).catch(() => null);
-            const catItems = catRes?.data?.items || catRes?.items || [];
-            for (const catItem of catItems) {
-              if (items.length >= 10) break;
-              if (!usedSlugs.has(catItem.slug)) {
-                const resolved = await resolveMovieSlug(catItem.slug);
-                const itemToPush = resolved || {
-                  slug: catItem.slug,
-                  name: catItem.name,
-                  origin_name: catItem.origin_name || "",
-                  poster_url: catItem.poster_url || catItem.thumb_url || "",
-                  thumb_url: catItem.thumb_url || catItem.poster_url || "",
-                  year: catItem.year,
-                  quality: catItem.quality || "HD",
-                  lang: catItem.lang || "Vietsub",
-                  source: "kkphim",
-                  sourceLabel: "KKPhim",
-                };
-                usedSlugs.add(itemToPush.slug);
-                items.push(itemToPush);
+          const fillPages = [1, 2, 3];
+          for (const page of fillPages) {
+            if (items.length >= 10) break;
+            try {
+              const catUrl = isTv
+                ? `https://phimapi.com/v1/api/danh-sach/phim-bo?page=${page}&limit=20`
+                : `https://phimapi.com/v1/api/danh-sach/phim-le?page=${page}&limit=20`;
+              const catRes = await fetchWithTimeout(catUrl, 6000).catch(() => null);
+              const catItems = catRes?.data?.items || catRes?.items || [];
+              for (const catItem of catItems) {
+                if (items.length >= 10) break;
+                if (!usedSlugs.has(catItem.slug)) {
+                  let resolved: any = null;
+                  try { resolved = await resolveMovieSlug(catItem.slug); } catch {}
+                  const itemToPush = resolved || {
+                    slug: catItem.slug,
+                    name: catItem.name,
+                    origin_name: catItem.origin_name || "",
+                    poster_url: catItem.poster_url || catItem.thumb_url || "",
+                    thumb_url: catItem.thumb_url || catItem.poster_url || "",
+                    year: catItem.year,
+                    quality: catItem.quality || "HD",
+                    lang: catItem.lang || "Vietsub",
+                    source: "kkphim",
+                    sourceLabel: "KKPhim",
+                  };
+                  if (itemToPush.slug && !usedSlugs.has(itemToPush.slug)) {
+                    usedSlugs.add(itemToPush.slug);
+                    items.push(itemToPush);
+                  }
+                }
               }
-            }
-          } catch {}
+            } catch {}
+          }
         }
 
         return items.slice(0, 10);
@@ -1298,8 +1485,14 @@ setTimeout(seedInitialCastIndex, 2000);
   setInterval(updateNetflixTop10Cache, 4 * 60 * 60 * 1000);
 
   app.get("/api/top10/netflix-vn", async (req, res) => {
-    if (!netflixTop10Cache.lastUpdated || Date.now() - netflixTop10Cache.lastUpdated > 6 * 60 * 60 * 1000) {
+    const force = req.query.refresh === '1' || req.query.force === '1';
+    if (force || !netflixTop10Cache.lastUpdated || Date.now() - netflixTop10Cache.lastUpdated > 6 * 60 * 60 * 1000) {
       await updateNetflixTop10Cache();
+    }
+    // Auto-heal: if cache is incomplete (<10), trigger background refill attempt
+    if (!force && (netflixTop10Cache.movies.length < 10 || netflixTop10Cache.tvShows.length < 10)) {
+      // fire-and-forget refill, don't block response but log
+      updateNetflixTop10Cache().catch(() => {});
     }
     return res.json({
       status: true,
