@@ -725,14 +725,21 @@ export default function App() {
         movieApi.getNetflixTop10VN().catch(() => null),
       ]);
 
+      const trendingItems = trendingAllRes?.items || [];
+      const newItems = newRes?.items || [];
+
       if (netflixTop10Res?.movies?.length) {
         setMovieCollection("netflixTop10Movies", netflixTop10Res.movies);
-      }
-      if (netflixTop10Res?.tvShows?.length) {
-        setMovieCollection("netflixTop10TV", netflixTop10Res.tvShows);
+      } else if (trendingItems.length) {
+        setMovieCollection("netflixTop10Movies", trendingItems.slice(0, 10));
       }
 
-      const trendingItems = trendingAllRes?.items || [];
+      if (netflixTop10Res?.tvShows?.length) {
+        setMovieCollection("netflixTop10TV", netflixTop10Res.tvShows);
+      } else if (newItems.length) {
+        setMovieCollection("netflixTop10TV", newItems.slice(0, 10));
+      }
+
       if (trendingItems.length) {
         setMovieCollection("topHotAll", trendingItems);
       } else if (newRes?.items?.length) {

@@ -777,22 +777,27 @@ async function resolveMovieSlug(slug: string): Promise<any | null> {
     return cached.data;
   }
   try {
-    const raw = await fetchWithTimeout(`https://phimapi.com/phim/${slug}`, 3000);
+    const raw = await fetchWithTimeout(`https://phimapi.com/phim/${encodeURIComponent(slug)}`, 3500);
     if (raw?.movie?.name) {
       const m = raw.movie;
       const item = {
         slug: m.slug || slug,
         name: m.name,
         origin_name: m.origin_name || '',
-        poster_url: m.poster_url || '',
-        thumb_url: m.thumb_url || '',
+        poster_url: m.poster_url || m.thumb_url || '',
+        thumb_url: m.thumb_url || m.poster_url || '',
+        backdrop_url: m.poster_url || m.thumb_url || '',
         year: m.year || undefined,
         quality: m.quality || 'HD',
         lang: m.lang || 'Vietsub',
         source: 'kkphim',
         sourceLabel: 'KKPhim',
+        tmdb: m.tmdb || undefined,
+        content: m.content || '',
         actor: m.actor || [],
         director: m.director || [],
+        view: m.view || 0,
+        chieurap: m.chieurap || false,
       };
       indexMovieCast(m, 'kkphim');
       proxyCache.set(cacheKey, { data: item, timestamp: Date.now() });
@@ -1358,12 +1363,39 @@ setTimeout(seedInitialCastIndex, 2000);
     lastUpdated: number;
   }
 
+  // Initial seed data to guarantee 10 movies and 10 TV series instantly on first load
+  const initialSeedNetflixMovies: any[] = [
+    { slug: "anora", name: "Anora", origin_name: "Anora", poster_url: "uploads/movies/202410/anora-thumb.jpg", thumb_url: "uploads/movies/202410/anora-poster.jpg", year: 2024, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "2012", name: "2012", origin_name: "2012", poster_url: "uploads/movies/202203/2012-thumb.jpg", thumb_url: "uploads/movies/202203/2012-poster.jpg", year: 2009, quality: "FHD", lang: "Thuyết Minh", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "safe", name: "Safe", origin_name: "Safe", poster_url: "uploads/movies/202204/safe-thumb.jpg", thumb_url: "uploads/movies/202204/safe-poster.jpg", year: 2012, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "oceans-eleven", name: "11 Tên Cướp Thế Kỷ", origin_name: "Ocean's Eleven", poster_url: "uploads/movies/202205/oceans-eleven-thumb.jpg", thumb_url: "uploads/movies/202205/oceans-eleven-poster.jpg", year: 2001, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "wolf-man", name: "Người Sói", origin_name: "Wolf Man", poster_url: "uploads/movies/202501/wolf-man-thumb.jpg", thumb_url: "uploads/movies/202501/wolf-man-poster.jpg", year: 2025, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "the-magnificent-seven", name: "Bảy Tay Súng Huyền Thoại", origin_name: "The Magnificent Seven", poster_url: "uploads/movies/202204/the-magnificent-seven-thumb.jpg", thumb_url: "uploads/movies/202204/the-magnificent-seven-poster.jpg", year: 2016, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "gohan", name: "Bảy Viên Ngọc Rồng", origin_name: "Dragon Ball Super: Super Hero", poster_url: "uploads/movies/202208/dragon-ball-super-super-hero-thumb.jpg", thumb_url: "uploads/movies/202208/dragon-ball-super-super-hero-poster.jpg", year: 2022, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "the-whisper-man", name: "Người Thì Thầm", origin_name: "The Whisper Man", poster_url: "uploads/movies/202411/the-whisper-man-thumb.jpg", thumb_url: "uploads/movies/202411/the-whisper-man-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "tho-oi", name: "Thỏ Ơi", origin_name: "Bunny!!", poster_url: "uploads/movies/202412/tho-oi-thumb.jpg", thumb_url: "uploads/movies/202412/tho-oi-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "red-notice", name: "Lệnh Truy Nã Đỏ", origin_name: "Red Notice", poster_url: "uploads/movies/202111/lenh-truy-na-do-thumb.jpg", thumb_url: "uploads/movies/202111/lenh-truy-na-do-poster.jpg", year: 2021, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" }
+  ];
+
+  const initialSeedNetflixTv: any[] = [
+    { slug: "agent-kim-reactivated", name: "Đặc Vụ Kim Tái Xuất", origin_name: "Agent Kim Reactivated", poster_url: "uploads/movies/202501/agent-kim-thumb.jpg", thumb_url: "uploads/movies/202501/agent-kim-poster.jpg", year: 2025, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "spooky-in-love", name: "Yêu Em Ma Quỷ", origin_name: "Spooky in Love", poster_url: "uploads/movies/202501/spooky-in-love-thumb.jpg", thumb_url: "uploads/movies/202501/spooky-in-love-poster.jpg", year: 2025, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "mousetrap", name: "Bẫy Chuột", origin_name: "Mousetrap", poster_url: "uploads/movies/202412/mousetrap-thumb.jpg", thumb_url: "uploads/movies/202412/mousetrap-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "the-early-spring", name: "Đầu Xuân", origin_name: "The Early Spring", poster_url: "uploads/movies/202501/the-early-spring-thumb.jpg", thumb_url: "uploads/movies/202501/the-early-spring-poster.jpg", year: 2025, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "our-sticky-love", name: "Tình Yêu Gắn Kết", origin_name: "Our Sticky Love", poster_url: "uploads/movies/202501/our-sticky-love-thumb.jpg", thumb_url: "uploads/movies/202501/our-sticky-love-poster.jpg", year: 2025, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "the-east-palace", name: "Đông Cung", origin_name: "The East Palace", poster_url: "uploads/movies/202411/the-east-palace-thumb.jpg", thumb_url: "uploads/movies/202411/the-east-palace-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "can-this-love-be-translated", name: "Tình Yêu Này Có Thể Dịch Không?", origin_name: "Can This Love Be Translated?", poster_url: "uploads/movies/202501/can-this-love-be-translated-thumb.jpg", thumb_url: "uploads/movies/202501/can-this-love-be-translated-poster.jpg", year: 2025, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "teach-you-a-lesson", name: "Dạy Cho Bài Học", origin_name: "Teach You a Lesson", poster_url: "uploads/movies/202412/teach-you-a-lesson-thumb.jpg", thumb_url: "uploads/movies/202412/teach-you-a-lesson-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "squid-game-season-2", name: "Trò Chơi Con Mực: Mùa 2", origin_name: "Squid Game: Season 2", poster_url: "uploads/movies/202412/squid-game-season-2-thumb.jpg", thumb_url: "uploads/movies/202412/squid-game-season-2-poster.jpg", year: 2024, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "sweet-home-season-3", name: "Thế Giới Ma Quái: Mùa 3", origin_name: "Sweet Home: Season 3", poster_url: "uploads/movies/202407/sweet-home-season-3-thumb.jpg", thumb_url: "uploads/movies/202407/sweet-home-season-3-poster.jpg", year: 2024, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" }
+  ];
+
   let netflixTop10Cache: NetflixTop10Cache = {
-    movies: [],
-    tvShows: [],
-    movieTitles: [],
-    tvTitles: [],
-    lastUpdated: 0,
+    movies: initialSeedNetflixMovies,
+    tvShows: initialSeedNetflixTv,
+    movieTitles: initialSeedNetflixMovies.map((m) => m.name),
+    tvTitles: initialSeedNetflixTv.map((t) => t.name),
+    lastUpdated: Date.now(),
   };
 
   async function parseNetflixTop10Titles(url: string): Promise<string[]> {
@@ -1373,6 +1405,7 @@ setTimeout(seedInitialCastIndex, 2000);
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
           "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         },
+        signal: AbortSignal.timeout(4500),
         redirect: "follow",
       });
       if (!response.ok) return [];
@@ -1391,12 +1424,14 @@ setTimeout(seedInitialCastIndex, 2000);
       }
       return titles.slice(0, 10);
     } catch (e: any) {
-      console.error("[Netflix Top10 Scraper Error]", e.message);
       return [];
     }
   }
 
+  let isUpdatingNetflixTop10 = false;
   async function updateNetflixTop10Cache() {
+    if (isUpdatingNetflixTop10) return;
+    isUpdatingNetflixTop10 = true;
     try {
       // 1. Live scrape dynamically from official Netflix Tudum Top 10 Vietnam
       const [scrapedMovieTitles, scrapedTvTitles] = await Promise.all([
@@ -1404,7 +1439,6 @@ setTimeout(seedInitialCastIndex, 2000);
         parseNetflixTop10Titles("https://www.netflix.com/tudum/top10/vietnam/tv"),
       ]);
 
-      // Title search alias dictionary (maps English release names to Vietnamese search keywords)
       const titleSearchAlias: Record<string, string> = {
         "bunny!": "Thỏ Ơi",
         "bunny!!": "Thỏ Ơi",
@@ -1412,134 +1446,144 @@ setTimeout(seedInitialCastIndex, 2000);
         "grand theft auto vi: an extended look": "Grand Theft Auto VI",
       };
 
-      // Fallback lists if live scraping fails
       const fallbackMovies = [
-        "Anora", "The Whisper Man", "Grand Theft Auto VI: An Extended Look",
-        "The Magnificent Seven", "Gohan", "Bunny!!", "2012", "Safe", "Ocean's Eleven", "Wolf Man"
+        "Anora", "2012", "Safe", "Ocean's Eleven", "Wolf Man",
+        "The Magnificent Seven", "Dragon Ball Super", "The Whisper Man", "Bunny!!", "Red Notice"
       ];
       const fallbackTv = [
-        "The Early Spring", "Mousetrap", "Four Hands, Two Sonatas", "Our Sticky Love",
-        "Agent Kim Reactivated", "Spooky in Love", "Though I Am an Inept Villainess",
-        "Teach You a Lesson", "The East Palace", "Can This Love Be Translated?"
+        "Agent Kim Reactivated", "Spooky in Love", "Mousetrap", "The Early Spring",
+        "Our Sticky Love", "The East Palace", "Can This Love Be Translated?",
+        "Teach You a Lesson", "Squid Game", "Sweet Home"
       ];
 
       const movieTitles = scrapedMovieTitles.length > 0 ? scrapedMovieTitles : fallbackMovies;
       const tvTitles = scrapedTvTitles.length > 0 ? scrapedTvTitles : fallbackTv;
 
-      const resolveList = async (rawTitles: string[], isTv: boolean) => {
+      const resolveList = async (rawTitles: string[], isTv: boolean, seedFallback: any[]) => {
         const items: any[] = [];
         const usedSlugs = new Set<string>();
 
-        for (const title of rawTitles) {
-          if (items.length >= 10) break;
+        // Parallel batch search across titles with 3.5s timeout
+        const searchPromises = rawTitles.slice(0, 10).map(async (title) => {
           try {
             const lowerTitle = title.toLowerCase().trim();
             const searchQuery = titleSearchAlias[lowerTitle] || title.replace(/\s*\(.*?\)/, "").replace(/:\s*.*$/, "").trim();
-
-            const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery || title)}&limit=5`;
-            const searchRes = await fetchWithTimeout(searchUrl, 6000).catch(() => null);
+            const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery || title)}&limit=4`;
+            const searchRes = await fetchWithTimeout(searchUrl, 3500).catch(() => null);
             const foundItems = searchRes?.data?.items || searchRes?.items || [];
             if (foundItems.length > 0) {
-              const matchedItem = foundItems.find((f: any) => !usedSlugs.has(f.slug)) || foundItems[0];
-              if (matchedItem) {
-                const resolved = await resolveMovieSlug(matchedItem.slug);
-                const finalItem = resolved || {
+              const matchedItem = foundItems[0];
+              if (matchedItem && matchedItem.slug) {
+                return {
                   slug: matchedItem.slug,
-                  name: matchedItem.name,
-                  origin_name: matchedItem.origin_name || "",
+                  name: matchedItem.name || title,
+                  origin_name: matchedItem.origin_name || title,
                   poster_url: matchedItem.poster_url || matchedItem.thumb_url || "",
                   thumb_url: matchedItem.thumb_url || matchedItem.poster_url || "",
-                  year: matchedItem.year,
+                  year: matchedItem.year || new Date().getFullYear(),
                   quality: matchedItem.quality || "HD",
                   lang: matchedItem.lang || "Vietsub",
                   source: "kkphim",
-                  sourceLabel: "KKPhim",
+                  sourceLabel: "Netflix",
                 };
-                if (!usedSlugs.has(finalItem.slug)) {
-                  usedSlugs.add(finalItem.slug);
-                  items.push(finalItem);
-                }
+              }
+            }
+          } catch {}
+          return null;
+        });
+
+        const settled = await Promise.allSettled(searchPromises);
+        for (const res of settled) {
+          if (res.status === "fulfilled" && res.value && !usedSlugs.has(res.value.slug)) {
+            usedSlugs.add(res.value.slug);
+            items.push(res.value);
+            if (items.length >= 10) break;
+          }
+        }
+
+        // Filler 1: Seed items
+        if (items.length < 10) {
+          for (const seed of seedFallback) {
+            if (items.length >= 10) break;
+            if (seed.slug && !usedSlugs.has(seed.slug)) {
+              usedSlugs.add(seed.slug);
+              items.push(seed);
+            }
+          }
+        }
+
+        // Filler 2: Category list if still < 10
+        if (items.length < 10) {
+          try {
+            const catUrl = isTv
+              ? `https://phimapi.com/v1/api/danh-sach/phim-bo?page=1&limit=20`
+              : `https://phimapi.com/v1/api/danh-sach/phim-le?page=1&limit=20`;
+            const catRes = await fetchWithTimeout(catUrl, 4000).catch(() => null);
+            const catItems = catRes?.data?.items || catRes?.items || [];
+            for (const catItem of catItems) {
+              if (items.length >= 10) break;
+              if (catItem.slug && !usedSlugs.has(catItem.slug)) {
+                usedSlugs.add(catItem.slug);
+                items.push({
+                  slug: catItem.slug,
+                  name: catItem.name,
+                  origin_name: catItem.origin_name || "",
+                  poster_url: catItem.poster_url || catItem.thumb_url || "",
+                  thumb_url: catItem.thumb_url || catItem.poster_url || "",
+                  year: catItem.year,
+                  quality: catItem.quality || "HD",
+                  lang: catItem.lang || "Vietsub",
+                  source: "kkphim",
+                  sourceLabel: "Netflix",
+                });
               }
             }
           } catch {}
         }
 
-        // Fill up to 10 items if needed - robust filler with retries
-        if (items.length < 10) {
-          const fillPages = [1, 2, 3];
-          for (const page of fillPages) {
-            if (items.length >= 10) break;
-            try {
-              const catUrl = isTv
-                ? `https://phimapi.com/v1/api/danh-sach/phim-bo?page=${page}&limit=20`
-                : `https://phimapi.com/v1/api/danh-sach/phim-le?page=${page}&limit=20`;
-              const catRes = await fetchWithTimeout(catUrl, 6000).catch(() => null);
-              const catItems = catRes?.data?.items || catRes?.items || [];
-              for (const catItem of catItems) {
-                if (items.length >= 10) break;
-                if (!usedSlugs.has(catItem.slug)) {
-                  let resolved: any = null;
-                  try { resolved = await resolveMovieSlug(catItem.slug); } catch {}
-                  const itemToPush = resolved || {
-                    slug: catItem.slug,
-                    name: catItem.name,
-                    origin_name: catItem.origin_name || "",
-                    poster_url: catItem.poster_url || catItem.thumb_url || "",
-                    thumb_url: catItem.thumb_url || catItem.poster_url || "",
-                    year: catItem.year,
-                    quality: catItem.quality || "HD",
-                    lang: catItem.lang || "Vietsub",
-                    source: "kkphim",
-                    sourceLabel: "KKPhim",
-                  };
-                  if (itemToPush.slug && !usedSlugs.has(itemToPush.slug)) {
-                    usedSlugs.add(itemToPush.slug);
-                    items.push(itemToPush);
-                  }
-                }
-              }
-            } catch {}
-          }
-        }
-
         return items.slice(0, 10);
       };
 
-      const resolvedMovies = await resolveList(movieTitles, false);
-      const resolvedTvShows = await resolveList(tvTitles, true);
+      const [resolvedMovies, resolvedTvShows] = await Promise.all([
+        resolveList(movieTitles, false, initialSeedNetflixMovies),
+        resolveList(tvTitles, true, initialSeedNetflixTv),
+      ]);
 
-      if (resolvedMovies.length > 0 || resolvedTvShows.length > 0) {
+      if (resolvedMovies.length >= 8 || resolvedTvShows.length >= 8) {
         netflixTop10Cache = {
-          movies: resolvedMovies,
-          tvShows: resolvedTvShows,
+          movies: resolvedMovies.length >= 10 ? resolvedMovies : [...resolvedMovies, ...initialSeedNetflixMovies].slice(0, 10),
+          tvShows: resolvedTvShows.length >= 10 ? resolvedTvShows : [...resolvedTvShows, ...initialSeedNetflixTv].slice(0, 10),
           movieTitles,
           tvTitles,
           lastUpdated: Date.now(),
         };
-        console.log(`[Netflix Top10 VN] Cache updated successfully: ${resolvedMovies.length} movies, ${resolvedTvShows.length} TV shows.`);
       }
     } catch (err: any) {
       console.error("[Netflix Top10 VN Update Error]:", err.message);
+    } finally {
+      isUpdatingNetflixTop10 = false;
     }
   }
 
-  // Trigger background update on startup & every 4 hours
-  setTimeout(updateNetflixTop10Cache, 2500);
-  setInterval(updateNetflixTop10Cache, 4 * 60 * 60 * 1000);
+  // Trigger background update on startup (delayed 3s) & every 4 hours
+  setTimeout(() => { updateNetflixTop10Cache().catch(() => {}); }, 3000);
+  setInterval(() => { updateNetflixTop10Cache().catch(() => {}); }, 4 * 60 * 60 * 1000);
 
   app.get("/api/top10/netflix-vn", async (req, res) => {
     const force = req.query.refresh === '1' || req.query.force === '1';
-    if (force || !netflixTop10Cache.lastUpdated || Date.now() - netflixTop10Cache.lastUpdated > 6 * 60 * 60 * 1000) {
-      await updateNetflixTop10Cache();
-    }
-    // Auto-heal: if cache is incomplete (<10), trigger background refill attempt
-    if (!force && (netflixTop10Cache.movies.length < 10 || netflixTop10Cache.tvShows.length < 10)) {
-      // fire-and-forget refill, don't block response but log
+    // Stale-while-revalidate pattern: Always return cache immediately!
+    if (force || Date.now() - netflixTop10Cache.lastUpdated > 4 * 60 * 60 * 1000) {
       updateNetflixTop10Cache().catch(() => {});
     }
     return res.json({
       status: true,
-      data: netflixTop10Cache,
+      data: {
+        movies: netflixTop10Cache.movies.slice(0, 10),
+        tvShows: netflixTop10Cache.tvShows.slice(0, 10),
+        movieTitles: netflixTop10Cache.movieTitles,
+        tvTitles: netflixTop10Cache.tvTitles,
+        lastUpdated: netflixTop10Cache.lastUpdated,
+      },
     });
   });
 

@@ -24,7 +24,7 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
   title,
   movies,
   onOpenDetail,
-  accentColor = "#E50914",
+  accentColor = "#2563EB",
   hideTitle = false,
 }) => {
   const checkIsMobileOrTablet = () => {
@@ -344,7 +344,10 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
       <div className="py-4 px-2 sm:px-4 select-none">
         {!hideTitle && (
           <h2 className="text-white text-xl sm:text-2xl font-bold mb-4 flex items-center gap-2">
-            <span className="w-1.5 h-6 bg-[#E50914] rounded-full inline-block"></span>
+            <span
+              className="w-1.5 h-6 rounded-full inline-block"
+              style={{ backgroundColor: accentColor }}
+            ></span>
             {title}
           </h2>
         )}
@@ -376,15 +379,21 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
                   </span>
                 </div>
                 <div
-                  className="relative z-10 ml-16 w-48 h-72 rounded-lg overflow-hidden cursor-pointer shadow-2xl transition-transform hover:scale-105"
+                  className="relative z-10 ml-16 w-48 h-72 rounded-lg overflow-hidden cursor-pointer shadow-2xl transition-transform hover:scale-105 bg-[#0f172a]"
                   onClick={() => handleClickItem(movie)}
                 >
                   <img
                     src={getImageUrl(movie.poster_url || movie.thumb_url)}
                     alt={movie.name}
                     className="w-full h-full object-cover pointer-events-none"
-                    loading="lazy"
+                    loading="eager"
                     decoding="async"
+                    onError={(e) => {
+                      const target = e.currentTarget as HTMLImageElement;
+                      if (!target.src.includes("unsplash")) {
+                        target.src = "https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=800&auto=format&fit=crop&q=80";
+                      }
+                    }}
                   />
                   <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black to-transparent">
                     <p className="text-white font-bold truncate">
@@ -400,17 +409,24 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
     );
   }
 
+  const isRed = accentColor.toLowerCase() === "#e50914";
+
   return (
     <div className="py-4 px-2 sm:px-4 select-none">
       {!hideTitle && (
         <h2 className="text-white text-xl sm:text-2xl font-bold mb-4 flex items-center gap-2">
-          <span className="w-1.5 h-6 bg-[#E50914] rounded-full inline-block"></span>
+          <span
+            className="w-1.5 h-6 rounded-full inline-block"
+            style={{ backgroundColor: accentColor }}
+          ></span>
           {title}
         </h2>
       )}
       <div className="relative group">
         <button
-          className="absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-red-600 text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95"
+          className={`absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 ${
+            isRed ? "hover:bg-red-600" : "hover:bg-blue-600"
+          } text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95`}
           onClick={() => handleDesktopScrollBtn("left")}
           aria-label="Cuộn sang trái"
         >
@@ -430,7 +446,7 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
             onTouchStart={onDesktopTouchStart}
             onTouchMove={onDesktopTouchMove}
             onTouchEnd={onDesktopTouchEnd}
-            className="flex items-end gap-12 sm:gap-14 py-2 will-change-transform"
+            className="flex items-end gap-12 sm:gap-14 py-2"
             style={
               {
                 display: "flex",
@@ -442,71 +458,44 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
                   isDragging || disableTransition
                     ? "none"
                     : "transform 750ms cubic-bezier(0.4, 0, 0.2, 1)",
-                willChange: "transform",
               } as React.CSSProperties
             }
           >
             {loopMovies.map((movie, idx) => {
               const origIndex = idx % (top10Movies.length || 10);
-              const isMiddleSet =
-                idx >= top10Movies.length && idx < top10Movies.length * 2;
               return (
                 <div
                   key={`${movie.slug || "top10"}-${idx}`}
                   className="relative flex-shrink-0 w-64 h-80 flex items-end overflow-visible"
-                  style={
-                    {
-                      contain: "layout style",
-                      transform: "translateZ(0)",
-                    } as React.CSSProperties
-                  }
                 >
-                  <div
-                    className="absolute -left-8 bottom-6 z-0 flex items-center justify-start h-72 overflow-visible"
-                    style={
-                      {
-                        willChange: "transform",
-                        transform: "translateZ(0)",
-                      } as React.CSSProperties
-                    }
-                  >
+                  <div className="absolute -left-8 bottom-6 z-0 flex items-center justify-start h-72 overflow-visible">
                     <span
-                      className="text-[15rem] leading-none font-black italic text-black select-none"
-                      style={
-                        {
-                          WebkitTextStroke: `3px ${accentColor}`,
-                          textShadow: `0 0 24px ${accentColor}80`,
-                          transform: "translateZ(0)",
-                          backfaceVisibility: "hidden",
-                          willChange: "transform",
-                          lineHeight: "1",
-                          display: "block",
-                        } as React.CSSProperties
-                      }
+                      className="text-[15rem] leading-none font-black italic text-black select-none block"
+                      style={{
+                        WebkitTextStroke: `3px ${accentColor}`,
+                        textShadow: `0 0 24px ${accentColor}80`,
+                        lineHeight: "1",
+                      }}
                     >
                       {origIndex + 1}
                     </span>
                   </div>
                   <div
-                    className="relative z-10 ml-16 w-48 h-72 rounded-lg overflow-hidden cursor-pointer shadow-2xl transition-transform hover:scale-105 will-change-transform bg-[#0f172a]"
+                    className="relative z-10 ml-16 w-48 h-72 rounded-lg overflow-hidden cursor-pointer shadow-2xl transition-transform hover:scale-105 bg-[#0f172a]"
                     onClick={() => handleClickItem(movie)}
-                    style={
-                      {
-                        transform: "translateZ(0)",
-                        backfaceVisibility: "hidden",
-                      } as React.CSSProperties
-                    }
                   >
                     <img
                       src={getImageUrl(movie.poster_url || movie.thumb_url)}
                       alt={movie.name}
                       className="w-full h-full object-cover pointer-events-none"
-                      loading={isMiddleSet ? "eager" : "lazy"}
+                      loading="eager"
                       decoding="async"
-                      fetchPriority={isMiddleSet ? "high" : ("low" as any)}
-                      style={
-                        { transform: "translateZ(0)" } as React.CSSProperties
-                      }
+                      onError={(e) => {
+                        const target = e.currentTarget as HTMLImageElement;
+                        if (!target.src.includes("unsplash")) {
+                          target.src = "https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=800&auto=format&fit=crop&q=80";
+                        }
+                      }}
                     />
                     <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black to-transparent">
                       <p className="text-white font-bold truncate">
@@ -520,7 +509,9 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
           </div>
         </div>
         <button
-          className="absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95"
+          className={`absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 ${
+            isRed ? "hover:bg-red-600" : "hover:bg-blue-600"
+          } text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95`}
           onClick={() => handleDesktopScrollBtn("right")}
           aria-label="Cuộn sang phải"
         >
