@@ -216,17 +216,23 @@ export const tmdbApi = {
   discoverMovie: (params: Record<string, any> = {}) => tmdbFetch("discover/movie", params),
 };
 
+let clientTmdbHeroCache: { data: Movie[]; time: number } | null = null;
 export async function getTmdbHeroPopular(): Promise<Movie[]> {
+  if (clientTmdbHeroCache && Date.now() - clientTmdbHeroCache.time < 15 * 60 * 1000) {
+    return clientTmdbHeroCache.data;
+  }
   try {
     const res = await fetch(getFullApiUrl("/api/tmdb/hero-popular"));
     if (res.ok) {
       const data = await res.json();
       if (data?.items && Array.isArray(data.items)) {
-        return data.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
+        const normalized = data.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
+        clientTmdbHeroCache = { data: normalized, time: Date.now() };
+        return normalized;
       }
     }
   } catch {}
-  return [];
+  return clientTmdbHeroCache ? clientTmdbHeroCache.data : [];
 }
 
 export function tmdbTrendingToMovie(item: TmdbTrendingItem): any {

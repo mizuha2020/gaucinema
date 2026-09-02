@@ -122,8 +122,9 @@ async function startServer() {
   app.get("/api/tmdb/backdrop/:tmdbId", async (req, res) => {
     const tmdbId = String(req.params.tmdbId || "").trim();
     if (!tmdbId || !/^\d+$/.test(tmdbId)) return res.status(400).json({ error: "Invalid tmdbId" });
+    const force = req.query.force === "true" || req.query.force === "1";
     const cached = tmdbBackdropCache.get(tmdbId);
-    if (cached && Date.now() - cached.timestamp < TMDB_TTL_MS) {
+    if (!force && cached && Date.now() - cached.timestamp < TMDB_TTL_MS) {
       return res.json({ tmdbId, backdropUrl: cached.url, logoUrl: cached.logoUrl || null, cached: true });
     }
     const bearer = process.env.TMDB_BEARER_TOKEN || process.env.TMDB_READ_TOKEN || "";
@@ -131,18 +132,18 @@ async function startServer() {
     const headers: Record<string, string> = { Accept: "application/json", "User-Agent": "GauCinema/1.0" };
     if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
     const tryUrls: string[] = [];
-    // Backdrop: mimic web https://www.themoviedb.org/.../images/backdrops?image_language=xx&image_sort=rating.desc
-    // xx = all languages -> không filter include_image_language để lấy hết như web (test 1375646: no param =51 ảnh, allLangs=43, xx=39)
-    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/movie/${tmdbId}/images`);
-    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/movie/${tmdbId}/images?api_key=${apiKey}`);
-    // also try TV endpoint if movie fails
-    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/tv/${tmdbId}/images`);
-    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/tv/${tmdbId}/images?api_key=${apiKey}`);
+    
+    // Backdrop: TMDB API include_image_language parameter (null = No Language / textless, en, vi, xx)
+    const imgLangs = "null,en,vi,ja,ko,zh,th,fr,de,es,xx";
+    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/movie/${tmdbId}/images?include_image_language=${imgLangs}`);
+    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/movie/${tmdbId}/images?include_image_language=${imgLangs}&api_key=${apiKey}`);
+    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/tv/${tmdbId}/images?include_image_language=${imgLangs}`);
+    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/tv/${tmdbId}/images?include_image_language=${imgLangs}&api_key=${apiKey}`);
 
     for (const url of tryUrls) {
       try {
         const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), 5000);
+        const t = setTimeout(() => controller.abort(), 6000);
         const r = await fetch(url, { headers, signal: controller.signal });
         clearTimeout(t);
         if (!r.ok) continue;
@@ -156,23 +157,60 @@ async function startServer() {
             const langScore = (iso: string | null) => iso === 'vi' ? 0 : iso === 'en' ? 1 : 2;
             const ls = langScore(a.iso_639_1) - langScore(b.iso_639_1);
             if (ls !== 0) return ls;
-            return (b.vote_average || 0) - (a.vote_average || 0) || (b.width || 0) - (a.width || 0);
+            const scoreA = (Number(a.vote_count) > 0 ? (Number(a.vote_average) * Number(a.vote_count) + 15) / (Number(a.vote_count) + 3) : 0) * 1000 + (a.width || 0);
+            const scoreB = (Number(b.vote_count) > 0 ? (Number(b.vote_average) * Number(b.vote_count) + 15) / (Number(b.vote_count) + 3) : 0) * 1000 + (b.width || 0);
+            return scoreB - scoreA;
           });
           const bestLogo = sortedLogos[0];
           if (bestLogo?.file_path) logoUrl = `https://image.tmdb.org/t/p/original${bestLogo.file_path}`;
         }
-        // pick best backdrop: ưu tiên rating cao nhất sau đó là kích thước lớn (đã bỏ hardcode/override)
+
+        // Helper check No-Language (textless) theo chuẩn TMDB
+        const isNoLanguage = (img: any) => {
+          const iso = img.iso_639_1;
+          return !iso || iso === 'null' || iso === 'xx' || iso === '';
+        };
+
+        // Sort theo chuẩn TMDB Web: Rating Descending -> Vote Count Descending -> Width Descending
+        const sortTmdbRatingDesc = (list: any[]) => {
+          return [...list].sort((a, b) => {
+            const avgDiff = (Number(b.vote_average) || 0) - (Number(a.vote_average) || 0);
+            if (Math.abs(avgDiff) > 0.001) return avgDiff;
+            const countDiff = (Number(b.vote_count) || 0) - (Number(a.vote_count) || 0);
+            if (countDiff !== 0) return countDiff;
+            return (Number(b.width) || 0) - (Number(a.width) || 0);
+          });
+        };
+
+        // Ưu tiên chọn ảnh No Language (textless) top rating trên TMDB
         if (backdrops.length > 0) {
-          backdrops.sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0) || (b.width || 0) - (a.width || 0));
-          const best = backdrops[0];
-          const backdropUrl = `https://image.tmdb.org/t/p/original${best.file_path}`;
-          tmdbBackdropCache.set(tmdbId, { url: backdropUrl, logoUrl, timestamp: Date.now() });
-          return res.json({ tmdbId, backdropUrl, logoUrl, width: best.width, height: best.height });
+          const noLangBackdrops = backdrops.filter(isNoLanguage);
+          const candidateList = noLangBackdrops.length > 0 ? noLangBackdrops : backdrops;
+          const sorted = sortTmdbRatingDesc(candidateList);
+          const best = sorted[0];
+
+          if (best?.file_path) {
+            const backdropUrl = `https://image.tmdb.org/t/p/original${best.file_path}`;
+            tmdbBackdropCache.set(tmdbId, { url: backdropUrl, logoUrl, timestamp: Date.now() });
+            return res.json({
+              tmdbId,
+              backdropUrl,
+              logoUrl,
+              width: best.width,
+              height: best.height,
+              iso_639_1: best.iso_639_1,
+              vote_average: best.vote_average,
+              vote_count: best.vote_count,
+            });
+          }
         }
         // fallback to poster if no backdrop but has posters
         const posters: any[] = data.posters || [];
         if (posters.length > 0) {
-          const best = posters[0];
+          const noLangPosters = posters.filter(isNoLanguage);
+          const candidatePosters = noLangPosters.length > 0 ? noLangPosters : posters;
+          const sortedPosters = sortTmdbRatingDesc(candidatePosters);
+          const best = sortedPosters[0];
           const backdropUrl = `https://image.tmdb.org/t/p/original${best.file_path}`;
           tmdbBackdropCache.set(tmdbId, { url: backdropUrl, logoUrl, timestamp: Date.now() });
           return res.json({ tmdbId, backdropUrl, logoUrl, width: best.width, height: best.height });
@@ -280,24 +318,19 @@ async function startServer() {
     return res.status(502).json({ results: [], error: "TMDB trending failed" });
   });
 
-  // Hero Banner - TMDB Discover (vi-VN, region VN, sort popularity.desc) + validate tồn tại trong API phim hiện tại (phimapi.com)
+    // Hero Banner - TMDB Discover (vi-VN, region VN, sort popularity.desc) + validate tồn tại trong API phim hiện tại (phimapi.com)
   const tmdbHeroCache = new LRUCache<string, { data: any; timestamp: number }>(10);
-  app.get("/api/tmdb/hero-popular", async (req, res) => {
+  let isHeroRefreshing = false;
+
+  async function refreshHeroPopular(force = false): Promise<any> {
     const cacheKey = "hero:discover:vi-VN:VN:popularity.desc:v3";
-    const cached = tmdbHeroCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < 30 * 60 * 1000) {
-      // nếu cache cũ bị thiếu (<10) thì bỏ qua để refill
-      if (cached.data?.items?.length >= 10) return res.json(cached.data);
-    }
     const bearer = process.env.TMDB_BEARER_TOKEN || process.env.TMDB_READ_TOKEN || "";
     const apiKey = process.env.TMDB_API_KEY || "";
     const headers: Record<string, string> = { Accept: "application/json", "User-Agent": "GauCinema/1.0" };
     if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
     const urls: string[] = [];
-    // Yêu cầu mới: https://api.themoviedb.org/3/discover/movie?language=vi-VN&region=VN&sort_by=popularity.desc
     if (bearer) urls.push("https://api.themoviedb.org/3/discover/movie?language=vi-VN&region=VN&sort_by=popularity.desc&page=1");
     if (apiKey) urls.push(`https://api.themoviedb.org/3/discover/movie?language=vi-VN&region=VN&sort_by=popularity.desc&page=1&api_key=${apiKey}`);
-    // fallback page 2 nếu page 1 không đủ
     if (bearer) urls.push("https://api.themoviedb.org/3/discover/movie?language=vi-VN&region=VN&sort_by=popularity.desc&page=2");
     if (apiKey) urls.push(`https://api.themoviedb.org/3/discover/movie?language=vi-VN&region=VN&sort_by=popularity.desc&page=2&api_key=${apiKey}`);
 
@@ -305,7 +338,7 @@ async function startServer() {
     for (const url of urls) {
       try {
         const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), 7000);
+        const t = setTimeout(() => controller.abort(), 5000);
         const r = await fetch(url, { headers, signal: controller.signal });
         clearTimeout(t);
         if (!r.ok) continue;
@@ -313,131 +346,141 @@ async function startServer() {
         const results = data.results || [];
         if (results.length) {
           tmdbResults = tmdbResults.concat(results);
-          if (tmdbResults.length >= 20) break;
+          if (tmdbResults.length >= 25) break;
         }
       } catch {}
     }
+
     if (tmdbResults.length === 0) {
-      if (cached) return res.json(cached.data);
-      return res.status(502).json({ status: false, items: [], error: "TMDB popular fetch failed" });
+      return null;
     }
-    // Validate từng phim có tồn tại trong API phim hiện tại (KKPhim) mới lấy
-    const items: any[] = [];
-    const usedSlugs = new Set<string>();
-    // Lấy 40 đầu (page1+page2) để tăng tỉ lệ match, tránh chỉ 4/10 như trước
-    for (const it of tmdbResults.slice(0, 40)) {
-      if (items.length >= 10) break;
-      const title: string = (it.title || it.original_title || "").trim();
-      if (!title) continue;
-      const searchQuery = title.replace(/\s*\(.*?\)/, "").replace(/:\s*.*$/, "").trim();
-      if (!searchQuery) continue;
-      try {
-        const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery)}&limit=5`;
-        const searchRes = await fetchWithTimeout(searchUrl, 4000).catch(() => null);
-        const foundItems = searchRes?.data?.items || searchRes?.items || [];
-        if (!foundItems || foundItems.length === 0) continue;
-        const matchedItem = foundItems.find((f: any) => !usedSlugs.has(f.slug)) || foundItems[0];
-        if (!matchedItem || usedSlugs.has(matchedItem.slug)) continue;
-        let resolved: any = null;
-        try { resolved = await resolveMovieSlug(matchedItem.slug); } catch {}
-        const base = resolved || {
-          slug: matchedItem.slug,
-          name: matchedItem.name,
-          origin_name: matchedItem.origin_name || it.original_title || "",
-          poster_url: matchedItem.poster_url || matchedItem.thumb_url || "",
-          thumb_url: matchedItem.thumb_url || matchedItem.poster_url || "",
-          year: matchedItem.year || (it.release_date ? Number(String(it.release_date).slice(0, 4)) : undefined),
-          quality: matchedItem.quality || "FHD",
-          lang: matchedItem.lang || "Vietsub",
-          source: "kkphim",
-          sourceLabel: "KKPhim",
-        };
-        // Enrich với TMDB backdrop original để hero banner dùng backdrop TMDB (đã bỏ hardcode)
-        const enriched = {
-          ...base,
-          tmdb: { id: String(it.id) },
-          tmdbId: String(it.id),
-          backdrop_url: it.backdrop_path ? `https://image.tmdb.org/t/p/original${it.backdrop_path}` : base.backdrop_url || base.poster_url,
-          poster_url: base.poster_url || (it.poster_path ? `https://image.tmdb.org/t/p/w500${it.poster_path}` : ""),
-          thumb_url: base.thumb_url || base.poster_url || (it.poster_path ? `https://image.tmdb.org/t/p/w500${it.poster_path}` : ""),
-          content: it.overview || base.content || "",
-          vote_average: it.vote_average,
-          popularity: it.popularity,
-        };
-        usedSlugs.add(enriched.slug);
-        items.push(enriched);
-        // cache cast index
-        try { if (resolved) indexMovieCast(resolved, 'kkphim'); } catch {}
-      } catch {}
-    }
-    // Fallback: nếu vẫn <10 thì bù bằng phim hot local để luôn đủ 10 hero, tránh lúc 8 lúc 10
-    if (items.length < 10) {
-      const fillerPages = [1, 2, 3];
-      for (const page of fillerPages) {
-        if (items.length >= 10) break;
-        try {
-          const catUrl = `https://phimapi.com/v1/api/danh-sach/phim-le?page=${page}&limit=20`;
-          const catRes = await fetchWithTimeout(catUrl, 6000).catch(() => null);
-          const catItems = catRes?.data?.items || catRes?.items || [];
-          for (const catItem of catItems) {
-            if (items.length >= 10) break;
-            if (!catItem.slug || usedSlugs.has(catItem.slug)) continue;
-            let resolved: any = null;
-            try { resolved = await resolveMovieSlug(catItem.slug); } catch {}
-            const base = resolved || catItem;
-            const tmdbId = (base as any)?.tmdb?.id ? String((base as any).tmdb.id) : (catItem.tmdb?.id ? String(catItem.tmdb.id) : null);
-            // filler không bắt buộc tmdb nữa để luôn đủ 10, thiếu thì HeroBanner sẽ fallback thumb_url
-            const fillerEnriched: any = {
-              slug: base.slug || catItem.slug,
-              name: base.name || catItem.name,
-              origin_name: base.origin_name || catItem.origin_name || "",
-              poster_url: base.poster_url || catItem.poster_url || "",
-              thumb_url: base.thumb_url || catItem.thumb_url || "",
-              backdrop_url: (base as any).backdrop_url || base.poster_url || catItem.poster_url || "",
-              year: base.year || catItem.year,
-              quality: base.quality || "FHD",
-              lang: base.lang || "Vietsub",
+
+    // Parallel batch validation: kiểm tra song song các phim thay vì tuần tự từng phim một
+    const candidates = tmdbResults.slice(0, 30);
+    const checkBatch = async (itemsToCheck: any[]) => {
+      return Promise.all(
+        itemsToCheck.map(async (it: any) => {
+          const title: string = (it.title || it.original_title || "").trim();
+          if (!title) return null;
+          const searchQuery = title.replace(/\s*\(.*?\)/, "").replace(/:\s*.*$/, "").trim();
+          if (!searchQuery) return null;
+          try {
+            const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery)}&limit=3`;
+            const searchRes = await fetchWithTimeout(searchUrl, 3000).catch(() => null);
+            const foundItems = searchRes?.data?.items || searchRes?.items || [];
+            if (!foundItems || foundItems.length === 0) return null;
+            const matchedItem = foundItems[0];
+            if (!matchedItem?.slug) return null;
+
+            return {
+              slug: matchedItem.slug,
+              name: matchedItem.name || it.title,
+              origin_name: matchedItem.origin_name || it.original_title || "",
+              poster_url: (it.poster_path ? `https://image.tmdb.org/t/p/w500${it.poster_path}` : matchedItem.poster_url || matchedItem.thumb_url || ""),
+              thumb_url: (it.poster_path ? `https://image.tmdb.org/t/p/w500${it.poster_path}` : matchedItem.thumb_url || matchedItem.poster_url || ""),
+              backdrop_url: it.backdrop_path ? `https://image.tmdb.org/t/p/original${it.backdrop_path}` : matchedItem.thumb_url || "",
+              year: matchedItem.year || (it.release_date ? Number(String(it.release_date).slice(0, 4)) : undefined),
+              quality: matchedItem.quality || "FHD",
+              lang: matchedItem.lang || "Vietsub",
               source: "kkphim",
               sourceLabel: "KKPhim",
+              tmdb: { id: String(it.id) },
+              tmdbId: String(it.id),
+              content: it.overview || "",
+              vote_average: it.vote_average,
+              popularity: it.popularity,
             };
-            if (tmdbId) {
-              fillerEnriched.tmdb = { id: tmdbId };
-              fillerEnriched.tmdbId = tmdbId;
-            }
-            usedSlugs.add(fillerEnriched.slug);
-            items.push(fillerEnriched);
+          } catch {
+            return null;
           }
-        } catch {}
+        })
+      );
+    };
+
+    // Chạy song song 2 batch (mỗi batch 10-15 phim)
+    const items: any[] = [];
+    const usedSlugs = new Set<string>();
+
+    const batch1 = await checkBatch(candidates.slice(0, 15));
+    for (const res of batch1) {
+      if (res && !usedSlugs.has(res.slug)) {
+        usedSlugs.add(res.slug);
+        items.push(res);
+        if (items.length >= 10) break;
       }
     }
-    // Cuối cùng vẫn <10 (hiếm) thì lấy thêm từ phim bộ để bù
+
+    if (items.length < 10) {
+      const batch2 = await checkBatch(candidates.slice(15, 30));
+      for (const res of batch2) {
+        if (res && !usedSlugs.has(res.slug)) {
+          usedSlugs.add(res.slug);
+          items.push(res);
+          if (items.length >= 10) break;
+        }
+      }
+    }
+
+    // Fallback: nếu vẫn <10 thì lấy nhanh phim lẻ mới để bù
     if (items.length < 10) {
       try {
-        const catRes = await fetchWithTimeout(`https://phimapi.com/v1/api/danh-sach/phim-bo?page=1&limit=20`, 6000).catch(() => null);
+        const catRes = await fetchWithTimeout(`https://phimapi.com/v1/api/danh-sach/phim-le?page=1&limit=20`, 4000).catch(() => null);
         const catItems = catRes?.data?.items || catRes?.items || [];
         for (const catItem of catItems) {
           if (items.length >= 10) break;
           if (!catItem.slug || usedSlugs.has(catItem.slug)) continue;
-          items.push({
+          const tmdbId = catItem.tmdb?.id ? String(catItem.tmdb.id) : null;
+          const filler: any = {
             slug: catItem.slug,
             name: catItem.name,
             origin_name: catItem.origin_name || "",
             poster_url: catItem.poster_url || catItem.thumb_url || "",
             thumb_url: catItem.thumb_url || catItem.poster_url || "",
             backdrop_url: catItem.poster_url || catItem.thumb_url || "",
-            tmdb: catItem.tmdb || undefined,
             year: catItem.year,
             quality: catItem.quality || "FHD",
             lang: catItem.lang || "Vietsub",
             source: "kkphim",
-          });
-          usedSlugs.add(catItem.slug);
+            sourceLabel: "KKPhim",
+          };
+          if (tmdbId) {
+            filler.tmdb = { id: tmdbId };
+            filler.tmdbId = tmdbId;
+          }
+          usedSlugs.add(filler.slug);
+          items.push(filler);
         }
       } catch {}
     }
+
     const payload = { status: true, items: items.slice(0, 10), total: items.slice(0, 10).length, source: "tmdb_discover_vi-VN_VN_popularity.desc_validated" };
     tmdbHeroCache.set(cacheKey, { data: payload, timestamp: Date.now() });
-    return res.json(payload);
+    return payload;
+  }
+
+  app.get("/api/tmdb/hero-popular", async (req, res) => {
+    const cacheKey = "hero:discover:vi-VN:VN:popularity.desc:v3";
+    const cached = tmdbHeroCache.get(cacheKey);
+
+    // Stale-while-revalidate: trả ngay nếu có cache (tối đa 2 giờ), refresh ngầm nếu quá 30 phút
+    if (cached && cached.data?.items?.length >= 8) {
+      const isStale = Date.now() - cached.timestamp > 30 * 60 * 1000;
+      if (isStale && !isHeroRefreshing) {
+        isHeroRefreshing = true;
+        refreshHeroPopular().finally(() => { isHeroRefreshing = false; });
+      }
+      return res.json(cached.data);
+    }
+
+    try {
+      const payload = await refreshHeroPopular();
+      if (payload) return res.json(payload);
+      if (cached) return res.json(cached.data);
+      return res.status(502).json({ status: false, items: [], error: "TMDB popular fetch failed" });
+    } catch (e: any) {
+      if (cached) return res.json(cached.data);
+      return res.status(502).json({ status: false, items: [], error: e.message || "TMDB hero failed" });
+    }
   });
 
   // Comprehensive System API Health Check & Ping Tester (Backend-based to prevent CORS & accurately measure latency)

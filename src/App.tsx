@@ -714,19 +714,16 @@ export default function App() {
     setActiveRoomData(null);
   }, [currentAccount]);
 
-  // Fetch Home collections
+  // Fetch Home collections with Progressive 2-Stage Loading for maximum speed
   const fetchHomeData = useCallback(async () => {
     setIsLoadingHome(true);
     try {
-      const [newRes, trendingAllRes, topSeriesRes, topSingleRes, theaterRes, netflixTop10Res] =
-        await Promise.all([
-          movieApi.getNewUpdated(1, 36).catch(() => null),
-          movieApi.getTrending(12).catch(() => null),
-          movieApi.getTrending(10, "series").catch(() => null),
-          movieApi.getTrending(10, "single").catch(() => null),
-          movieApi.getTheaterMovies(1, 10).catch(() => null),
-          movieApi.getNetflixTop10VN().catch(() => null),
-        ]);
+      // Stage 1 (Above the fold): Tải song song những mục hiển thị ngay trên màn hình đầu
+      const [newRes, trendingAllRes, netflixTop10Res] = await Promise.all([
+        movieApi.getNewUpdated(1, 30).catch(() => null),
+        movieApi.getTrending(12).catch(() => null),
+        movieApi.getNetflixTop10VN().catch(() => null),
+      ]);
 
       if (netflixTop10Res?.movies?.length) {
         setMovieCollection("netflixTop10Movies", netflixTop10Res.movies);
@@ -742,39 +739,20 @@ export default function App() {
         setMovieCollection("topHotAll", newRes.items.slice(0, 10));
       }
 
-      if (theaterRes?.items?.length)
-        setMovieCollection("theaterList", theaterRes.items);
-
       if (newRes?.items?.length) {
-        // Lọc bỏ các phim đã có trong Top Hot (All, Series, Single) để tránh trùng lặp
-        const hotSlugs = new Set([
-          ...trendingItems.map((m: any) => m.slug),
-          ...(topSeriesRes?.items || []).map((m: any) => m.slug),
-          ...(topSingleRes?.items || []).map((m: any) => m.slug),
-        ]);
-        const filteredNew = newRes.items.filter(
-          (m: any) => !hotSlugs.has(m.slug),
-        );
-        setMovieCollection(
-          "newUpdated",
-          filteredNew.length > 0 ? filteredNew : newRes.items,
-        );
+        const hotSlugs = new Set(trendingItems.map((m: any) => m.slug));
+        const filteredNew = newRes.items.filter((m: any) => !hotSlugs.has(m.slug));
+        setMovieCollection("newUpdated", filteredNew.length > 0 ? filteredNew : newRes.items);
       }
 
-      if (topSeriesRes?.items?.length)
-        setMovieCollection("topSeries", topSeriesRes.items);
-      if (topSingleRes?.items?.length)
-        setMovieCollection("topSingle", topSingleRes.items);
-      if (
-        newRes?.items?.length ||
-        trendingItems.length ||
-        topSeriesRes?.items?.length ||
-        topSingleRes?.items?.length
-      ) {
-        setIsLoadingHome(false);
-      }
+      // Màn hình đầu đã sẵn sàng -> Tắt ngay loading để người dùng tương tác tức thì
+      setIsLoadingHome(false);
 
+      // Stage 2 (Progressive below the fold): Tải các hàng phim bên dưới
       const [
+        topSeriesRes,
+        topSingleRes,
+        theaterRes,
         seriesRes,
         singleRes,
         animeRes,
@@ -784,6 +762,9 @@ export default function App() {
         sciFiRes,
         koreanRes,
       ] = await Promise.allSettled([
+        movieApi.getTrending(10, "series"),
+        movieApi.getTrending(10, "single"),
+        movieApi.getTheaterMovies(1, 10),
         movieApi.getSeries(1, 24),
         movieApi.getSingleMovies(1, 24),
         movieApi.getAnime(1, 16),
@@ -794,42 +775,41 @@ export default function App() {
         movieApi.getByCountry("han-quoc", 1, 16),
       ]);
 
-      if (seriesRes.status === "fulfilled" && seriesRes.value.items?.length) {
+      if (topSeriesRes.status === "fulfilled" && topSeriesRes.value?.items?.length) {
+        setMovieCollection("topSeries", topSeriesRes.value.items);
+      }
+      if (topSingleRes.status === "fulfilled" && topSingleRes.value?.items?.length) {
+        setMovieCollection("topSingle", topSingleRes.value.items);
+      }
+      if (theaterRes.status === "fulfilled" && theaterRes.value?.items?.length) {
+        setMovieCollection("theaterList", theaterRes.value.items);
+      }
+      if (seriesRes.status === "fulfilled" && seriesRes.value?.items?.length) {
         const items = seriesRes.value.items;
-        setMovieCollection(
-          "seriesList",
-          items.length > 10 ? items.slice(10) : items,
-        );
-        if (!topSeriesRes?.items?.length) {
-          setMovieCollection("topSeries", items.slice(0, 10));
-        }
+        setMovieCollection("seriesList", items.length > 10 ? items.slice(10) : items);
       }
-      if (singleRes.status === "fulfilled" && singleRes.value.items?.length) {
+      if (singleRes.status === "fulfilled" && singleRes.value?.items?.length) {
         const items = singleRes.value.items;
-        setMovieCollection(
-          "singleList",
-          items.length > 10 ? items.slice(10) : items,
-        );
-        if (!topSingleRes?.items?.length) {
-          setMovieCollection("topSingle", items.slice(0, 10));
-        }
+        setMovieCollection("singleList", items.length > 10 ? items.slice(10) : items);
       }
-      if (animeRes.status === "fulfilled" && animeRes.value.items?.length)
+      if (animeRes.status === "fulfilled" && animeRes.value?.items?.length) {
         setMovieCollection("animeList", animeRes.value.items);
-      if (actionRes.status === "fulfilled" && actionRes.value.items?.length) {
-        setMovieCollection("actionList", actionRes.value.items);
-        if (!theaterRes?.items?.length) {
-          setMovieCollection("theaterList", actionRes.value.items.slice(0, 10));
-        }
       }
-      if (romanceRes.status === "fulfilled" && romanceRes.value.items?.length)
+      if (actionRes.status === "fulfilled" && actionRes.value?.items?.length) {
+        setMovieCollection("actionList", actionRes.value.items);
+      }
+      if (romanceRes.status === "fulfilled" && romanceRes.value?.items?.length) {
         setMovieCollection("romanceList", romanceRes.value.items);
-      if (horrorRes.status === "fulfilled" && horrorRes.value.items?.length)
+      }
+      if (horrorRes.status === "fulfilled" && horrorRes.value?.items?.length) {
         setMovieCollection("horrorList", horrorRes.value.items);
-      if (sciFiRes.status === "fulfilled" && sciFiRes.value.items?.length)
+      }
+      if (sciFiRes.status === "fulfilled" && sciFiRes.value?.items?.length) {
         setMovieCollection("sciFiList", sciFiRes.value.items);
-      if (koreanRes.status === "fulfilled" && koreanRes.value.items?.length)
+      }
+      if (koreanRes.status === "fulfilled" && koreanRes.value?.items?.length) {
         setMovieCollection("koreanList", koreanRes.value.items);
+      }
     } catch (e) {
       void 0;
     } finally {
