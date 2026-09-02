@@ -1582,9 +1582,24 @@ export default function App() {
                 {/* HOME TAB */}
                 {activeTab === "home" && (
                   <>
-                    {/* Featured Cinematic Hero Banner */}
+                    {/* Featured Cinematic Hero Banner - 10 phim, ưu tiên có TMDB để lấy backdrop/poster từ TMDB */}
                     <HeroBanner
-                      movies={newUpdated.slice(0, 5)}
+                      movies={(() => {
+                        // Gộp nhiều nguồn để đảm bảo đủ 10 phim có TMDB
+                        const merged = [...newUpdated, ...topHotAll, ...theaterList, ...topSeries, ...topSingle];
+                        const uniq = Array.from(new Map(merged.map((m) => [m.slug, m])).values());
+                        const withTmdb = uniq.filter((m: any) => m?.tmdb?.id && String(m.tmdb.id).trim() && /^\d+$/.test(String(m.tmdb.id).trim()));
+                        const withoutTmdb = uniq.filter((m: any) => !m?.tmdb?.id || !/^\d+$/.test(String(m?.tmdb?.id || '').trim()));
+                        // Ưu tiên phim có TMDB lên trước, sau đó bù thêm phim thường nếu chưa đủ 10
+                        const ordered = [...withTmdb, ...withoutTmdb];
+                        const result = ordered.slice(0, 10);
+                        // Fallback: nếu vẫn ít hơn 10 (ví dụ mới load), lấy thêm từ newUpdated
+                        if (result.length < 10 && newUpdated.length > result.length) {
+                          const extra = newUpdated.filter((m) => !result.some((r) => r.slug === m.slug)).slice(0, 10 - result.length);
+                          return [...result, ...extra].slice(0, 10);
+                        }
+                        return result.length >= 1 ? result : newUpdated.slice(0, 10);
+                      })()}
                       onPlay={handlePlayMovie}
                       onOpenDetail={(m) => openDetailModal(m)}
                       onToggleMyList={handleToggleMyList}

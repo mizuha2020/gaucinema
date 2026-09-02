@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Movie } from '../types';
 import { Play, Info, Plus, Check, Volume2, VolumeX, ChevronRight, ChevronLeft, Sparkles, Star } from 'lucide-react';
-import { getImageUrl } from '../services/movieApi';
+import { getImageUrl, getHeroImageUrl, getTmdbBackdropUrl } from '../services/movieApi';
 import { motion, AnimatePresence } from 'motion/react';
+
+const HERO_LIMIT = 10;
 
 interface HeroBannerProps {
   movies: Movie[];
@@ -26,17 +28,20 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(true);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [tmdbBackdropMap, setTmdbBackdropMap] = useState<Record<string, string>>({});
+
+  const heroMovies = useMemo(() => (movies || []).slice(0, HERO_LIMIT), [movies]);
 
   const handlePlay = onPlay || onPlayMovie || (() => {});
   const handleOpenDetail = onOpenDetail || onSelectMovie || (() => {});
 
   const resetInterval = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-    if (!movies || movies.length <= 1) return;
+    if (!heroMovies || heroMovies.length <= 1) return;
     intervalRef.current = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % Math.min(movies.length, 5));
+      setCurrentIndex((prev) => (prev + 1) % heroMovies.length);
     }, 9000);
-  }, [movies]);
+  }, [heroMovies]);
 
   // Auto rotate featured hero movie every 9 seconds if not interacted
   useEffect(() => {
@@ -46,7 +51,32 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
     };
   }, [resetInterval]);
 
-  if (!movies || movies.length === 0) {
+  // Keep currentIndex within bounds when heroMovies length changes
+  useEffect(() => {
+    if (currentIndex >= heroMovies.length && heroMovies.length > 0) {
+      setCurrentIndex(0);
+    }
+  }, [heroMovies.length, currentIndex]);
+
+  // Fetch TMDB backdrop/poster for all hero movies (all should have TMDB)
+  useEffect(() => {
+    let cancelled = false;
+    if (!heroMovies.length) return;
+    heroMovies.forEach(async (m) => {
+      const tmdbId = (m as any)?.tmdb?.id ? String((m as any).tmdb.id).trim() : '';
+      if (!tmdbId || !/^\d+$/.test(tmdbId)) return;
+      if (tmdbBackdropMap[m.slug]) return;
+      try {
+        const url = await getTmdbBackdropUrl(tmdbId);
+        if (url && !cancelled) {
+          setTmdbBackdropMap((prev) => (prev[m.slug] ? prev : { ...prev, [m.slug]: url }));
+        }
+      } catch {}
+    });
+    return () => { cancelled = true; };
+  }, [heroMovies]);
+
+  if (!heroMovies || heroMovies.length === 0) {
     return (
       <div className="relative w-full h-[75vh] min-h-[540px] max-h-[780px] bg-[#070b16] overflow-hidden flex items-end p-6 sm:p-12 lg:p-16">
         <div className="absolute inset-0 bg-gradient-to-t from-[#070b16] via-[#070b16]/60 to-transparent z-10" />
@@ -64,7 +94,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
     );
   }
 
-  const currentMovie = movies[currentIndex] || movies[0];
+  const currentMovie = heroMovies[currentIndex] || heroMovies[0];
   const inList =
     typeof isInMyList === 'function'
       ? currentMovie
@@ -73,13 +103,33 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
       : Boolean(isInMyList);
 
   const handlePrev = () => {
-    setCurrentIndex((prev) => (prev === 0 ? Math.min(movies.length, 5) - 1 : prev - 1));
+    setCurrentIndex((prev) => (prev === 0 ? heroMovies.length - 1 : prev - 1));
     resetInterval();
   };
 
   const handleNext = () => {
-    setCurrentIndex((prev) => (prev + 1) % Math.min(movies.length, 5));
+    setCurrentIndex((prev) => (prev + 1) % heroMovies.length);
     resetInterval();
+  };
+
+  const getHeroSrc = (movie: Movie) => {
+    if (!movie) return '';
+    // 1. TMDB backdrop fetched via API (highest priority - original quality)
+    const tmdbFetched = tmdbBackdropMap[movie.slug];
+    if (tmdbFetched) return tmdbFetched;
+    // 2. Direct TMDB backdrop/poster already in payload
+    if (movie.backdrop_url && movie.backdrop_url.includes('image.tmdb.org')) {
+      return movie.backdrop_url;
+    }
+    if (movie.poster_url && movie.poster_url.includes('image.tmdb.org')) {
+      return movie.poster_url.replace('/w500', '/original');
+    }
+    // 3. backdrop_url field often contains TMDB original path proxy via server
+    if (movie.backdrop_url) {
+      return getHeroImageUrl(movie.backdrop_url, (movie as any).source);
+    }
+    // 4. Fallback to poster/thumb via optimized hero url (still works, but ideally all hero items have TMDB)
+    return getHeroImageUrl(movie.poster_url || movie.thumb_url, (movie as any).source);
   };
 
   return (
@@ -95,15 +145,21 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           className="absolute inset-0 w-full h-full"
         >
           <img
-            src={getImageUrl(currentMovie.poster_url || currentMovie.thumb_url)}
+            src={getHeroSrc(currentMovie)}
             alt={currentMovie.name}
             loading="eager"
             decoding="async"
             fetchPriority="high"
             className="w-full h-full object-cover object-top filter brightness-85"
             onError={(e) => {
-              (e.target as HTMLImageElement).src =
-                'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
+              // fallback to normal poster if TMDB backdrop fails
+              const fallback = getImageUrl(currentMovie.poster_url || currentMovie.thumb_url, (currentMovie as any).source);
+              if ((e.target as HTMLImageElement).src !== fallback) {
+                (e.target as HTMLImageElement).src = fallback;
+              } else {
+                (e.target as HTMLImageElement).src =
+                  'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
+              }
             }}
           />
           {/* Multi-layered Gấu navy cinematic gradients */}
@@ -196,9 +252,9 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 
       {/* Navigation Indicators & Next/Prev Controls (Positioned cleanly on Desktop & Tablet) */}
       <div className="absolute right-4 sm:right-8 bottom-4 sm:bottom-24 z-20 hidden sm:flex items-center gap-3">
-        {/* Pagination Dots */}
-        <div className="flex items-center gap-1.5 mr-2">
-          {movies.slice(0, 5).map((_, idx) => (
+        {/* Pagination Dots - 10 films */}
+        <div className="flex items-center gap-1.5 mr-2 max-w-[220px] flex-wrap justify-end">
+          {heroMovies.map((_, idx) => (
             <button
               key={idx}
               onClick={() => { setCurrentIndex(idx); resetInterval(); }}
@@ -227,6 +283,24 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         >
           <ChevronRight className="w-5 h-5" />
         </button>
+      </div>
+
+      {/* Mobile Pagination Dots (visible on <sm) - 10 films */}
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex sm:hidden items-center gap-1.5 bg-black/40 backdrop-blur px-3 py-2 rounded-full border border-white/10">
+        {heroMovies.map((_, idx) => (
+          <button
+            key={idx}
+            onClick={() => { setCurrentIndex(idx); resetInterval(); }}
+            className={`h-1.5 rounded-full transition-all duration-300 ${
+              idx === currentIndex ? 'w-5 bg-blue-500' : 'w-1.5 bg-white/50'
+            }`}
+            aria-label={`Chuyển đến phim ${idx + 1}`}
+          />
+        ))}
+      </div>
+      {/* Counter badge: 1 / 10 */}
+      <div className="absolute top-4 right-4 z-20 sm:hidden bg-black/60 text-white text-[11px] font-bold px-2.5 py-1 rounded-full border border-white/10">
+        {currentIndex + 1} / {heroMovies.length}
       </div>
     </div>
   );
