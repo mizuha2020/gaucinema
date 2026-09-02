@@ -21,7 +21,6 @@ import {
   X,
   AlertCircle,
   Server,
-  Zap,
   SkipForward,
   PictureInPicture2,
 } from 'lucide-react';
@@ -51,6 +50,21 @@ interface SimplePlayerProps {
 }
 
 import { getMirrorUrls } from '../utils/mirrorUrls';
+import { getFullApiUrl } from '../services/apiConfig';
+
+// Build ad-clean proxied m3u8 URL (server strips SSAI ad segments)
+function getAdCleanUrl(raw: string): string {
+  if (!raw) return raw;
+  // keep local blob/file urls as-is
+  if (raw.startsWith('blob:') || raw.startsWith('data:') || raw.startsWith('file:')) return raw;
+  try {
+    // btoa works for ASCII urls (opstream) - fallback to encodeURIComponent
+    const b64 = btoa(unescape(encodeURIComponent(raw)));
+    return getFullApiUrl(`/api/proxy/m3u8?url=${encodeURIComponent(b64)}`);
+  } catch {
+    return getFullApiUrl(`/api/proxy/m3u8?url=${encodeURIComponent(raw)}`);
+  }
+}
 
 export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
   movie,
@@ -120,18 +134,6 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
   const previewSeekTimer = useRef<NodeJS.Timeout | null>(null);
   const previewDebounce = useRef<NodeJS.Timeout | null>(null);
   const [preview, setPreview] = useState<{ time: number; xPct: number; img: string | null; visible: boolean; loading: boolean } | null>(null);
-
-  // Auto skip 30s ad at 15:00 - 15:30
-  const [autoSkipAd, setAutoSkipAd] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem('player_auto_skip_ad');
-      return saved !== null ? saved === 'true' : true;
-    } catch {
-      return true;
-    }
-  });
-  const [skippedAdToast, setSkippedAdToast] = useState<boolean>(false);
-  const hasSkippedAdRef = useRef<boolean>(false);
 
   const [hud, setHud] = useState<{ type: 'volume' | 'brightness'; value: number } | null>(null);
   const hudTimer = useRef<NodeJS.Timeout | null>(null);
@@ -699,7 +701,6 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
       setErrorMsg(null);
       setQualityLevels([]);
       setCurrentQuality(-1);
-      hasSkippedAdRef.current = false;
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
       const isLocalHls = localVideoUrl.includes('.m3u8');
       if (isLocalHls && Hls.isSupported()) {
@@ -744,14 +745,15 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     setErrorMsg(null);
     setQualityLevels([]);
     setCurrentQuality(-1);
-    hasSkippedAdRef.current = false;
 
     if (hlsRef.current) {
       hlsRef.current.destroy();
       hlsRef.current = null;
     }
 
-    const candidates = getMirrorUrls(currentEpisode.link_m3u8);
+    const rawCandidates = getMirrorUrls(currentEpisode.link_m3u8);
+    // Force all HLS through ad-clean proxy (server strips SSAI)
+    const candidates = rawCandidates.map(getAdCleanUrl);
     let candidateIndex = 0;
 
     const tryNext = (hls: Hls) => {
@@ -822,7 +824,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
         }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = currentEpisode.link_m3u8;
+      video.src = getAdCleanUrl(currentEpisode.link_m3u8);
       video.addEventListener('loadedmetadata', () => {
         setIsLoading(false);
         if (initialTime > 5) video.currentTime = initialTime;
@@ -859,7 +861,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
       previewHlsRef.current.destroy();
       previewHlsRef.current = null;
     }
-    const candidates = getMirrorUrls(currentEpisode.link_m3u8);
+    const candidates = getMirrorUrls(currentEpisode.link_m3u8).map(getAdCleanUrl);
     const onSeeked = () => {
       capturePreviewFrame();
     };
@@ -1183,19 +1185,6 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     if (video.buffered.length > 0) {
       setBuffered(video.buffered.end(video.buffered.length - 1));
     }
-
-    if (cur < 890 && hasSkippedAdRef.current) {
-      hasSkippedAdRef.current = false;
-    }
-
-    // Tự động nhảy 30s quảng cáo từ phút 15:00 (899.5s -> 930.5s) khi ON
-    if (autoSkipAd && !hasSkippedAdRef.current && cur >= 899.5 && cur <= 901.5) {
-      hasSkippedAdRef.current = true;
-      video.currentTime = 930.5;
-      setCurrentTime(930.5);
-      setSkippedAdToast(true);
-      setTimeout(() => setSkippedAdToast(false), 3500);
-    }
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1227,7 +1216,9 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
             src={currentEpisode.link_embed}
             className="w-full h-full border-none"
             allowFullScreen
+            sandbox="allow-same-origin allow-scripts allow-presentation allow-forms"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+            referrerPolicy="no-referrer"
             title={movie.name}
           />
           <button
@@ -1308,12 +1299,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
             </div>
           )}
 
-          {skippedAdToast && (
-            <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-amber-500 text-slate-950 font-extrabold px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2 text-xs sm:text-sm z-50 animate-bounce border border-amber-300">
-              <Zap className="w-4 h-4 fill-current" />
-              <span>Đã tự động bỏ qua 30s quảng cáo (15:00 - 15:30)!</span>
-            </div>
-          )}
+
 
           <div
             className={`absolute inset-0 flex flex-col justify-between pt-[max(2.75rem,env(safe-area-inset-top,0px))] pb-[max(1rem,env(safe-area-inset-bottom,0px))] px-3 sm:px-6 transition-opacity duration-300 pointer-events-none ${
@@ -1655,24 +1641,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
                           </div>
                         )}
 
-                        <div className="pt-2 border-t border-white/10">
-                          <label className="flex items-center justify-between text-xs text-gray-300 cursor-pointer hover:text-white py-1">
-                            <span className="flex items-center gap-1.5 font-medium">
-                              <Zap className="w-3.5 h-3.5 text-amber-400" />
-                              <span>skip QC</span>
-                            </span>
-                            <input
-                              type="checkbox"
-                              checked={autoSkipAd}
-                              onChange={(e) => {
-                                const val = e.target.checked;
-                                setAutoSkipAd(val);
-                                localStorage.setItem('player_auto_skip_ad', String(val));
-                              }}
-                              className="w-4 h-4 accent-blue-600 rounded cursor-pointer"
-                            />
-                          </label>
-                        </div>
+
                       </div>
                     )}
                   </div>

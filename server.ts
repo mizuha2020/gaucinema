@@ -679,6 +679,146 @@ setTimeout(seedInitialCastIndex, 2000);
     return res.json(payload);
   });
 
+  // 5a. M3U8 Ad-Clean Proxy - strips SSAI ad segments injected by upstream (opstream/phim1280)
+  app.get("/api/proxy/m3u8", async (req, res) => {
+    let rawUrl = (req.query.url as string) || "";
+    if (!rawUrl) return res.status(400).send("Missing url");
+    // support base64 or plain
+    if (!rawUrl.startsWith("http")) {
+      try { rawUrl = Buffer.from(rawUrl, "base64").toString("utf-8"); } catch {}
+    }
+    if (!rawUrl.startsWith("http")) return res.status(400).send("Invalid url");
+
+    // heuristic: is this URI an ad segment?
+    const isAdSegmentUri = (uri: string): boolean => {
+      const l = uri.toLowerCase();
+      // common ad markers injected by KKPhim/OPhim/opstream
+      if (l.includes("/ad") || l.includes("ad.") || l.includes("ads") || l.includes("quangcao") || l.includes("quang-cao") || l.includes("promo") || l.includes("preroll") || l.includes("midroll") || l.includes("banner") || l.includes("intro") || l.includes("advert")) return true;
+      // Observed real ad paths for Doraemon & many KKPhim encodes: convertv8/ + /v8/ (SSAI injected)
+      if (l.includes("convertv8") || l.includes("/v8/") || l.includes("/convert")) return true;
+      if (l.includes("adservice") || l.includes("doubleclick")) return true;
+      return false;
+    };
+
+    const resolveUrl = (base: string, relative: string): string => {
+      try { return new URL(relative, base).toString(); } catch { return relative; }
+    };
+
+    const fetchText = async (url: string): Promise<string> => {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 12000);
+      try {
+        const r = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "*/*",
+            "Referer": "https://ophim1.com/",
+          },
+        });
+        clearTimeout(t);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return await r.text();
+      } catch (e) { clearTimeout(t); throw e; }
+    };
+
+    const cleanMediaPlaylist = (content: string, baseUrl: string): string => {
+      const lines = content.split(/\r?\n/);
+      const out: string[] = [];
+      let pendingExtInf: string | null = null;
+      let pendingDiscontinuity = false;
+      let removed = 0;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+        if (!trimmed) { out.push(line); continue; }
+        if (trimmed.startsWith("#EXT-X-DISCONTINUITY")) {
+          pendingDiscontinuity = true;
+          continue; // defer, only emit if next segment is kept
+        }
+        if (trimmed.startsWith("#EXTINF")) {
+          pendingExtInf = line;
+          continue;
+        }
+        if (trimmed.startsWith("#") ) {
+          // keep other tags (EXT-X-KEY, EXT-X-MAP, etc.)
+          if (pendingExtInf) { out.push(pendingExtInf); pendingExtInf = null; }
+          if (pendingDiscontinuity) { out.push("#EXT-X-DISCONTINUITY"); pendingDiscontinuity = false; }
+          out.push(line);
+          continue;
+        }
+        // segment URI
+        const uri = trimmed;
+        const absolute = uri.startsWith("http") ? uri : resolveUrl(baseUrl, uri);
+        if (isAdSegmentUri(absolute) || isAdSegmentUri(uri)) {
+          // drop this segment + its EXTINF + discontinuity
+          pendingExtInf = null;
+          pendingDiscontinuity = false;
+          removed++;
+          continue;
+        }
+        if (pendingExtInf) { out.push(pendingExtInf); pendingExtInf = null; }
+        if (pendingDiscontinuity) { out.push("#EXT-X-DISCONTINUITY"); pendingDiscontinuity = false; }
+        // rewrite to absolute to avoid relative resolution issues after filtering
+        out.push(absolute);
+      }
+      if (removed > 0) {
+        // recalc TARGETDURATION if needed - keep original, HLS tolerates lower
+        console.log(`[m3u8-clean] removed ${removed} ad segments from ${baseUrl}`);
+      }
+      return out.join("\n");
+    };
+
+    try {
+      let content = await fetchText(rawUrl);
+      // Master playlist? contains EXT-X-STREAM-INF -> pick best variant and recurse
+      if (content.includes("#EXT-X-STREAM-INF")) {
+        // parse variants: #EXT-X-STREAM-INF:BANDWIDTH=xxx,RESOLUTION=...
+        // next line is variant URI
+        const lines = content.split(/\r?\n/);
+        type Variant = { bw: number; uri: string };
+        const variants: Variant[] = [];
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].includes("#EXT-X-STREAM-INF")) {
+            const bwMatch = lines[i].match(/BANDWIDTH=(\d+)/);
+            const bw = bwMatch ? parseInt(bwMatch[1], 10) : 0;
+            const next = (lines[i+1] || "").trim();
+            if (next && !next.startsWith("#")) {
+              const abs = next.startsWith("http") ? next : resolveUrl(rawUrl, next);
+              variants.push({ bw, uri: abs });
+            }
+          }
+        }
+        if (variants.length > 0) {
+          variants.sort((a,b)=> b.bw - a.bw);
+          const best = variants[0].uri;
+          content = await fetchText(best);
+          // now clean media playlist with best as base
+          const cleaned = cleanMediaPlaylist(content, best);
+          res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+          res.setHeader("Access-Control-Allow-Origin", "*");
+              res.setHeader("Cache-Control", "no-cache");
+          return res.send(cleaned);
+        }
+      }
+      // media playlist clean
+      if (content.includes("#EXTM3U")) {
+        const cleaned = cleanMediaPlaylist(content, rawUrl);
+        res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Cache-Control", "no-cache");
+        return res.send(cleaned);
+      }
+      // not m3u8? proxy as is
+      res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      return res.send(content);
+    } catch (err: any) {
+      console.warn(`[m3u8-proxy] ${rawUrl}:`, err.message);
+      return res.status(502).send(`m3u8 proxy error: ${err.message}`);
+    }
+  });
+
   // 5. Generic proxy for CORS issues (e.g. Manga Chapter APIs)
   app.get("/api/proxy/generic", async (req, res) => {
     const b64url = req.query.url as string;

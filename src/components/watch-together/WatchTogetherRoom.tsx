@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 import { getMirrorUrls } from '../../utils/mirrorUrls';
+import { getFullApiUrl } from '../../services/apiConfig';
+function getAdCleanUrl(raw: string): string {
+  if (!raw || raw.startsWith('blob:') || raw.startsWith('data:')) return raw;
+  try { const b64 = btoa(unescape(encodeURIComponent(raw))); return getFullApiUrl(`/api/proxy/m3u8?url=${encodeURIComponent(b64)}`); } catch { return getFullApiUrl(`/api/proxy/m3u8?url=${encodeURIComponent(raw)}`); }
+}
 import {
   ArrowLeft,
   Copy,
@@ -165,7 +170,7 @@ export const WatchTogetherRoom: React.FC<WatchTogetherRoomProps> = ({
     setErrorMsg(null);
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
 
-    const candidates = getMirrorUrls(room.linkM3u8);
+    const candidates = getMirrorUrls(room.linkM3u8).map(getAdCleanUrl);
     let candidateIndex = 0;
     const tryNext = (hls: Hls) => {
       candidateIndex++;

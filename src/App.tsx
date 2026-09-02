@@ -28,7 +28,7 @@ import { CinematicCarousel } from "./components/CinematicCarousel";
 import { MovieRow } from "./components/MovieRow";
 import { ForYouRow } from "./components/ForYouRow";
 import { MovieDetailModal } from "./components/MovieDetailModal";
-import { SimplePlayer } from "./components/SimplePlayer";
+import { ChophimPlayer } from "./components/ChophimPlayer";
 import { ProfileSelector } from "./components/ProfileSelector";
 import { FilterSection } from "./components/FilterSection";
 import { MyListView } from "./components/MyListView";
@@ -1527,10 +1527,10 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* 2. Fullscreen HLS Video Player (0 Ads) */}
+        {/* 2. Fullscreen HLS Video Player - Chophim minimal style */}
         <AnimatePresence mode="wait">
           {playingMovie && playingEpisode && playingServer && (
-            <SimplePlayer
+            <ChophimPlayer
               key={`player-${playingMovie.slug}-${playingEpisode.slug}`}
               movie={playingMovie}
               currentEpisode={playingEpisode}
@@ -1541,8 +1541,6 @@ export default function App() {
               onSelectEpisode={handleSelectEpisode}
               onSaveProgress={handleSaveProgress}
               onTimeUpdate={handlePlayerTimeUpdate}
-              currentAccount={currentAccount}
-              activeProfile={activeProfile}
             />
           )}
         </AnimatePresence>

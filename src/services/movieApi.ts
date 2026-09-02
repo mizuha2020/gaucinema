@@ -985,9 +985,9 @@ export const movieApi = {
       const rawMovie = data.movie || data;
       const movie = normalizeMovieItem(rawMovie, detectedSource);
 
-      // Parse episodes
+      // Parse episodes - prioritize clean servers (TM/SN > PD) to avoid burnt-in ads
       const rawEpisodes = data.episodes || rawMovie.episodes || [];
-      const episodes: EpisodeServer[] = Array.isArray(rawEpisodes)
+      let episodes: EpisodeServer[] = Array.isArray(rawEpisodes)
         ? rawEpisodes.map((s: any) => {
             const serverName = s.server_name || s.name || 'Server Vietsub';
             const items = s.server_data || s.items || [];
@@ -1006,6 +1006,17 @@ export const movieApi = {
             };
           })
         : [];
+      // Sort: TM (thuyết minh sạch) > SN (song ngữ) > LT > PD (thường dính watermark/qc)
+      const score = (name: string) => {
+        const n = name.toLowerCase();
+        if (n.includes('tm') || n.includes('thuyet minh')) return 0;
+        if (n.includes('sn') || n.includes('song ngu')) return 1;
+        if (n.includes('lt') || n.includes('long tieng')) return 2;
+        if (n.includes('pd') || n.includes('phu de')) return 3;
+        if (n.includes('vietsub')) return 4;
+        return 5;
+      };
+      episodes = episodes.sort((a,b)=> score(a.server_name) - score(b.server_name));
 
       return {
         status: true,
