@@ -16,12 +16,16 @@ interface Top10CarouselProps {
   movies: Movie[];
   onOpenDetail: (movie: Movie) => void;
   onPlay: (movie: Movie) => void;
+  accentColor?: string;
+  hideTitle?: boolean;
 }
 
 export const Top10Carousel: React.FC<Top10CarouselProps> = ({
   title,
   movies,
   onOpenDetail,
+  accentColor = "#E50914",
+  hideTitle = false,
 }) => {
   const checkIsMobileOrTablet = () => {
     if (typeof window === "undefined") return false;
@@ -337,8 +341,13 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
 
   if (isMobile) {
     return (
-      <div className="bg-black py-8 px-4 sm:px-8 select-none">
-        <h2 className="text-white text-2xl font-bold mb-6">{title}</h2>
+      <div className="py-4 px-2 sm:px-4 select-none">
+        {!hideTitle && (
+          <h2 className="text-white text-xl sm:text-2xl font-bold mb-4 flex items-center gap-2">
+            <span className="w-1.5 h-6 bg-[#E50914] rounded-full inline-block"></span>
+            {title}
+          </h2>
+        )}
         <div className="relative group">
           <div
             ref={rowRef}
@@ -359,8 +368,8 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
                   <span
                     className="text-[12rem] font-black italic text-black select-none"
                     style={{
-                      WebkitTextStroke: "3px #2563EB",
-                      textShadow: "0 0 24px rgba(37,99,235,0.5)",
+                      WebkitTextStroke: `3px ${accentColor}`,
+                      textShadow: `0 0 24px ${accentColor}80`,
                     }}
                   >
                     {index + 1}
@@ -392,11 +401,16 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
   }
 
   return (
-    <div className="bg-black py-8 px-4 sm:px-8 select-none">
-      <h2 className="text-white text-2xl font-bold mb-6">{title}</h2>
+    <div className="py-4 px-2 sm:px-4 select-none">
+      {!hideTitle && (
+        <h2 className="text-white text-xl sm:text-2xl font-bold mb-4 flex items-center gap-2">
+          <span className="w-1.5 h-6 bg-[#E50914] rounded-full inline-block"></span>
+          {title}
+        </h2>
+      )}
       <div className="relative group">
         <button
-          className="absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-blue-600 text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95"
+          className="absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 hover:bg-red-600 text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95"
           onClick={() => handleDesktopScrollBtn("left")}
           aria-label="Cuộn sang trái"
         >
@@ -433,8 +447,9 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
             }
           >
             {loopMovies.map((movie, idx) => {
-              const origIndex = idx % 10;
-              const isMiddleSet = idx >= 10 && idx < 20;
+              const origIndex = idx % (top10Movies.length || 10);
+              const isMiddleSet =
+                idx >= top10Movies.length && idx < top10Movies.length * 2;
               return (
                 <div
                   key={`${movie.slug || "top10"}-${idx}`}
@@ -459,8 +474,8 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
                       className="text-[15rem] leading-none font-black italic text-black select-none"
                       style={
                         {
-                          WebkitTextStroke: "3px #2563EB",
-                          textShadow: "0 0 24px rgba(37,99,235,0.5)",
+                          WebkitTextStroke: `3px ${accentColor}`,
+                          textShadow: `0 0 24px ${accentColor}80`,
                           transform: "translateZ(0)",
                           backfaceVisibility: "hidden",
                           willChange: "transform",

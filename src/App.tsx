@@ -287,6 +287,8 @@ export default function App() {
     horrorList: [],
     sciFiList: [],
     koreanList: [],
+    netflixTop10Movies: [],
+    netflixTop10TV: [],
   });
   const [isLoadingHome, setIsLoadingHome] = useState<boolean>(true);
 
@@ -715,14 +717,22 @@ export default function App() {
   const fetchHomeData = useCallback(async () => {
     setIsLoadingHome(true);
     try {
-      const [newRes, trendingAllRes, topSeriesRes, topSingleRes, theaterRes] =
+      const [newRes, trendingAllRes, topSeriesRes, topSingleRes, theaterRes, netflixTop10Res] =
         await Promise.all([
           movieApi.getNewUpdated(1, 36).catch(() => null),
           movieApi.getTrending(12).catch(() => null),
           movieApi.getTrending(10, "series").catch(() => null),
           movieApi.getTrending(10, "single").catch(() => null),
           movieApi.getTheaterMovies(1, 10).catch(() => null),
+          movieApi.getNetflixTop10VN().catch(() => null),
         ]);
+
+      if (netflixTop10Res?.movies?.length) {
+        setMovieCollection("netflixTop10Movies", netflixTop10Res.movies);
+      }
+      if (netflixTop10Res?.tvShows?.length) {
+        setMovieCollection("netflixTop10TV", netflixTop10Res.tvShows);
+      }
 
       const trendingItems = trendingAllRes?.items || [];
       if (trendingItems.length) {
@@ -1462,6 +1472,8 @@ export default function App() {
     horrorList,
     sciFiList,
     koreanList,
+    netflixTop10Movies,
+    netflixTop10TV,
   } = movieCollections;
 
   if (activeApp === "manga") {
@@ -1758,6 +1770,62 @@ export default function App() {
                       onToggleMyList={handleToggleMyList}
                       isInMyList={isInMyList}
                     />
+
+                    {/* Dedicated Netflix & Chill Zone */}
+                    {(netflixTop10Movies?.length > 0 || netflixTop10TV?.length > 0) && (
+                      <div className="relative my-8 p-4 sm:p-6 sm:pb-8 rounded-3xl bg-gradient-to-r from-[#140204]/90 via-[#0a0a0d] to-[#120005]/95 border border-red-900/40 shadow-[0_0_50px_rgba(229,9,20,0.15)] overflow-hidden">
+                        {/* Ambient Glow Background Accent */}
+                        <div className="absolute top-0 left-1/4 w-96 h-48 bg-red-600/10 rounded-full blur-3xl pointer-events-none" />
+                        
+                        {/* Section Header */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 relative z-10 border-b border-red-900/30 pb-4 px-2">
+                          <div className="flex items-center gap-3">
+                            <img
+                              src="https://occ.a.nflxso.net/dnmt/api/v6/iL4oJVDYZ8KLSrJ6eG2OwtghbfQ/AAAAAWiPHORowsUPy4Ef8HnCO9JXGoNeHRyWtWY4xZAfUtau5iCnG2Ko_-8QuKVa8P6wtpfnyGopi4LoAha-VghVRE_N6kRqhwpLQCpga5tzrlTEHRGHgzpa9PYmEEEgQyuEdhsyq9vmhmPR.svg"
+                              alt="Netflix"
+                              className="h-8 sm:h-10 w-auto object-contain drop-shadow-[0_2px_10px_rgba(229,9,20,0.5)]"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h2 className="text-2xl sm:text-3xl font-black text-white tracking-wide">
+                                  Netflix & Chill
+                                </h2>
+                                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-600/20 text-red-500 border border-red-500/30 flex items-center gap-1">
+                                  <Flame className="w-3.5 h-3.5 fill-red-500 text-red-500" /> TOP 10 VN
+                                </span>
+                              </div>
+                              <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
+                                Cập nhật tự động những bộ phim đang làm mưa làm gió trên Netflix Việt Nam
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 2 Top 10 Carousels */}
+                        <div className="space-y-6 relative z-10">
+                          {netflixTop10Movies && netflixTop10Movies.length > 0 && (
+                            <Top10Carousel
+                              title="Top 10 phim tại Việt Nam hôm nay"
+                              movies={netflixTop10Movies}
+                              onOpenDetail={(m) => openDetailModal(m)}
+                              onPlay={handlePlayMovie}
+                              accentColor="#E50914"
+                            />
+                          )}
+
+                          {netflixTop10TV && netflixTop10TV.length > 0 && (
+                            <Top10Carousel
+                              title="Top 10 series tại Việt Nam hôm nay"
+                              movies={netflixTop10TV}
+                              onOpenDetail={(m) => openDetailModal(m)}
+                              onPlay={handlePlayMovie}
+                              accentColor="#E50914"
+                            />
+                          )}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Categorized Rows */}
                     <div className="space-y-4">
