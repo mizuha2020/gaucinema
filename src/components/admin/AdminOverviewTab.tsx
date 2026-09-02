@@ -93,7 +93,7 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
       const stats = await userAnalyticsService.getAllUserStats();
       setUserStats(stats);
     } catch (e) {
-      console.warn('Failed to load user stats:', e);
+      void 0;
     } finally {
       setIsLoadingStats(false);
     }

@@ -146,7 +146,7 @@ export function parseClearkeyToHexMap(licenseKeyStr: string): Record<string, str
       }
       return result;
     } catch (e) {
-      console.warn('[DRM Parser] JSON parse error:', e);
+      void 0;
     }
   }
 

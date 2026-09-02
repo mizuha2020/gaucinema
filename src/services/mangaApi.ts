@@ -646,7 +646,7 @@ export const mangaApi = {
               }
             }
           } catch (nativeErr) {
-            console.warn('Native TruyenQQ fetch failed, trying proxy/fallback:', nativeErr);
+            void 0;
           }
         }
 
@@ -757,7 +757,7 @@ export const mangaApi = {
             if (items.length > 0) return { items, totalPages };
           }
         } catch (e) {
-          console.warn('OTruyen API error, trying CuuTruyen failover:', e);
+          void 0;
         }
 
         // Failover to CuuTruyen — only if enabled
@@ -821,7 +821,7 @@ export const mangaApi = {
             if (items.length > 0) return { items, totalPages: Math.ceil(total / 24) || 1 };
           }
         } catch (e) {
-          console.warn('MangaDex API network error, trying OTruyen failover:', e);
+          void 0;
         }
 
         // Failover to OTruyen — only if enabled
@@ -857,7 +857,7 @@ export const mangaApi = {
           }));
           if (items.length > 0) return { items, totalPages: 20 };
         } catch (e) {
-          console.warn('CuuTruyen API error, trying OTruyen failover:', e);
+          void 0;
         }
 
         // Failover to OTruyen — only if enabled
@@ -877,7 +877,7 @@ export const mangaApi = {
       }
       return { items: [], totalPages: 1 };
     } catch (err) {
-      console.error('Error fetching manga list for source:', source, err);
+      void 0;
       return { items: [], totalPages: 1 };
     }
   },
@@ -999,7 +999,7 @@ export const mangaApi = {
               }
             }
           } catch (nativeErr) {
-            console.warn('Native TruyenQQ detail fetch failed, trying proxy:', nativeErr);
+            void 0;
           }
         }
 
@@ -1036,7 +1036,7 @@ export const mangaApi = {
             }
           }
         } catch (e) {
-          console.warn('TruyenQQ detail fetch error:', e);
+          void 0;
         }
 
         // C. Direct CORS proxy fallback on Web
@@ -1119,7 +1119,7 @@ export const mangaApi = {
             }
           }
         } catch (e) {
-          console.warn('OTruyen detail fetch error or fallback:', e);
+          void 0;
         }
 
         return {
@@ -1202,7 +1202,7 @@ export const mangaApi = {
             };
           }
         } catch (e) {
-          console.warn('MangaDex detail fetch error:', e);
+          void 0;
         }
 
         return {
@@ -1247,13 +1247,13 @@ export const mangaApi = {
             source: 'cuutruyen'
           };
         } catch (e) {
-          console.warn('CuuTruyen detail fetch error:', e);
+          void 0;
           return null;
         }
       }
       return null;
     } catch (err) {
-      console.error('Error fetching manga detail:', err);
+      void 0;
       return null;
     }
   },
@@ -1276,7 +1276,7 @@ export const mangaApi = {
               }
             }
           } catch (nativeErr) {
-            console.warn('Native TruyenQQ chapter fetch failed, trying proxy:', nativeErr);
+            void 0;
           }
         }
 
@@ -1314,7 +1314,7 @@ export const mangaApi = {
             }
           }
         } catch (e) {
-          console.warn('OTruyen pages fetch error:', e);
+          void 0;
         }
         return [];
       } else if (chapter.source === 'mangadex') {
@@ -1344,7 +1344,7 @@ export const mangaApi = {
             }
           }
         } catch (e) {
-          console.warn('MangaDex chapter pages fetch failed:', e);
+          void 0;
         }
         return [];
       } else if (chapter.source === 'cuutruyen') {
@@ -1353,13 +1353,13 @@ export const mangaApi = {
           const rawPages = data.data?.pages || data.pages || [];
           return rawPages.map((p: any) => getMangaImageUrl(p.image_url || p.url || p.src || p));
         } catch (e) {
-          console.warn('CuuTruyen chapter pages fetch failed:', e);
+          void 0;
           return [];
         }
       }
       return [];
     } catch (err) {
-      console.error('Error fetching chapter pages:', err);
+      void 0;
       return [];
     }
   }

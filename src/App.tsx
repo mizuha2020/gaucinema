@@ -101,7 +101,7 @@ export default function App() {
         return savedApp as ActiveApp;
       }
     } catch (e) {
-      console.error("Failed to read activeApp from localStorage:", e);
+      void 0;
     }
     return "cinema";
   });
@@ -112,7 +112,7 @@ export default function App() {
     try {
       localStorage.setItem("gau_active_app", activeApp);
     } catch (e) {
-      console.error("Failed to save activeApp to localStorage:", e);
+      void 0;
     }
   }, [activeApp]);
 
@@ -252,7 +252,7 @@ export default function App() {
         return savedTab as NavTab;
       }
     } catch (e) {
-      console.error("Failed to read activeTab from localStorage:", e);
+      void 0;
     }
     return "home";
   });
@@ -261,7 +261,7 @@ export default function App() {
     try {
       localStorage.setItem("gau_active_tab", activeTab);
     } catch (e) {
-      console.error("Failed to save activeTab to localStorage:", e);
+      void 0;
     }
   }, [activeTab]);
 
@@ -311,7 +311,7 @@ export default function App() {
         window.close();
       }
     } catch (e) {
-      console.error("Exit app error:", e);
+      void 0;
     }
   };
 
@@ -399,7 +399,7 @@ export default function App() {
   // Bootstrap admin on initial start
   useEffect(() => {
     authService.bootstrapAdminAccount().catch((err) => {
-      console.warn("Firebase bootstrap admin notice:", err);
+      void 0;
     });
   }, []);
 
@@ -426,7 +426,7 @@ export default function App() {
         setShowProfileSelector(true);
       }
     } catch (e) {
-      console.error("Error loading account profiles", e);
+      void 0;
     } finally {
       setIsLoadingProfiles(false);
     }
@@ -458,7 +458,7 @@ export default function App() {
       setMyList(list);
       setWatchHistory(history);
     } catch (e) {
-      console.error("Error fetching profile data", e);
+      void 0;
     }
   }, [currentAccount, activeProfile]);
 
@@ -820,7 +820,7 @@ export default function App() {
       if (koreanRes.status === "fulfilled" && koreanRes.value.items?.length)
         setMovieCollection("koreanList", koreanRes.value.items);
     } catch (e) {
-      console.error("Failed to load initial movie data", e);
+      void 0;
     } finally {
       setIsLoadingHome(false);
     }
@@ -1260,7 +1260,7 @@ export default function App() {
         openDetailModal(movieData || movie);
       }
     } catch (err: any) {
-      console.error("Error starting movie playback", err);
+      void 0;
       showToast(
         `Không thể tải phim: ${err?.message || "Vui lòng thử lại sau"}`,
       );
@@ -1314,7 +1314,7 @@ export default function App() {
         }
       }
     } catch (e) {
-      console.error("Error resuming history item", e);
+      void 0;
       handlePlaySlug(item.movieSlug);
     }
   };
@@ -1324,7 +1324,7 @@ export default function App() {
       const detail = await movieApi.getMovieDetail(slug);
       handlePlayMovie(detail.movie);
     } catch (e) {
-      console.error("Failed to play slug", slug, e);
+      void 0;
     }
   };
 

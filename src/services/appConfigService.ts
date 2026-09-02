@@ -24,7 +24,7 @@ class AppConfigService {
 
     try {
       if (!rtdb) {
-        console.error('[appConfigService] rtdb is undefined — Firebase RTDB not initialized');
+        void 0;
         return;
       }
 
@@ -42,13 +42,13 @@ class AppConfigService {
           this.notify();
         },
         (error: Error) => {
-          console.error('[appConfigService] RTDB onValue error:', error?.message);
+          void 0;
           this.currentConfig = { ...DEFAULT_CONFIG };
           this.notify();
         }
       );
     } catch (e) {
-      console.error('[appConfigService] Failed to connect to RTDB:', e);
+      void 0;
       this.currentConfig = { ...DEFAULT_CONFIG };
       this.notify();
     }
@@ -59,7 +59,7 @@ class AppConfigService {
       try {
         listener({ ...this.currentConfig });
       } catch (e) {
-        console.error('[appConfigService] Listener error:', e);
+        void 0;
       }
     }
   }

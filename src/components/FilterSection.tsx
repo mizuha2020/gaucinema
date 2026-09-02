@@ -198,7 +198,7 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
           setPagination(res.pagination);
         }
       } catch (err: any) {
-        console.error('Filter fetch error', err);
+        void 0;
         if (isMounted) {
           setError('Không thể tải danh sách phim từ nguồn đã chọn. Vui lòng thử đổi nguồn API khác.');
         }

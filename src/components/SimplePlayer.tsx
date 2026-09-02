@@ -403,7 +403,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
         pipWin.document.body.style.backgroundColor = 'black';
         return;
       } catch (e) {
-        console.warn('[DocPiP] failed:', e);
+        void 0;
       }
     }
 
@@ -434,7 +434,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
         pipWin.document.body.style.backgroundColor = 'black';
       }
     } catch (err) {
-      console.warn('[SimplePlayer] Lỗi chuyển đổi PiP:', err);
+      void 0;
       // Fallback for iOS WebKit Presentation Mode
       if ((video as any).webkitSetPresentationMode && typeof (video as any).webkitSetPresentationMode === 'function') {
         try {
@@ -547,7 +547,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
                 (video as any).webkitSetPresentationMode('picture-in-picture');
               }
             } catch (e) {
-              console.warn('[Auto-PiP] Notice:', e);
+              void 0;
             }
           }
         }
@@ -598,7 +598,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
           togglePip();
         });
       } catch (e) {
-        console.warn('[MediaSession] Warning:', e);
+        void 0;
       }
     }
   }, [movie, currentEpisode, currentServer, skip, togglePip, isPlaying]);

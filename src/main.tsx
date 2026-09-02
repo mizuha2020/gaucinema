@@ -35,7 +35,7 @@ if (rootElement) {
       </StrictMode>
     );
   } catch (e: any) {
-    console.error('Fatal render error:', e);
+    void 0;
     const safeMsg = (e?.message || 'Lỗi khởi tạo hệ thống')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')

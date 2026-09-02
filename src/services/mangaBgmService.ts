@@ -115,7 +115,7 @@ class MangaBgmManager {
       try {
         fn(state);
       } catch (err) {
-        console.error('BGM listener error', err);
+        void 0;
       }
     });
   }
@@ -246,7 +246,7 @@ class MangaBgmManager {
         },
       };
     } catch (e) {
-      console.warn('Synth fallback failed', e);
+      void 0;
     }
   }
 
@@ -287,7 +287,7 @@ class MangaBgmManager {
     } catch (err: any) {
       // If audio file doesn't exist yet or autoplay was blocked / failed,
       // start smooth procedural synthesizer fallback gracefully.
-      console.log('Audio file not found or blocked, using pleasant ambient generator fallback:', err?.message);
+      void 0;
       this.startSynthFallback(track.id);
       this.isPlaying = true;
       this.isLoading = false;

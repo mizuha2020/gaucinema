@@ -52,7 +52,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         return saved as 'overview' | 'apis' | 'notifications' | 'accounts' | 'avatars' | 'ecosystem';
       }
     } catch (e) {
-      console.error('Failed to read admin active tab from localStorage:', e);
+      void 0;
     }
     return 'overview';
   });
@@ -67,7 +67,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     try {
       localStorage.setItem('gau_admin_active_tab', activeTab);
     } catch (e) {
-      console.error('Failed to save admin active tab to localStorage:', e);
+      void 0;
     }
   }, [activeTab]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -123,7 +123,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setAccounts(accs);
       setCustomAvatars(avs);
     } catch (e) {
-      console.error('Error loading admin data', e);
+      void 0;
     } finally {
       setIsLoading(false);
     }

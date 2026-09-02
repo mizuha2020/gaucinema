@@ -47,7 +47,7 @@ function getLocalProfilesCache(accountId: string): UserProfile[] | null {
       }
     }
   } catch (e) {
-    console.warn('Error reading profiles cache', e);
+    void 0;
   }
   return null;
 }
@@ -56,7 +56,7 @@ function saveLocalProfilesCache(accountId: string, profiles: UserProfile[]): voi
   try {
     localStorage.setItem(`${PROFILES_CACHE_PREFIX}${accountId}`, JSON.stringify(profiles));
   } catch (e) {
-    console.warn('Error saving profiles cache', e);
+    void 0;
   }
 }
 
@@ -112,7 +112,7 @@ export const firestoreStorage = {
       saveLocalProfilesCache(accountId, newProfiles);
       return newProfiles;
     } catch (e) {
-      console.warn('getProfiles warning:', e);
+      void 0;
       if (cached && cached.length > 0) {
         return cached;
       }
@@ -216,7 +216,7 @@ export const firestoreStorage = {
     try {
       localStorage.setItem(`${ACTIVE_PROFILE_KEY}_${accountId}`, profileId);
     } catch (e) {
-      console.error('Error setting active profile id', e);
+      void 0;
     }
   },
 
@@ -224,7 +224,7 @@ export const firestoreStorage = {
     try {
       localStorage.removeItem(`${ACTIVE_PROFILE_KEY}_${accountId}`);
     } catch (e) {
-      console.error('Error clearing active profile id', e);
+      void 0;
     }
   },
 
@@ -886,7 +886,7 @@ export const firestoreStorage = {
       );
       return unsubscribe;
     } catch (e) {
-      console.error('Error subscribing to notifications:', e);
+      void 0;
       return () => {};
     }
   },

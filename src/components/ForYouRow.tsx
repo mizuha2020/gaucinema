@@ -181,7 +181,7 @@ export const ForYouRow: React.FC<ForYouRowProps> = ({
           setIsLoading(false);
         }
       } catch (err) {
-        console.error('Failed to build "Dành riêng cho bạn" recommendations', err);
+        void 0;
         if (isMounted) {
           // Fallback
           const fallbackRes = await movieApi.getNewUpdated(1, 16).catch(() => ({ items: [] }));

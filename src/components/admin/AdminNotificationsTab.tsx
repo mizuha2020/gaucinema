@@ -57,7 +57,7 @@ export const AdminNotificationsTab: React.FC<AdminNotificationsTabProps> = ({
       setNotifications(notifs);
       setAccounts(accs);
     } catch (e) {
-      console.error('Error loading notification data', e);
+      void 0;
     } finally {
       setIsLoading(false);
     }

@@ -67,7 +67,7 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = ({
       localStorage.setItem('gau_api_smart_fallback', enabled ? 'true' : 'false');
       onShowToast(enabled ? 'Đã kích hoạt chế độ Tự Động Dự Phòng (Smart Fallback)' : 'Đã tắt chế độ Tự Động Dự Phòng');
     } catch (e) {
-      console.error(e);
+      void 0;
     }
   };
 

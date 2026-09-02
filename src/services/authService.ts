@@ -105,7 +105,7 @@ export const authService = {
         }
       }
     } catch (e) {
-      console.warn('Admin account check warning:', e);
+      void 0;
     }
 
     const adminAccount: Account = fallbackAdmin;
@@ -128,7 +128,7 @@ export const authService = {
         await setDoc(primaryProfileRef, sanitizeData(primaryProfile), { merge: true }).catch(() => {});
       }
     } catch (e) {
-      console.warn('Admin bootstrap save warning:', e);
+      void 0;
     }
 
     const locals = getLocalAccounts();
@@ -155,7 +155,7 @@ export const authService = {
       if (!isFirestoreQuotaExhausted()) {
         // Fetch account with 4.5s timeout
         const snap = await withTimeout(getDoc(accountRef), 4500).catch((e) => {
-          console.warn('Account getDoc timeout/warning:', e);
+          void 0;
           return null;
         });
 
@@ -207,7 +207,7 @@ export const authService = {
         updateDoc(targetDocRef, {
           password: hashedInput,
           updatedAt: Date.now(),
-        }).catch((err) => console.warn('Background auto-hash password error:', err));
+        }).catch((err) => void 0);
         acc.password = hashedInput;
       }
 
@@ -227,7 +227,7 @@ export const authService = {
       ) {
         throw err;
       }
-      console.error('Login error:', err);
+      void 0;
       throw new Error(err.message || 'Không thể đăng nhập. Vui lòng kiểm tra lại mật khẩu hoặc kết nối mạng.');
     }
   },
@@ -237,7 +237,7 @@ export const authService = {
     try {
       localStorage.setItem(SESSION_ACCOUNT_KEY, JSON.stringify(account));
     } catch (e) {
-      console.error('Error saving session account', e);
+      void 0;
     }
   },
 
@@ -253,7 +253,7 @@ export const authService = {
         }
       }
     } catch (e) {
-      console.error('Error reading session account', e);
+      void 0;
       try {
         localStorage.removeItem(SESSION_ACCOUNT_KEY);
       } catch {}
@@ -266,7 +266,7 @@ export const authService = {
       localStorage.removeItem(SESSION_ACCOUNT_KEY);
       localStorage.removeItem(SESSION_PROFILE_KEY);
     } catch (e) {
-      console.error('Error on logout', e);
+      void 0;
     }
   },
 
@@ -305,7 +305,7 @@ export const authService = {
       setLocalAccounts(accounts);
       return accounts.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     } catch (err) {
-      console.warn('getAllAccounts error:', err);
+      void 0;
       return local;
     }
   },
@@ -370,7 +370,7 @@ export const authService = {
       if (err.message && (err.message.includes('tồn tại') || err.message.includes('ký tự'))) {
         throw err;
       }
-      console.error('createAccount error:', err);
+      void 0;
       return newAccount;
     }
   },
@@ -408,7 +408,7 @@ export const authService = {
     try {
       await setDoc(accountRef, sanitizeData(sanitizedUpdates), { merge: true });
     } catch (err) {
-      console.error('updateAccount error:', err);
+      void 0;
     }
   },
 
@@ -434,7 +434,7 @@ export const authService = {
       }
       await deleteDoc(accountRef);
     } catch (err) {
-      console.error('deleteAccount error:', err);
+      void 0;
     }
   },
 };

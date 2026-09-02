@@ -181,7 +181,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
           }
         }
       } catch (err: any) {
-        console.error('Failed to load movie detail', err);
+        void 0;
         if (isMounted) {
           setError(err.message || 'Không thể tải thông tin chi tiết phim');
           setFullMovieData(movie);

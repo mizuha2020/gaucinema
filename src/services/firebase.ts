@@ -15,14 +15,14 @@ try {
   authInstance = getAuth(app);
   rtdbInstance = getDatabase(app);
 } catch (e) {
-  console.error('Firebase initialization error, falling back:', e);
+  void 0;
   try {
     app = initializeApp(firebaseConfig);
     dbInstance = getFirestore(app);
     authInstance = getAuth(app);
     rtdbInstance = getDatabase(app);
   } catch (e2) {
-    console.error('Firebase fallback initialization failed:', e2);
+    void 0;
   }
 }
 
@@ -87,7 +87,7 @@ export function markFirestoreQuotaExhausted(): void {
         sessionStorage.setItem(QUOTA_EXHAUSTED_KEY, String(Date.now()));
       }
     } catch {}
-    console.warn('Firestore write quota limit reached (resource-exhausted). Switching to local persistence fallback.');
+    void 0;
   }
 }
 
@@ -97,7 +97,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
   if (errCode === 'resource-exhausted' || errMessage.includes('Quota limit exceeded') || errMessage.includes('resource-exhausted')) {
     markFirestoreQuotaExhausted();
-    console.warn(`Firestore Quota Exceeded on ${operationType} ${path || ''}. Operation skipped.`);
+    void 0;
     return;
   }
 
@@ -118,7 +118,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path,
   };
-  console.warn('Firestore Warning: ', JSON.stringify(errInfo));
+  void 0;
 }
 
 // Sanitize objects by stripping undefined fields to prevent Firestore unsupported field value errors

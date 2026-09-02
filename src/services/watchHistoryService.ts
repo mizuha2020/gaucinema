@@ -146,7 +146,7 @@ class WatchHistoryService {
         total,
       };
     } catch (e) {
-      console.warn('Failed to fetch paginated history:', e);
+      void 0;
       // Fallback: try without complex query
       try {
         const simpleQuery = query(
@@ -253,7 +253,7 @@ class WatchHistoryService {
 
       return snapshot.docs.map((doc) => doc.data() as UserActivityItem);
     } catch (e) {
-      console.warn('Failed to get user history (compound query), trying fallback:', e);
+      void 0;
       // Fallback: Firestore requires a composite index for where('accountId') + orderBy.
       // If that index is missing, fetch by lastWatchedAt and filter client-side.
       try {

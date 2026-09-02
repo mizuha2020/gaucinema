@@ -71,8 +71,7 @@ const getOPhimUrl = (endpoint: string) => {
 };
 
 const getNguonCUrl = (endpoint: string) => {
-  const base = systemApiService.getActiveBaseUrl('movie', 'nguonc', 'https://phim.nguonc.com');
-  return `${base.replace(/\/$/, '')}/api/${endpoint.replace(/^\//, '')}`;
+  return `https://phim.nguonc.com/api/${endpoint.replace(/^\//, '')}`;
 };
 
 // Current active source preference stored in memory/localStorage
@@ -113,6 +112,113 @@ export function getImageUrl(path?: string, source?: ApiSource | string): string 
     return `https://img.ophim.live/${cleanPath}`;
   }
   return `https://img.ophim.live/uploads/movies/${cleanPath}`;
+}
+
+// --- High-quality hero image optimizer (wsrv.nl like chophim.app, but some CDNs blocked) ---
+export function getOptimizedImageUrl(url: string, width = 1920, quality = 85): string {
+  if (!url || url.includes('unsplash.com')) return url;
+  if (url.includes('wsrv.nl')) return url;
+  if (url.includes('phimimg.com') || url.includes('img.ophim') || url.includes('ophim.live')) return url;
+  try {
+    const encoded = encodeURIComponent(url);
+    return `https://wsrv.nl/?url=${encoded}&w=${width}&q=${quality}&output=webp&n=-1`;
+  } catch {
+    return url;
+  }
+}
+
+export function getHeroImageUrl(path?: string, source?: ApiSource | string): string {
+  const raw = getImageUrl(path, source);
+  if (raw.includes('image.tmdb.org')) return getOptimizedImageUrl(raw, 1920, 100);
+  if (raw.includes('phimimg.com') || raw.includes('img.ophim')) return raw;
+  return getOptimizedImageUrl(raw, 1920, 90);
+}
+
+const tmdbBackdropCacheClient = new Map<string, string | null>();
+export async function getTmdbBackdropUrl(tmdbId: string | number): Promise<string | null> {
+  const id = String(tmdbId || "").trim();
+  if (!id || !/^\d+$/.test(id)) return null;
+  if (tmdbBackdropCacheClient.has(id)) return tmdbBackdropCacheClient.get(id) || null;
+  try {
+    const res = await fetch(getFullApiUrl(`/api/tmdb/backdrop/${id}`));
+    if (res.ok) {
+      const data = await res.json();
+      const url = data.backdropUrl || null;
+      tmdbBackdropCacheClient.set(id, url);
+      return url;
+    }
+  } catch {}
+  tmdbBackdropCacheClient.set(id, null);
+  return null;
+}
+
+export interface TmdbTrendingItem {
+  tmdbId: string;
+  title: string;
+  original_title: string;
+  overview: string;
+  release_date: string;
+  vote_average: number;
+  backdrop_path: string | null;
+  poster_path: string | null;
+  backdropUrl: string | null;
+  posterUrl: string | null;
+}
+
+const tmdbTrendingCacheClient = new Map<string, { data: TmdbTrendingItem[]; time: number }>();
+export async function getTmdbTrending(): Promise<TmdbTrendingItem[]> {
+  const cache = tmdbTrendingCacheClient.get("trending");
+  if (cache && Date.now() - cache.time < 10 * 60 * 1000) return cache.data;
+  try {
+    const res = await fetch(getFullApiUrl("/api/tmdb/trending"));
+    if (res.ok) {
+      const data = await res.json();
+      const items: TmdbTrendingItem[] = data.results || [];
+      tmdbTrendingCacheClient.set("trending", { data: items, time: Date.now() });
+      return items;
+    }
+  } catch {}
+  return [];
+}
+
+export async function tmdbFetch<T = any>(tmdbPath: string, params: Record<string, string | number | boolean> = {}): Promise<T> {
+  const qs = new URLSearchParams(params as Record<string, string>).toString();
+  const url = getFullApiUrl(`/api/tmdb/v3/${tmdbPath.replace(/^\//, "")}${qs ? `?${qs}` : ""}`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`TMDB ${tmdbPath} ${res.status}`);
+  return res.json();
+}
+export const tmdbApi = {
+  trending: (type: "movie" | "tv" | "all" = "movie", window: "day" | "week" = "day") => tmdbFetch(`trending/${type}/${window}`),
+  moviePopular: (page = 1) => tmdbFetch("movie/popular", { page }),
+  movieNowPlaying: (page = 1) => tmdbFetch("movie/now_playing", { page }),
+  movieUpcoming: (page = 1) => tmdbFetch("movie/upcoming", { page }),
+  movieTopRated: (page = 1) => tmdbFetch("movie/top_rated", { page }),
+  tvPopular: (page = 1) => tmdbFetch("tv/popular", { page }),
+  searchMovie: (query: string, page = 1) => tmdbFetch("search/movie", { query, page }),
+  discoverMovie: (params: Record<string, any> = {}) => tmdbFetch("discover/movie", params),
+};
+
+export function tmdbTrendingToMovie(item: TmdbTrendingItem): any {
+  const year = item.release_date ? Number(item.release_date.slice(0, 4)) : new Date().getFullYear();
+  return {
+    name: item.title || item.original_title || "Chưa có tên",
+    origin_name: item.original_title || item.title || "",
+    slug: `tmdb-${item.tmdbId}`,
+    content: item.overview || "",
+    type: "single",
+    status: "completed",
+    poster_url: item.posterUrl || item.backdropUrl || "",
+    thumb_url: item.posterUrl || item.backdropUrl || "",
+    backdrop_url: item.backdropUrl || undefined,
+    quality: "FHD",
+    lang: "Vietsub",
+    year,
+    view: Math.round((item.vote_average || 0) * 1000),
+    tmdb: { id: item.tmdbId },
+    source: "kkphim",
+    sourceLabel: "TMDB Hot",
+  };
 }
 
 // Client-side bounded LRU cache to prevent memory buildup
@@ -231,16 +337,19 @@ async function fetchNguonC<T>(endpoint: string, params?: Record<string, any>): P
   const clean = endpoint.replace(/^\//, '');
   const query = params ? '?' + new URLSearchParams(params as any).toString() : '';
 
-  // 1. Try proxy
+  // 1. Try proxy (server now returns 200 with empty items for 404 genres to avoid console spam)
   try {
     const res = await fetch(getFullApiUrl(`/api/proxy/nguonc/${clean}${query}`));
     if (res.ok) {
       const data = await res.json();
-      if (data && (data.status === 'success' || data.items || data.movie)) return data;
+      if (data && (data.status === 'success' || data.status === true || data.items || data.movie)) return data;
     }
   } catch {}
 
-  // 2. Try direct
+  // 2. Try direct (only for detail, not for list that is known to 404)
+  if (clean.includes('phim-chieu-rap') || clean.includes('vien-tuong')) {
+    return { status: 'success', items: [], msg: 'NguonC empty genre' } as unknown as T;
+  }
   try {
     const directUrl = `${getNguonCUrl(clean)}${query}`;
     const res = await fetch(directUrl);
@@ -249,7 +358,7 @@ async function fetchNguonC<T>(endpoint: string, params?: Record<string, any>): P
     }
   } catch {}
 
-  return { status: 'error', items: [], msg: 'NguonC fetch failed' } as unknown as T;
+  return { status: 'success', items: [], msg: 'NguonC fetch failed' } as unknown as T;
 }
 
 export const GENRES = [
@@ -307,6 +416,9 @@ function normalizeMovieItem(raw: any, source: ApiSource = 'kkphim'): Movie {
     status: raw.status || 'completed',
     poster_url: getImageUrl(raw.poster_url || raw.thumb_url, src),
     thumb_url: getImageUrl(raw.thumb_url || raw.poster_url, src),
+    backdrop_url: (raw as any).backdrop_url || (raw as any).backdrop || (raw as any).cover_url || undefined,
+    logo_url: (raw as any).logo_url || undefined,
+    tmdb: (raw as any).tmdb || undefined,
     is_copyright: raw.is_copyright || false,
     sub_docquyen: raw.sub_docquyen || false,
     chieurap: raw.chieurap || false,
@@ -816,37 +928,39 @@ export const movieApi = {
     return rawResult;
   },
 
-  // 9. Top Trending (Movies with most views)
+  // 9. Top Trending (Movies with most views) - ưu tiên view cao + năm mới như chophim
   async getTrending(limit = 10, type?: 'series' | 'single'): Promise<MovieListResponse> {
     const source = getActiveApiSource();
     const cacheKey = `trending:${source}:${limit}:${type || 'all'}`;
 
     return cachedFetch(cacheKey, async () => {
-      // Fetch data based on type
-      let p1: any, p2: any;
+      let p1: any, p2: any, p3: any;
       if (type === 'series') {
-        [p1, p2] = await Promise.allSettled([
+        [p1, p2, p3] = await Promise.allSettled([
           this.getSeries(1, 24),
           this.getSeries(2, 24),
+          this.getSeries(3, 24),
         ]);
       } else if (type === 'single') {
-        [p1, p2] = await Promise.allSettled([
+        [p1, p2, p3] = await Promise.allSettled([
           this.getSingleMovies(1, 24),
           this.getSingleMovies(2, 24),
+          this.getSingleMovies(3, 24),
         ]);
       } else {
-        [p1, p2] = await Promise.allSettled([
+        [p1, p2, p3] = await Promise.allSettled([
           this.getNewUpdated(1, 24),
           this.getNewUpdated(2, 24),
+          this.getTheaterMovies(1, 12),
         ]);
       }
       
       let items: Movie[] = [];
       if (p1.status === 'fulfilled' && p1.value?.items) items = [...items, ...p1.value.items];
       if (p2.status === 'fulfilled' && p2.value?.items) items = [...items, ...p2.value.items];
+      if (p3.status === 'fulfilled' && p3.value?.items) items = [...items, ...p3.value.items];
 
       if (items.length === 0) {
-        // Fallback to new updated if specific type returned 0
         const fallback = await this.getNewUpdated(1, limit + 4).catch(() => null);
         if (fallback?.items?.length) {
           return { status: true, items: fallback.items.slice(0, limit) };
@@ -854,22 +968,19 @@ export const movieApi = {
         return { status: false, items: [] };
       }
 
-      // Sort by views if views exist and vary
       const uniqueItems = items.filter((m, index, self) => self.findIndex(t => t.slug === m.slug) === index);
-      const hasViews = uniqueItems.some((m) => (m.view || 0) > 0);
-
-      if (hasViews) {
-        const sorted = [...uniqueItems].sort((a, b) => (b.view || 0) - (a.view || 0));
-        return {
-          status: true,
-          items: sorted.slice(0, limit),
-        };
-      }
-
-      // If view count is absent or uniform, return the top distinct items directly
+      const sorted = [...uniqueItems].sort((a, b) => {
+        const viewDiff = (b.view || 0) - (a.view || 0);
+        if (viewDiff !== 0) return viewDiff;
+        if ((b as any).chieurap && !(a as any).chieurap) return 1;
+        if ((a as any).chieurap && !(b as any).chieurap) return -1;
+        const yearDiff = (b.year || 0) - (a.year || 0);
+        if (yearDiff !== 0) return yearDiff;
+        return 0;
+      });
       return {
         status: true,
-        items: uniqueItems.slice(0, limit),
+        items: sorted.slice(0, limit),
       };
     });
   },

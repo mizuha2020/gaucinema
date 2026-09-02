@@ -21,6 +21,7 @@
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
+    "cloudscraper": "^4.6.0",
     "cors": "^2.8.6",
     "dashjs": "^5.2.1",
     "dompurify": "^3.4.14",

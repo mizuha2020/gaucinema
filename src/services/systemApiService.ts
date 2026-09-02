@@ -216,7 +216,7 @@ class SystemApiService {
         window.dispatchEvent(new CustomEvent('qtb_system_apis_changed', { detail: apis }));
       }
     } catch (e) {
-      console.warn('Failed to cache system APIs locally', e);
+      void 0;
     }
   }
 
@@ -255,7 +255,7 @@ class SystemApiService {
       }
 
       // If empty, seed initial defaults to Firestore
-      console.log('Seeding initial system APIs into Firestore...');
+      void 0;
       for (const api of DEFAULT_SYSTEM_APIS) {
         const docRef = doc(db, 'system_apis', api.id);
         await setDoc(docRef, sanitizeData(api)).catch(() => {});
@@ -265,7 +265,7 @@ class SystemApiService {
       this.isInitialized = true;
       return DEFAULT_SYSTEM_APIS;
     } catch (err) {
-      console.warn('getAllApis Firestore fallback:', err);
+      void 0;
       this.loadFromLocalStorage();
       return this.inMemoryApis.length > 0 ? this.inMemoryApis : DEFAULT_SYSTEM_APIS;
     }
@@ -449,7 +449,7 @@ class SystemApiService {
         };
       }
     } catch (e) {
-      console.warn('Backend ping failed, attempting direct fetch...', e);
+      void 0;
     }
 
     // Direct browser fetch fallback
@@ -503,7 +503,7 @@ class SystemApiService {
       const updated = current.map((a) => (a.id === api.id ? updatedApi : a));
       this.saveToLocalStorage(updated);
     } catch (e) {
-      console.warn('Failed to save ping status to Firestore', e);
+      void 0;
     }
 
     return updatedApi;

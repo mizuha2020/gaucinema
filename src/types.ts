@@ -49,6 +49,9 @@ export interface Movie {
   status?: string;
   poster_url: string;
   thumb_url: string;
+  backdrop_url?: string;
+  logo_url?: string;
+  tmdb?: { id?: string; type?: string; season?: any; vote_average?: number; vote_count?: number };
   is_copyright?: boolean;
   sub_docquyen?: boolean;
   chieurap?: boolean;

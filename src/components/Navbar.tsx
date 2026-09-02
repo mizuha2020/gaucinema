@@ -209,7 +209,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         const res = await movieApi.search(searchQuery, 1, 6);
         setSearchResults(res.items || []);
       } catch (err) {
-        console.error('Quick search error', err);
+        void 0;
       } finally {
         setIsSearching(false);
       }

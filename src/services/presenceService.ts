@@ -246,7 +246,7 @@ class PresenceService {
         callback(activeSessions.sort((a, b) => b.lastHeartbeat - a.lastHeartbeat));
       },
       (error) => {
-        console.warn('Failed to subscribe to sessions:', error);
+        void 0;
       }
     );
 

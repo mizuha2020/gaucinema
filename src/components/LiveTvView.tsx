@@ -212,7 +212,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                 (video as any).webkitSetPresentationMode('picture-in-picture');
               }
             } catch (e) {
-              console.warn('[Auto-PiP LiveTV] Warning:', e);
+              void 0;
             }
           }
         }
@@ -234,7 +234,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     try {
       shaka.polyfill.installAll();
     } catch (e) {
-      console.warn('Shaka polyfill notice:', e);
+      void 0;
     }
   }, []);
 
@@ -363,7 +363,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
             }
           }
         } catch (e) {
-          console.warn('Native direct fetch failed, trying backend proxy...', e);
+          void 0;
         }
       }
 
@@ -386,7 +386,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
             }
           }
         } catch (e) {
-          console.warn('Backend /api/tv/channels fetch failed, attempting client-side fallback...', e);
+          void 0;
         }
       }
 
@@ -405,7 +405,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
             }
           }
         } catch (e) {
-          console.warn('Direct client-side fetch fallback failed:', e);
+          void 0;
         }
       }
 
@@ -426,7 +426,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         }
       }
     } catch (err: any) {
-      console.warn('Error loading TV channels:', err);
+      void 0;
       setChannels(DEFAULT_CHANNELS);
     } finally {
       setLoading(false);
@@ -474,7 +474,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
               setIsPlaying(false);
               return;
             }
-            console.warn('Playback interrupted:', err?.message || err);
+            void 0;
             setIsPlaying(false);
           });
       }
@@ -521,7 +521,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
     if (isMpd) {
       // ===== 1. NATIVE EXOPLAYER FOR ANDROID APK OR SHAKA PLAYER FOR WEB =====
       if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
-        console.log('[LiveTvView] Auto-launching Native ExoPlayer for MPD/DRM channel...');
+        void 0;
         setIsLoadingStream(false);
         playInNativeExoPlayer({
           url: activeChannel.url,
@@ -651,7 +651,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
                   }
                 }
               } catch (e) {
-                console.warn('[Shaka] ClearKey JWK sanitization error:', e);
+                void 0;
               }
               return;
             }
@@ -670,7 +670,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         // Shaka Player error listeners
         player.addEventListener('error', (event: any) => {
           const err = event.detail;
-          console.warn('Shaka Player error:', err);
+          void 0;
           let errText = 'Lỗi phát luồng MPD.';
           if (err?.code === 1001) {
             const httpStatus = err.data && err.data[1] ? ` (Mã HTTP ${err.data[1]})` : '';
@@ -698,7 +698,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
             safePlay(video);
           })
           .catch((loadErr) => {
-            console.warn('Shaka load error:', loadErr);
+            void 0;
             let loadMsg = 'Không thể tải luồng MPD';
             if (loadErr?.code === 1001) {
               const httpStatus = loadErr.data && loadErr.data[1] ? ` (Mã HTTP ${loadErr.data[1]})` : '';
@@ -740,7 +740,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
 
         hls.on(Hls.Events.ERROR, (event, data) => {
           if (data.fatal) {
-            console.warn('HLS TS error, falling back to direct video element:', data);
+            void 0;
             try {
               hls.destroy();
             } catch (e) {}
@@ -780,7 +780,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
 
         hls.on(Hls.Events.ERROR, (event, data) => {
           if (data.fatal) {
-            console.warn('HLS fatal error:', data);
+            void 0;
             if (!isProxyAttempt) {
               isProxyAttempt = true;
               const targetUA = activeChannel.userAgent || 'Dalvik/2.1.0';
@@ -943,7 +943,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
         (video as any).webkitSetPresentationMode(currentMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
       }
     } catch (e) {
-      console.warn('[LiveTV PiP] Warning:', e);
+      void 0;
       if (video && (video as any).webkitSetPresentationMode && typeof (video as any).webkitSetPresentationMode === 'function') {
         try {
           const currentMode = (video as any).webkitPresentationMode;
@@ -1006,7 +1006,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({ currentAccount }) => {
           togglePip();
         });
       } catch (e) {
-        console.warn('[LiveTV MediaSession] Warning:', e);
+        void 0;
       }
     }
   }, [activeChannel, currentSourceObj]);

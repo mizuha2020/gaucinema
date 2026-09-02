@@ -96,7 +96,7 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
       const items = await watchHistoryService.getUserHistory(userStat.accountId, 100);
       setActivities(items);
     } catch (e) {
-      console.warn('Failed to load user activities:', e);
+      void 0;
     } finally {
       setIsLoading(false);
     }

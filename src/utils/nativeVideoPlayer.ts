@@ -24,7 +24,7 @@ export async function enterNativePip(): Promise<boolean> {
       await NativeVideoPlayer.enterPip();
       return true;
     } catch (err) {
-      console.warn('[NativeVideoPlayer] Failed to enter native PiP:', err);
+      void 0;
       return false;
     }
   }
@@ -36,7 +36,7 @@ export async function setNativeVideoPlaying(playing: boolean): Promise<void> {
     try {
       await NativeVideoPlayer.setVideoPlaying({ playing });
     } catch (err) {
-      console.warn('[NativeVideoPlayer] Failed to set video playing flag:', err);
+      void 0;
     }
   }
 }
@@ -69,7 +69,7 @@ export async function playInNativeExoPlayer(options: {
       });
       return true;
     } catch (err) {
-      console.error('[NativeVideoPlayer] Failed to launch ExoPlayer:', err);
+      void 0;
       alert('Lỗi khởi chạy ExoPlayer Native: ' + (err as Error).message);
       return false;
     }
@@ -89,7 +89,7 @@ export async function playInExternalPlayer(options: {
       });
       return true;
     } catch (err) {
-      console.error('[NativeVideoPlayer] Failed to launch External Player:', err);
+      void 0;
       alert('Lỗi mở ứng dụng ngoài: ' + (err as Error).message);
       return false;
     }

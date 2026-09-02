@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import dns from "node:dns";
@@ -65,6 +66,8 @@ class LRUCache<K, V> {
 const proxyCache = new LRUCache<string, { data: any; timestamp: number }>(500);
 const imageMemoryCache = new LRUCache<string, { buffer: Buffer; contentType: string }>(400);
 const CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes cache
+const tmdbBackdropCache = new LRUCache<string, { url: string | null; timestamp: number }>(500);
+const TMDB_TTL_MS = 24 * 60 * 60 * 1000; // 24h for TMDB images
 
 async function fetchWithTimeout(url: string, timeoutMs = 12000): Promise<any> {
   const controller = new AbortController();
@@ -113,6 +116,148 @@ async function startServer() {
   // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", message: "Gấu Cinema API Server is healthy", timestamp: Date.now() });
+  });
+
+  // TMDB Backdrop proxy (like chophim.app) - returns original backdrop/logotype for hero banner
+  app.get("/api/tmdb/backdrop/:tmdbId", async (req, res) => {
+    const tmdbId = String(req.params.tmdbId || "").trim();
+    if (!tmdbId || !/^\d+$/.test(tmdbId)) return res.status(400).json({ error: "Invalid tmdbId" });
+    const cached = tmdbBackdropCache.get(tmdbId);
+    if (cached && Date.now() - cached.timestamp < TMDB_TTL_MS) {
+      return res.json({ tmdbId, backdropUrl: cached.url, cached: true });
+    }
+    const bearer = process.env.TMDB_BEARER_TOKEN || process.env.TMDB_READ_TOKEN || "";
+    const apiKey = process.env.TMDB_API_KEY || "";
+    const headers: Record<string, string> = { Accept: "application/json", "User-Agent": "GauCinema/1.0" };
+    if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
+    const tryUrls: string[] = [];
+    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/movie/${tmdbId}/images?include_image_language=null`);
+    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/movie/${tmdbId}/images?api_key=${apiKey}&include_image_language=null`);
+    // also try TV endpoint if movie fails
+    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/tv/${tmdbId}/images?include_image_language=null`);
+    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/tv/${tmdbId}/images?api_key=${apiKey}&include_image_language=null`);
+
+    for (const url of tryUrls) {
+      try {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 5000);
+        const r = await fetch(url, { headers, signal: controller.signal });
+        clearTimeout(t);
+        if (!r.ok) continue;
+        const data: any = await r.json();
+        const backdrops: any[] = data.backdrops || [];
+        // pick best backdrop: highest vote_average then largest
+        if (backdrops.length > 0) {
+          backdrops.sort((a, b) => (b.vote_average || 0) - (a.vote_average || 0) || (b.width || 0) - (a.width || 0));
+          const best = backdrops[0];
+          const backdropUrl = `https://image.tmdb.org/t/p/original${best.file_path}`;
+          tmdbBackdropCache.set(tmdbId, { url: backdropUrl, timestamp: Date.now() });
+          return res.json({ tmdbId, backdropUrl, width: best.width, height: best.height });
+        }
+        // fallback to poster if no backdrop but has posters
+        const posters: any[] = data.posters || [];
+        if (posters.length > 0) {
+          const best = posters[0];
+          const backdropUrl = `https://image.tmdb.org/t/p/original${best.file_path}`;
+          tmdbBackdropCache.set(tmdbId, { url: backdropUrl, timestamp: Date.now() });
+          return res.json({ tmdbId, backdropUrl, width: best.width, height: best.height });
+        }
+      } catch {}
+    }
+    tmdbBackdropCache.set(tmdbId, { url: null, timestamp: Date.now() });
+    return res.json({ tmdbId, backdropUrl: null });
+  });
+
+  // TMDB Generic Proxy - expose toàn bộ TMDb v3 endpoints bạn liệt kê qua Bearer server-side
+  // Base: /api/tmdb/v3/*  -> https://api.themoviedb.org/3/*
+  const tmdbGenericCache = new LRUCache<string, { data: any; timestamp: number }>(200);
+  app.use("/api/tmdb/v3", async (req: any, res, next) => {
+    if (req.method !== "GET") return next();
+    const fullPath = req.originalUrl || req.url || "";
+    // extract subPath after /api/tmdb/v3/
+    const m = fullPath.match(/\/api\/tmdb\/v3\/([^\?]+)/);
+    const subPath = m ? m[1] : "";
+    if (!subPath) return res.status(400).json({ error: "Missing TMDB path" });
+    const qs = new URLSearchParams(req.query as Record<string, string>).toString();
+    const target = `https://api.themoviedb.org/3/${subPath}${qs ? `?${qs}` : ""}`;
+    const cacheKey = `v3:${subPath}?${qs}`;
+    const cached = tmdbGenericCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 5 * 60 * 1000) {
+      return res.json(cached.data);
+    }
+    const bearer = process.env.TMDB_BEARER_TOKEN || process.env.TMDB_READ_TOKEN || "";
+    const apiKey = process.env.TMDB_API_KEY || "";
+    const headers: Record<string, string> = { Accept: "application/json", "User-Agent": "GauCinema/1.0" };
+    if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
+    // auto-inject api_key if no bearer
+    let finalUrl = target;
+    if (!bearer && apiKey && !target.includes("api_key=")) {
+      finalUrl += (qs ? "&" : "?") + `api_key=${apiKey}`;
+    }
+    // default language vi-VN if not specified
+    if (!finalUrl.includes("language=") && (subPath.includes("movie") || subPath.includes("tv") || subPath.includes("trending") || subPath.includes("search") || subPath.includes("discover"))) {
+      finalUrl += (finalUrl.includes("?") ? "&" : "?") + "language=vi-VN";
+    }
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 8000);
+      const r = await fetch(finalUrl, { headers, signal: controller.signal });
+      clearTimeout(t);
+      if (!r.ok) {
+        const text = await r.text();
+        return res.status(r.status).json({ error: `TMDB ${r.status}`, body: text.slice(0, 500) });
+      }
+      const data = await r.json();
+      tmdbGenericCache.set(cacheKey, { data, timestamp: Date.now() });
+      return res.json(data);
+    } catch (e: any) {
+      return res.status(502).json({ error: e.message || "TMDB proxy failed" });
+    }
+  });
+
+  // TMDB Trending (hot) - like chophim: lấy phim đang hot quốc tế làm fallback hero
+  const tmdbTrendingCache = new LRUCache<string, { data: any; timestamp: number }>(10);
+  app.get("/api/tmdb/trending", async (req, res) => {
+    const cacheKey = "trending:movie:day:vi";
+    const cached = tmdbTrendingCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 10 * 60 * 1000) {
+      return res.json(cached.data);
+    }
+    const bearer = process.env.TMDB_BEARER_TOKEN || process.env.TMDB_READ_TOKEN || "";
+    const apiKey = process.env.TMDB_API_KEY || "";
+    const headers: Record<string, string> = { Accept: "application/json", "User-Agent": "GauCinema/1.0" };
+    if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
+    const urls: string[] = [];
+    if (bearer) urls.push("https://api.themoviedb.org/3/trending/movie/day?language=vi-VN");
+    if (apiKey) urls.push(`https://api.themoviedb.org/3/trending/movie/day?language=vi-VN&api_key=${apiKey}`);
+    if (bearer) urls.push("https://api.themoviedb.org/3/movie/popular?language=vi-VN&page=1");
+    if (apiKey) urls.push(`https://api.themoviedb.org/3/movie/popular?language=vi-VN&page=1&api_key=${apiKey}`);
+    for (const url of urls) {
+      try {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 6000);
+        const r = await fetch(url, { headers, signal: controller.signal });
+        clearTimeout(t);
+        if (!r.ok) continue;
+        const data: any = await r.json();
+        const results = (data.results || []).slice(0, 20).map((it: any) => ({
+          tmdbId: String(it.id),
+          title: it.title || it.name || "",
+          original_title: it.original_title || it.original_name || "",
+          overview: it.overview || "",
+          release_date: it.release_date || it.first_air_date || "",
+          vote_average: it.vote_average || 0,
+          backdrop_path: it.backdrop_path || null,
+          poster_path: it.poster_path || null,
+          backdropUrl: it.backdrop_path ? `https://image.tmdb.org/t/p/original${it.backdrop_path}` : null,
+          posterUrl: it.poster_path ? `https://image.tmdb.org/t/p/w500${it.poster_path}` : null,
+        }));
+        const payload = { results, total: results.length };
+        tmdbTrendingCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+        return res.json(payload);
+      } catch {}
+    }
+    return res.status(502).json({ results: [], error: "TMDB trending failed" });
   });
 
   // Comprehensive System API Health Check & Ping Tester (Backend-based to prevent CORS & accurately measure latency)
@@ -522,7 +667,7 @@ setTimeout(seedInitialCastIndex, 2000);
       return res.json(data);
     } catch (err: any) {
       if (cached) return res.json(cached.data);
-      return res.status(502).json({ status: false, msg: `KKPhim error: ${err.message}` });
+      return res.json({ status: true, items: [], msg: `KKPhim empty: ${err.message}` });
     }
   });
 
@@ -559,7 +704,7 @@ setTimeout(seedInitialCastIndex, 2000);
     }
 
     if (cached) return res.json(cached.data);
-    return res.status(502).json({ status: false, msg: "OPhim upstreams unavailable" });
+    return res.json({ status: true, items: [], msg: "OPhim empty" });
   });
 
   // 3. NguonC Dedicated Proxy (https://phim.nguonc.com)
@@ -574,7 +719,6 @@ setTimeout(seedInitialCastIndex, 2000);
     }
 
     try {
-      // Endpoint may be api/films/... or api/film/... or films/...
       const normalizedEndpoint = endpoint.startsWith("api/") ? endpoint : `api/${endpoint}`;
       const url = `https://phim.nguonc.com/${normalizedEndpoint}${query ? `?${query}` : ""}`;
       const data = await fetchWithTimeout(url, 5000);
@@ -585,7 +729,8 @@ setTimeout(seedInitialCastIndex, 2000);
       return res.json(data);
     } catch (err: any) {
       if (cached) return res.json(cached.data);
-      return res.status(502).json({ status: false, msg: `NguonC error: ${err.message}` });
+      // Return 200 with empty result to avoid 502 console spam (NguonC often 404 for some genres like phim-chieu-rap/vien-tuong)
+      return res.json({ status: true, items: [], msg: `NguonC empty: ${err.message}` });
     }
   });
 

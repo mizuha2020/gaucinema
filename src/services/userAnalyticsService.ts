@@ -135,7 +135,7 @@ class UserAnalyticsService {
         });
       }
     } catch (e) {
-      console.warn('Failed to restore analytics from localStorage:', e);
+      void 0;
     }
   }
 
@@ -293,7 +293,7 @@ class UserAnalyticsService {
       if (e?.code === 'resource-exhausted' || String(e).includes('Quota limit exceeded')) {
         markFirestoreQuotaExhausted();
       }
-      console.warn('Analytics batch flush warning:', e);
+      void 0;
     } finally {
       this.isFlushing = false;
     }
@@ -339,11 +339,11 @@ class UserAnalyticsService {
 
       if (fixed > 0) {
         await batch.commit();
-        console.log(`[UserAnalytics] Fixed ${fixed} corrupted userStats documents`);
+        void 0;
       }
       return fixed;
     } catch (e) {
-      console.warn('Failed to fix corrupted stats:', e);
+      void 0;
       return 0;
     }
   }
@@ -428,7 +428,7 @@ class UserAnalyticsService {
 
       return result;
     } catch (e) {
-      console.warn('Failed to fetch all user stats:', e);
+      void 0;
       return [];
     }
   }
@@ -513,7 +513,7 @@ class UserAnalyticsService {
 
       return list;
     } catch (e) {
-      console.warn('Failed to fetch activity history:', e);
+      void 0;
       return [];
     }
   }
@@ -582,7 +582,7 @@ class UserAnalyticsService {
         }
       }
     } catch (e) {
-      console.warn('Error aggregating legacy history:', e);
+      void 0;
     }
     return aggregated;
   }
@@ -637,7 +637,7 @@ class UserAnalyticsService {
 
         accountStatsMap.set(accId, current);
       } catch (e) {
-        console.warn('Failed to process record for batch sync:', record.id, e);
+        void 0;
       }
     }
 
@@ -660,7 +660,7 @@ class UserAnalyticsService {
 
         batch.set(statsRef, sanitizeData(updated), { merge: true });
       } catch (e) {
-        console.warn('Failed to batch stats for account:', accId, e);
+        void 0;
       }
     }
 
@@ -692,7 +692,7 @@ class UserAnalyticsService {
         .map((d) => deleteDoc(d.ref));
       await Promise.all(batchDeletes);
     } catch (e) {
-      console.error('Failed to clear user activities:', e);
+      void 0;
     }
   }
 }

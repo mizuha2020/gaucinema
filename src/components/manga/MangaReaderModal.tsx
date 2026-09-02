@@ -422,7 +422,7 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
           }
         }
       } catch (err) {
-        console.error('Error fetching chapter pages:', err);
+        void 0;
         if (isMounted) {
           setPages([]);
         }

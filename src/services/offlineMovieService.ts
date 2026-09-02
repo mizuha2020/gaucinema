@@ -76,7 +76,7 @@ function saveRaw(accountId: string, profileId: string, list: OfflineSavedMovie[]
     localStorage.setItem(key, JSON.stringify(list));
     window.dispatchEvent(new CustomEvent('gau_offline_changed', { detail: { accountId, profileId } }));
   } catch (e) {
-    console.error('[offlineMovieService] save error', e);
+    void 0;
   }
 }
 
@@ -132,7 +132,7 @@ async function downloadFileWithProgress(
       onProgress?.(100);
       return;
     } catch (e) {
-      console.warn('[offline] downloadFile fallback to fetch', e);
+      void 0;
     }
   }
   // Fallback: fetch + writeFile (may OOM for large files, but ok for demo)
@@ -237,7 +237,7 @@ async function downloadHls(
     try {
       await downloadFileWithProgress(segUrl, segPath, undefined);
     } catch (e) {
-      console.warn(`[offline] segment ${i} failed`, e);
+      void 0;
       // continue, not fatal
     }
     onProgress?.(Math.round(((i + 1) / segmentUrls.length) * 100));
@@ -468,7 +468,7 @@ export const offlineMovieService = {
         onProgress?.(overall2, ep.slug);
       });
       if (!res.success) {
-        console.warn(`[offline] episode ${ep.slug} failed`, res.error);
+        void 0;
         // continue to next
       }
     }

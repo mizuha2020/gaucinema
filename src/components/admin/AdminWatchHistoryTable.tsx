@@ -50,7 +50,7 @@ export const AdminWatchHistoryTable: React.FC<AdminWatchHistoryTableProps> = ({
       const result = await watchHistoryService.getHistoryPaginated({ pageSize: 100 });
       setHistoryItems(result.items);
     } catch (e) {
-      console.warn('Failed to fetch history:', e);
+      void 0;
     } finally {
       setIsLoading(false);
     }
