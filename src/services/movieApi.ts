@@ -1,5 +1,5 @@
 import { Movie, MovieDetailResponse, MovieListResponse, EpisodeServer, ApiSource } from '../types';
-import { getFullApiUrl } from './apiConfig';
+import { getFullApiUrl, safeFetchJson, isNativeApp } from './apiConfig';
 import { systemApiService } from './systemApiService';
 
 function isMovieSourceEnabled(id: ApiSource): boolean {
@@ -134,36 +134,113 @@ export function getHeroImageUrl(path?: string, source?: ApiSource | string): str
   return getOptimizedImageUrl(raw, 1920, 90);
 }
 
+export const TMDB_API_KEY = "555c9b55025bdc42ab41e4969667ffed";
+export const TMDB_BASE_URL = "https://api.themoviedb.org/3";
+
 const tmdbBackdropCacheClient = new Map<string, string | null>();
 const tmdbLogoCacheClient = new Map<string, string | null>();
 const tmdbAssetsCacheClient = new Map<string, { backdropUrl: string | null; logoUrl: string | null }>();
+
 export async function getTmdbAssets(tmdbId: string | number): Promise<{ backdropUrl: string | null; logoUrl: string | null }> {
   const id = String(tmdbId || "").trim();
   if (!id || !/^\d+$/.test(id)) return { backdropUrl: null, logoUrl: null };
+
+  // 1. Memory cache check
   if (tmdbAssetsCacheClient.has(id)) return tmdbAssetsCacheClient.get(id)!;
+
+  // 2. LocalStorage cache check (instant load across page reloads & app restarts)
+  if (typeof window !== 'undefined') {
+    try {
+      const cached = localStorage.getItem(`tmdb_asset_${id}`);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && (parsed.backdropUrl || parsed.logoUrl)) {
+          tmdbAssetsCacheClient.set(id, parsed);
+          return parsed;
+        }
+      }
+    } catch {}
+  }
+
+  let backdropUrl: string | null = null;
+  let logoUrl: string | null = null;
+
+  // 3. Try backend endpoint first (only if not running pure native localhost APK)
   try {
-    const res = await fetch(getFullApiUrl(`/api/tmdb/backdrop/${id}`));
-    if (res.ok) {
-      const data = await res.json();
-      const backdropUrl = data.backdropUrl || null;
-      const logoUrl = data.logoUrl || null;
-      tmdbBackdropCacheClient.set(id, backdropUrl);
-      tmdbLogoCacheClient.set(id, logoUrl);
-      const assets = { backdropUrl, logoUrl };
-      tmdbAssetsCacheClient.set(id, assets);
-      return assets;
+    const fullUrl = getFullApiUrl(`/api/tmdb/backdrop/${id}`);
+    const isLocalhostApk = typeof window !== 'undefined' && window.location.hostname === 'localhost' && !fullUrl.startsWith('http');
+    if (!isLocalhostApk) {
+      const data = await safeFetchJson<{ backdropUrl?: string; logoUrl?: string }>(fullUrl, {}, 2500);
+      if (data) {
+        backdropUrl = data.backdropUrl || null;
+        logoUrl = data.logoUrl || null;
+      }
     }
   } catch {}
-  tmdbBackdropCacheClient.set(id, null);
-  tmdbLogoCacheClient.set(id, null);
-  const empty = { backdropUrl: null, logoUrl: null };
-  tmdbAssetsCacheClient.set(id, empty);
-  return empty;
+
+  // 4. Fallback: Direct TMDB Image API (CORS friendly, works everywhere including native APK)
+  if (!backdropUrl || !logoUrl) {
+    try {
+      const imgLangs = 'vi,en,null';
+      let data: any = await safeFetchJson(
+        `${TMDB_BASE_URL}/movie/${id}/images?include_image_language=${imgLangs}&api_key=${TMDB_API_KEY}`,
+        {},
+        3500
+      );
+
+      // If no images found for movie, try TV series
+      if (!data || (!data.backdrops?.length && !data.logos?.length)) {
+        data = await safeFetchJson(
+          `${TMDB_BASE_URL}/tv/${id}/images?include_image_language=${imgLangs}&api_key=${TMDB_API_KEY}`,
+          {},
+          3500
+        );
+      }
+
+      if (data) {
+        // Pick best logo: preference Vietnamese -> English -> first available
+        if (!logoUrl && data.logos && Array.isArray(data.logos) && data.logos.length > 0) {
+          const viLogo = data.logos.find((l: any) => l.iso_639_1 === 'vi');
+          const enLogo = data.logos.find((l: any) => l.iso_639_1 === 'en');
+          const bestLogo = viLogo || enLogo || data.logos[0];
+          if (bestLogo?.file_path) {
+            logoUrl = `https://image.tmdb.org/t/p/original${bestLogo.file_path}`;
+          }
+        }
+
+        // Pick best backdrop: prioritize textless, highest resolution and rating
+        if (!backdropUrl && data.backdrops && Array.isArray(data.backdrops) && data.backdrops.length > 0) {
+          const textless = data.backdrops.filter((b: any) => !b.iso_639_1 || b.iso_639_1 === 'xx');
+          const candidates = textless.length > 0 ? textless : [...data.backdrops];
+          candidates.sort((a: any, b: any) => (b.vote_average || 0) - (a.vote_average || 0) || (b.width || 0) - (a.width || 0));
+          const bestBackdrop = candidates[0];
+          if (bestBackdrop?.file_path) {
+            backdropUrl = `https://image.tmdb.org/t/p/original${bestBackdrop.file_path}`;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  const result = { backdropUrl, logoUrl };
+  tmdbBackdropCacheClient.set(id, backdropUrl);
+  tmdbLogoCacheClient.set(id, logoUrl);
+  tmdbAssetsCacheClient.set(id, result);
+
+  if (typeof window !== 'undefined' && (backdropUrl || logoUrl)) {
+    try {
+      localStorage.setItem(`tmdb_asset_${id}`, JSON.stringify(result));
+    } catch {}
+  }
+
+  return result;
 }
+
 export async function getTmdbBackdropUrl(tmdbId: string | number): Promise<string | null> {
   const assets = await getTmdbAssets(tmdbId);
   return assets.backdropUrl;
 }
+
 export async function getTmdbLogoUrl(tmdbId: string | number): Promise<string | null> {
   const assets = await getTmdbAssets(tmdbId);
   return assets.logoUrl;
@@ -183,28 +260,85 @@ export interface TmdbTrendingItem {
 }
 
 const tmdbTrendingCacheClient = new Map<string, { data: TmdbTrendingItem[]; time: number }>();
+
 export async function getTmdbTrending(): Promise<TmdbTrendingItem[]> {
   const cache = tmdbTrendingCacheClient.get("trending");
   if (cache && Date.now() - cache.time < 10 * 60 * 1000) return cache.data;
+
+  // 1. Try backend
   try {
-    const res = await fetch(getFullApiUrl("/api/tmdb/trending"));
-    if (res.ok) {
-      const data = await res.json();
-      const items: TmdbTrendingItem[] = data.results || [];
+    const fullUrl = getFullApiUrl("/api/tmdb/trending");
+    const isLocalhostApk = typeof window !== 'undefined' && window.location.hostname === 'localhost' && !fullUrl.startsWith('http');
+    if (!isLocalhostApk) {
+      const data = await safeFetchJson<{ results?: any[] }>(fullUrl, {}, 3000);
+      if (data?.results && Array.isArray(data.results) && data.results.length > 0) {
+        const items: TmdbTrendingItem[] = data.results.map((r: any) => ({
+          tmdbId: String(r.id || r.tmdbId || ''),
+          title: r.title || r.name || '',
+          original_title: r.original_title || r.original_name || '',
+          overview: r.overview || '',
+          release_date: r.release_date || r.first_air_date || '',
+          vote_average: r.vote_average || 0,
+          backdrop_path: r.backdrop_path || null,
+          poster_path: r.poster_path || null,
+          backdropUrl: r.backdrop_path ? `https://image.tmdb.org/t/p/original${r.backdrop_path}` : null,
+          posterUrl: r.poster_path ? `https://image.tmdb.org/t/p/w500${r.poster_path}` : null,
+        }));
+        tmdbTrendingCacheClient.set("trending", { data: items, time: Date.now() });
+        return items;
+      }
+    }
+  } catch {}
+
+  // 2. Direct TMDB API fallback
+  try {
+    const directRes = await safeFetchJson<{ results?: any[] }>(
+      `${TMDB_BASE_URL}/trending/movie/day?api_key=${TMDB_API_KEY}&language=vi-VN`,
+      {},
+      3500
+    );
+    if (directRes?.results && Array.isArray(directRes.results)) {
+      const items: TmdbTrendingItem[] = directRes.results.map((r: any) => ({
+        tmdbId: String(r.id || ''),
+        title: r.title || r.name || '',
+        original_title: r.original_title || r.original_name || '',
+        overview: r.overview || '',
+        release_date: r.release_date || r.first_air_date || '',
+        vote_average: r.vote_average || 0,
+        backdrop_path: r.backdrop_path || null,
+        poster_path: r.poster_path || null,
+        backdropUrl: r.backdrop_path ? `https://image.tmdb.org/t/p/original${r.backdrop_path}` : null,
+        posterUrl: r.poster_path ? `https://image.tmdb.org/t/p/w500${r.poster_path}` : null,
+      }));
       tmdbTrendingCacheClient.set("trending", { data: items, time: Date.now() });
       return items;
     }
   } catch {}
+
   return [];
 }
 
 export async function tmdbFetch<T = any>(tmdbPath: string, params: Record<string, string | number | boolean> = {}): Promise<T> {
   const qs = new URLSearchParams(params as Record<string, string>).toString();
-  const url = getFullApiUrl(`/api/tmdb/v3/${tmdbPath.replace(/^\//, "")}${qs ? `?${qs}` : ""}`);
-  const res = await fetch(url);
+  const cleanPath = tmdbPath.replace(/^\//, "");
+
+  // 1. Try backend proxy if available
+  try {
+    const fullUrl = getFullApiUrl(`/api/tmdb/v3/${cleanPath}${qs ? `?${qs}` : ""}`);
+    const isLocalhostApk = typeof window !== 'undefined' && window.location.hostname === 'localhost' && !fullUrl.startsWith('http');
+    if (!isLocalhostApk) {
+      const data = await safeFetchJson<T>(fullUrl, {}, 3500);
+      if (data) return data;
+    }
+  } catch {}
+
+  // 2. Fallback to direct TMDB API
+  const directUrl = `${TMDB_BASE_URL}/${cleanPath}?api_key=${TMDB_API_KEY}${qs ? `&${qs}` : ""}`;
+  const res = await fetch(directUrl);
   if (!res.ok) throw new Error(`TMDB ${tmdbPath} ${res.status}`);
   return res.json();
 }
+
 export const tmdbApi = {
   trending: (type: "movie" | "tv" | "all" = "movie", window: "day" | "week" = "day") => tmdbFetch(`trending/${type}/${window}`),
   moviePopular: (page = 1) => tmdbFetch("movie/popular", { page }),
@@ -217,22 +351,293 @@ export const tmdbApi = {
 };
 
 let clientTmdbHeroCache: { data: Movie[]; time: number } | null = null;
+
+// Curated seed hero items to ensure instant load even when offline or before any network responds
+const SEED_HERO_POPULAR: Partial<Movie>[] = [
+  {
+    name: "Moana 2",
+    origin_name: "Moana 2",
+    slug: "hanh-trinh-cua-moana-2",
+    poster_url: "https://image.tmdb.org/t/p/w500/yh64qw9mgXBvlaWDi7Q9tpUBAvH.jpg",
+    thumb_url: "https://image.tmdb.org/t/p/w500/yh64qw9mgXBvlaWDi7Q9tpUBAvH.jpg",
+    backdrop_url: "https://image.tmdb.org/t/p/original/tElnmtQ6yz1PjN1kePNl8yMSb59.jpg",
+    year: 2024,
+    quality: "FHD",
+    lang: "Vietsub",
+    source: "kkphim",
+    sourceLabel: "KKPhim",
+    tmdb: { id: "1241982" },
+    type: "single",
+    status: "completed",
+  },
+  {
+    name: "Wicked",
+    origin_name: "Wicked",
+    slug: "wicked",
+    poster_url: "https://image.tmdb.org/t/p/w500/xDGbZ0JJ3mYaGKy4Nzd9Kph6M9L.jpg",
+    thumb_url: "https://image.tmdb.org/t/p/w500/xDGbZ0JJ3mYaGKy4Nzd9Kph6M9L.jpg",
+    backdrop_url: "https://image.tmdb.org/t/p/original/uKb22E5ww9bX9hZNJK6WV24Ko4k.jpg",
+    year: 2024,
+    quality: "FHD",
+    lang: "Vietsub",
+    source: "kkphim",
+    sourceLabel: "KKPhim",
+    tmdb: { id: "402431" },
+    type: "single",
+    status: "completed",
+  },
+  {
+    name: "Gladiator II",
+    origin_name: "Gladiator II",
+    slug: "vo-si-giac-dau-2",
+    poster_url: "https://image.tmdb.org/t/p/w500/2cxhvwyEwRlysAmRH4iodkvo0z5.jpg",
+    thumb_url: "https://image.tmdb.org/t/p/w500/2cxhvwyEwRlysAmRH4iodkvo0z5.jpg",
+    backdrop_url: "https://image.tmdb.org/t/p/original/euYIwmwkmz95mnXvufEmbL69ovr.jpg",
+    year: 2024,
+    quality: "FHD",
+    lang: "Vietsub",
+    source: "kkphim",
+    sourceLabel: "KKPhim",
+    tmdb: { id: "558449" },
+    type: "single",
+    status: "completed",
+  },
+  {
+    name: "Deadpool & Wolverine",
+    origin_name: "Deadpool & Wolverine",
+    slug: "deadpool-va-wolverine",
+    poster_url: "https://image.tmdb.org/t/p/w500/8cdWjvZQUExUUTzyp4t6EDMubfO.jpg",
+    thumb_url: "https://image.tmdb.org/t/p/w500/8cdWjvZQUExUUTzyp4t6EDMubfO.jpg",
+    backdrop_url: "https://image.tmdb.org/t/p/original/yDHYTfA3R0jFYba16jBB1jv8uaC.jpg",
+    year: 2024,
+    quality: "FHD",
+    lang: "Vietsub",
+    source: "kkphim",
+    sourceLabel: "KKPhim",
+    tmdb: { id: "533535" },
+    type: "single",
+    status: "completed",
+  },
+  {
+    name: "Mufasa: Vua Sư Tử",
+    origin_name: "Mufasa: The Lion King",
+    slug: "mufasa-vua-su-tu",
+    poster_url: "https://image.tmdb.org/t/p/w500/jbOSUAWMGzGLUm1T92z2x2mgmmb.jpg",
+    thumb_url: "https://image.tmdb.org/t/p/w500/jbOSUAWMGzGLUm1T92z2x2mgmmb.jpg",
+    backdrop_url: "https://image.tmdb.org/t/p/original/oHPoF0Gzu8xwK4CtdAYDaWdcu54.jpg",
+    year: 2024,
+    quality: "FHD",
+    lang: "Vietsub",
+    source: "kkphim",
+    sourceLabel: "KKPhim",
+    tmdb: { id: "762509" },
+    type: "single",
+    status: "completed",
+  },
+  {
+    name: "Dune: Hành Tinh Cát - Phần 2",
+    origin_name: "Dune: Part Two",
+    slug: "du-hanh-tinh-cat-phan-hai",
+    poster_url: "https://image.tmdb.org/t/p/w500/czembW0Rk1Ke7lCJGahbOhdCuhV.jpg",
+    thumb_url: "https://image.tmdb.org/t/p/w500/czembW0Rk1Ke7lCJGahbOhdCuhV.jpg",
+    backdrop_url: "https://image.tmdb.org/t/p/original/xOMo8BRK7PfcJv9JCnx7s5200bm.jpg",
+    year: 2024,
+    quality: "FHD",
+    lang: "Vietsub",
+    source: "kkphim",
+    sourceLabel: "KKPhim",
+    tmdb: { id: "693134" },
+    type: "single",
+    status: "completed",
+  },
+  {
+    name: "Venom: Kèo Cuối",
+    origin_name: "Venom: The Last Dance",
+    slug: "venom-keo-cuoi",
+    poster_url: "https://image.tmdb.org/t/p/w500/aosm8NMQ3UyoBVpSxyimorCQykC.jpg",
+    thumb_url: "https://image.tmdb.org/t/p/w500/aosm8NMQ3UyoBVpSxyimorCQykC.jpg",
+    backdrop_url: "https://image.tmdb.org/t/p/original/3V4kLQg0kSqPLctI5ziYWMEAZYF.jpg",
+    year: 2024,
+    quality: "FHD",
+    lang: "Vietsub",
+    source: "kkphim",
+    sourceLabel: "KKPhim",
+    tmdb: { id: "912649" },
+    type: "single",
+    status: "completed",
+  },
+  {
+    name: "Hành Tinh Khỉ: Vương Quốc Mới",
+    origin_name: "Kingdom of the Planet of the Apes",
+    slug: "hanh-tinh-khi-vuong-quoc-moi",
+    poster_url: "https://image.tmdb.org/t/p/w500/gKkl37BQuKTanygYQG1pyYgLVgf.jpg",
+    thumb_url: "https://image.tmdb.org/t/p/w500/gKkl37BQuKTanygYQG1pyYgLVgf.jpg",
+    backdrop_url: "https://image.tmdb.org/t/p/original/fqv8v6A9pnivveuunPPGXurDOko.jpg",
+    year: 2024,
+    quality: "FHD",
+    lang: "Vietsub",
+    source: "kkphim",
+    sourceLabel: "KKPhim",
+    tmdb: { id: "653346" },
+    type: "single",
+    status: "completed",
+  },
+  {
+    name: "Inside Out 2 (Những Mảnh Ghép Cảm Xúc 2)",
+    origin_name: "Inside Out 2",
+    slug: "nhung-manh-ghep-cam-xuc-2",
+    poster_url: "https://image.tmdb.org/t/p/w500/vpnVM9B6NMmQpWeZvzLvDESb2QY.jpg",
+    thumb_url: "https://image.tmdb.org/t/p/w500/vpnVM9B6NMmQpWeZvzLvDESb2QY.jpg",
+    backdrop_url: "https://image.tmdb.org/t/p/original/xg270vg9bkHN9vy4vlmvNDaq12p.jpg",
+    year: 2024,
+    quality: "FHD",
+    lang: "Vietsub",
+    source: "kkphim",
+    sourceLabel: "KKPhim",
+    tmdb: { id: "1022789" },
+    type: "single",
+    status: "completed",
+  },
+  {
+    name: "Kẻ Trộm Mặt Trăng 4",
+    origin_name: "Despicable Me 4",
+    slug: "ke-trom-mat-trang-4",
+    poster_url: "https://image.tmdb.org/t/p/w500/wWba3TaojhK7NdycRhoQpsG0FaH.jpg",
+    thumb_url: "https://image.tmdb.org/t/p/w500/wWba3TaojhK7NdycRhoQpsG0FaH.jpg",
+    backdrop_url: "https://image.tmdb.org/t/p/original/lgkGysjeistip209Tu47Jikm5e6.jpg",
+    year: 2024,
+    quality: "FHD",
+    lang: "Vietsub",
+    source: "kkphim",
+    sourceLabel: "KKPhim",
+    tmdb: { id: "519182" },
+    type: "single",
+    status: "completed",
+  },
+];
+
 export async function getTmdbHeroPopular(): Promise<Movie[]> {
+  // 1. In-memory cache
   if (clientTmdbHeroCache && Date.now() - clientTmdbHeroCache.time < 15 * 60 * 1000) {
     return clientTmdbHeroCache.data;
   }
+
+  // 2. LocalStorage cache check (instant load)
+  if (typeof window !== 'undefined') {
+    try {
+      const cached = localStorage.getItem('qtb_tmdb_hero_popular_v3');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed?.items && Array.isArray(parsed.items) && parsed.items.length >= 8) {
+          const normalized = parsed.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
+          clientTmdbHeroCache = { data: normalized, time: Date.now() };
+          // If less than 30 mins old, return immediately
+          if (Date.now() - (parsed.time || 0) < 30 * 60 * 1000) {
+            return normalized;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // 3. Try backend endpoint
   try {
-    const res = await fetch(getFullApiUrl("/api/tmdb/hero-popular"));
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.items && Array.isArray(data.items)) {
+    const fullUrl = getFullApiUrl("/api/tmdb/hero-popular");
+    const isLocalhostApk = typeof window !== 'undefined' && window.location.hostname === 'localhost' && !fullUrl.startsWith('http');
+    if (!isLocalhostApk) {
+      const data = await safeFetchJson<{ items: any[] }>(fullUrl, {}, 3500);
+      if (data?.items && Array.isArray(data.items) && data.items.length >= 8) {
         const normalized = data.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
         clientTmdbHeroCache = { data: normalized, time: Date.now() };
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('qtb_tmdb_hero_popular_v3', JSON.stringify({ items: data.items, time: Date.now() }));
+          } catch {}
+        }
         return normalized;
       }
     }
   } catch {}
-  return clientTmdbHeroCache ? clientTmdbHeroCache.data : [];
+
+  // 4. Direct Client-Side Fallback Engine: Discover TMDB + Search KKPhim
+  try {
+    const tmdbRes = await safeFetchJson<{ results?: any[] }>(
+      `${TMDB_BASE_URL}/discover/movie?language=vi-VN&region=VN&sort_by=popularity.desc&page=1&api_key=${TMDB_API_KEY}`,
+      {},
+      4000
+    );
+
+    const candidates = tmdbRes?.results && Array.isArray(tmdbRes.results) && tmdbRes.results.length > 0
+      ? tmdbRes.results
+      : [];
+
+    if (candidates.length > 0) {
+      const resolvedItems: Movie[] = [];
+      const usedSlugs = new Set<string>();
+
+      // Batch search top candidates against KKPhim
+      for (const item of candidates.slice(0, 16)) {
+        if (resolvedItems.length >= 10) break;
+        const searchQuery = (item.title || item.original_title || '').replace(/\s*\(.*?\)/, '').trim();
+        if (!searchQuery) continue;
+
+        try {
+          const searchData = await safeFetchJson<{ data?: { items?: any[] }; items?: any[] }>(
+            `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery)}&limit=1`,
+            {},
+            2500
+          );
+          const found = searchData?.data?.items?.[0] || searchData?.items?.[0];
+          if (found && found.slug && !usedSlugs.has(found.slug)) {
+            usedSlugs.add(found.slug);
+            const tmdbBackdrop = item.backdrop_path ? `https://image.tmdb.org/t/p/original${item.backdrop_path}` : undefined;
+            const tmdbPoster = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : undefined;
+
+            resolvedItems.push({
+              name: found.name || item.title,
+              origin_name: found.origin_name || item.original_title || item.title,
+              slug: found.slug,
+              poster_url: tmdbPoster || found.poster_url || found.thumb_url || '',
+              thumb_url: tmdbPoster || found.thumb_url || found.poster_url || '',
+              backdrop_url: tmdbBackdrop || found.thumb_url || undefined,
+              year: found.year || (item.release_date ? Number(item.release_date.slice(0, 4)) : 2024),
+              quality: found.quality || 'FHD',
+              lang: found.lang || 'Vietsub',
+              content: item.overview || found.content || '',
+              type: 'single',
+              status: 'completed',
+              source: 'kkphim',
+              sourceLabel: 'KKPhim',
+              tmdb: { id: String(item.id), vote_average: item.vote_average },
+            });
+          }
+        } catch {}
+      }
+
+      // If resolved at least 6 movies, fill up with seed movies
+      if (resolvedItems.length >= 6) {
+        for (const seed of SEED_HERO_POPULAR) {
+          if (resolvedItems.length >= 10) break;
+          if (seed.slug && !usedSlugs.has(seed.slug)) {
+            usedSlugs.add(seed.slug);
+            resolvedItems.push(seed as Movie);
+          }
+        }
+        clientTmdbHeroCache = { data: resolvedItems, time: Date.now() };
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('qtb_tmdb_hero_popular_v3', JSON.stringify({ items: resolvedItems, time: Date.now() }));
+          } catch {}
+        }
+        return resolvedItems;
+      }
+    }
+  } catch {}
+
+  // 5. Ultimate Fallback: High Quality Pre-curated Seed List
+  const fallbackList = SEED_HERO_POPULAR.map((m) => normalizeMovieItem(m, 'kkphim'));
+  clientTmdbHeroCache = { data: fallbackList, time: Date.now() };
+  return fallbackList;
 }
 
 export function tmdbTrendingToMovie(item: TmdbTrendingItem): any {
@@ -1179,41 +1584,94 @@ export const movieApi = {
 
   // 12. Hero Popular TMDB (en-US, region VN) - validated có trong API phim hiện tại
   async getTmdbHeroPopular(): Promise<Movie[]> {
+    return getTmdbHeroPopular();
+  },
+
+  // 13. Netflix Vietnam Top 10 Scraped API (với fallback offline và client-side seed data cho APK)
+  async getNetflixTop10VN(): Promise<{ movies: Movie[]; tvShows: Movie[]; movieTitles: string[]; tvTitles: string[] }> {
+    const cacheKey = 'netflix-top10-vn-v2';
+
+    // 1. Kiểm tra cache localStorage để hiển thị tức thì trên cả Web và APK
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (parsed?.data?.movies?.length >= 8 && parsed?.data?.tvShows?.length >= 8) {
+            // Nếu cache còn mới (< 2 giờ), trả về ngay lập tức
+            if (Date.now() - (parsed.savedAt || 0) < 2 * 60 * 60 * 1000) {
+              return parsed.data;
+            }
+          }
+        }
+      } catch {}
+    }
+
+    // 2. Thử gọi backend endpoint
     try {
-      const res = await fetch(getFullApiUrl("/api/tmdb/hero-popular"));
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.items && Array.isArray(data.items)) {
-          return data.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
+      const fullUrl = getFullApiUrl('/api/top10/netflix-vn');
+      const isLocalhostApk = typeof window !== 'undefined' && window.location.hostname === 'localhost' && !fullUrl.startsWith('http');
+      if (!isLocalhostApk) {
+        const json = await safeFetchJson<{ status?: boolean; data?: any }>(fullUrl, {}, 3500);
+        if (json?.data?.movies?.length >= 6 || json?.data?.tvShows?.length >= 6) {
+          const rawMovies = json.data.movies || [];
+          const rawTv = json.data.tvShows || [];
+          const result = {
+            movies: rawMovies.map((m: any) => normalizeMovieItem(m, m.source || 'kkphim')),
+            tvShows: rawTv.map((m: any) => normalizeMovieItem(m, m.source || 'kkphim')),
+            movieTitles: json.data.movieTitles || rawMovies.map((m: any) => m.name || m.title || ''),
+            tvTitles: json.data.tvTitles || rawTv.map((m: any) => m.name || m.title || ''),
+          };
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data: result }));
+            } catch {}
+          }
+          return result;
         }
       }
     } catch {}
-    return [];
-  },
 
-  // 13. Netflix Vietnam Top 10 Scraped API
-  async getNetflixTop10VN(): Promise<{ movies: Movie[]; tvShows: Movie[]; movieTitles: string[]; tvTitles: string[] }> {
-    const cacheKey = 'netflix-top10-vn';
-    return cachedFetch(cacheKey, async () => {
+    // 3. Fallback máy khách (Client-side Seed Data cho APK khi không có backend server)
+    const seedMovies = [
+      { slug: "anora", name: "Anora", origin_name: "Anora", poster_url: "uploads/movies/202410/anora-thumb.jpg", thumb_url: "uploads/movies/202410/anora-poster.jpg", year: 2024, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "single", status: "completed" },
+      { slug: "2012", name: "2012", origin_name: "2012", poster_url: "uploads/movies/202203/2012-thumb.jpg", thumb_url: "uploads/movies/202203/2012-poster.jpg", year: 2009, quality: "FHD", lang: "Thuyết Minh", source: "kkphim", sourceLabel: "Netflix", type: "single", status: "completed" },
+      { slug: "safe", name: "Safe", origin_name: "Safe", poster_url: "uploads/movies/202204/safe-thumb.jpg", thumb_url: "uploads/movies/202204/safe-poster.jpg", year: 2012, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "single", status: "completed" },
+      { slug: "oceans-eleven", name: "11 Tên Cướp Thế Kỷ", origin_name: "Ocean's Eleven", poster_url: "uploads/movies/202205/oceans-eleven-thumb.jpg", thumb_url: "uploads/movies/202205/oceans-eleven-poster.jpg", year: 2001, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "single", status: "completed" },
+      { slug: "wolf-man", name: "Người Sói", origin_name: "Wolf Man", poster_url: "uploads/movies/202501/wolf-man-thumb.jpg", thumb_url: "uploads/movies/202501/wolf-man-poster.jpg", year: 2025, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "single", status: "completed" },
+      { slug: "the-magnificent-seven", name: "Bảy Tay Súng Huyền Thoại", origin_name: "The Magnificent Seven", poster_url: "uploads/movies/202204/the-magnificent-seven-thumb.jpg", thumb_url: "uploads/movies/202204/the-magnificent-seven-poster.jpg", year: 2016, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "single", status: "completed" },
+      { slug: "gohan", name: "Bảy Viên Ngọc Rồng: Siêu Anh Hùng", origin_name: "Dragon Ball Super: Super Hero", poster_url: "uploads/movies/202208/dragon-ball-super-super-hero-thumb.jpg", thumb_url: "uploads/movies/202208/dragon-ball-super-super-hero-poster.jpg", year: 2022, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "single", status: "completed" },
+      { slug: "the-whisper-man", name: "Người Thì Thầm", origin_name: "The Whisper Man", poster_url: "uploads/movies/202411/the-whisper-man-thumb.jpg", thumb_url: "uploads/movies/202411/the-whisper-man-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "single", status: "completed" },
+      { slug: "tho-oi", name: "Thỏ Ơi", origin_name: "Bunny!!", poster_url: "uploads/movies/202412/tho-oi-thumb.jpg", thumb_url: "uploads/movies/202412/tho-oi-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "single", status: "completed" },
+      { slug: "red-notice", name: "Lệnh Truy Nã Đỏ", origin_name: "Red Notice", poster_url: "uploads/movies/202111/lenh-truy-na-do-thumb.jpg", thumb_url: "uploads/movies/202111/lenh-truy-na-do-poster.jpg", year: 2021, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "single", status: "completed" },
+    ];
+
+    const seedTv = [
+      { slug: "agent-kim-reactivated", name: "Đặc Vụ Kim Tái Xuất", origin_name: "Agent Kim Reactivated", poster_url: "uploads/movies/202501/agent-kim-thumb.jpg", thumb_url: "uploads/movies/202501/agent-kim-poster.jpg", year: 2025, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "series", status: "ongoing" },
+      { slug: "spooky-in-love", name: "Yêu Em Ma Quỷ", origin_name: "Spooky in Love", poster_url: "uploads/movies/202501/spooky-in-love-thumb.jpg", thumb_url: "uploads/movies/202501/spooky-in-love-poster.jpg", year: 2025, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "series", status: "ongoing" },
+      { slug: "mousetrap", name: "Bẫy Chuột", origin_name: "Mousetrap", poster_url: "uploads/movies/202412/mousetrap-thumb.jpg", thumb_url: "uploads/movies/202412/mousetrap-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "series", status: "completed" },
+      { slug: "the-early-spring", name: "Đầu Xuân", origin_name: "The Early Spring", poster_url: "uploads/movies/202501/the-early-spring-thumb.jpg", thumb_url: "uploads/movies/202501/the-early-spring-poster.jpg", year: 2025, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "series", status: "completed" },
+      { slug: "our-sticky-love", name: "Tình Yêu Gắn Kết", origin_name: "Our Sticky Love", poster_url: "uploads/movies/202501/our-sticky-love-thumb.jpg", thumb_url: "uploads/movies/202501/our-sticky-love-poster.jpg", year: 2025, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "series", status: "ongoing" },
+      { slug: "the-east-palace", name: "Đông Cung", origin_name: "The East Palace", poster_url: "uploads/movies/202411/the-east-palace-thumb.jpg", thumb_url: "uploads/movies/202411/the-east-palace-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "series", status: "completed" },
+      { slug: "can-this-love-be-translated", name: "Tình Yêu Này Có Thể Dịch Không?", origin_name: "Can This Love Be Translated?", poster_url: "uploads/movies/202501/can-this-love-be-translated-thumb.jpg", thumb_url: "uploads/movies/202501/can-this-love-be-translated-poster.jpg", year: 2025, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "series", status: "ongoing" },
+      { slug: "teach-you-a-lesson", name: "Dạy Cho Bài Học", origin_name: "Teach You a Lesson", poster_url: "uploads/movies/202412/teach-you-a-lesson-thumb.jpg", thumb_url: "uploads/movies/202412/teach-you-a-lesson-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "series", status: "completed" },
+      { slug: "squid-game-season-2", name: "Trò Chơi Con Mực: Mùa 2", origin_name: "Squid Game: Season 2", poster_url: "uploads/movies/202412/squid-game-season-2-thumb.jpg", thumb_url: "uploads/movies/202412/squid-game-season-2-poster.jpg", year: 2024, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "series", status: "completed" },
+      { slug: "sweet-home-season-3", name: "Thế Giới Ma Quái: Mùa 3", origin_name: "Sweet Home: Season 3", poster_url: "uploads/movies/202407/sweet-home-season-3-thumb.jpg", thumb_url: "uploads/movies/202407/sweet-home-season-3-poster.jpg", year: 2024, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix", type: "series", status: "completed" },
+    ];
+
+    const fallbackResult = {
+      movies: seedMovies.map((m: any) => normalizeMovieItem(m, 'kkphim')),
+      tvShows: seedTv.map((m: any) => normalizeMovieItem(m, 'kkphim')),
+      movieTitles: seedMovies.map((m) => m.name),
+      tvTitles: seedTv.map((t) => t.name),
+    };
+
+    if (typeof window !== 'undefined') {
       try {
-        const res = await fetch(getFullApiUrl('/api/top10/netflix-vn'));
-        if (res.ok) {
-          const json = await res.json();
-          if (json?.data) {
-            const rawMovies = json.data.movies || [];
-            const rawTv = json.data.tvShows || [];
-            return {
-              movies: rawMovies.map((m: any) => normalizeMovieItem(m, m.source || 'kkphim')),
-              tvShows: rawTv.map((m: any) => normalizeMovieItem(m, m.source || 'kkphim')),
-              movieTitles: json.data.movieTitles || [],
-              tvTitles: json.data.tvTitles || [],
-            };
-          }
-        }
-      } catch (e: any) {
-        console.error('Failed to load Netflix Top 10 VN:', e);
-      }
-      return { movies: [], tvShows: [], movieTitles: [], tvTitles: [] };
-    });
+        localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data: fallbackResult }));
+      } catch {}
+    }
+
+    return fallbackResult;
   },
 };

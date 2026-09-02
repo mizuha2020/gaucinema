@@ -3,18 +3,49 @@ import { Capacitor } from '@capacitor/core';
 export const isNativeApp = (): boolean => {
   if (typeof window === 'undefined') return false;
   try {
+    // 1. Capacitor core platform check
     if (Capacitor.isNativePlatform()) return true;
     const platform = Capacitor.getPlatform();
     if (platform === 'android' || platform === 'ios') return true;
-    if ((window as any).Capacitor?.isNative) return true;
+
+    // 2. Window Capacitor bridge check
+    const capObj = (window as any).Capacitor;
+    if (capObj?.isNative) return true;
+    if (capObj?.getPlatform && typeof capObj.getPlatform === 'function') {
+      const p = capObj.getPlatform();
+      if (p === 'android' || p === 'ios') return true;
+    }
+
     const origin = window.location.origin || '';
-    return (
+    const protocol = window.location.protocol || '';
+    const hostname = window.location.hostname || '';
+    const port = window.location.port || '';
+
+    // 3. Native app protocol schemes
+    if (
       origin.startsWith('capacitor://') ||
-      window.location.protocol === 'file:'
-    );
+      origin.startsWith('ionic://') ||
+      protocol === 'file:'
+    ) {
+      return true;
+    }
+
+    // 4. Capacitor Android default scheme (https://localhost or http://localhost with no dev port)
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      // In Android Capacitor APK, androidScheme is 'https' and port is empty (standard 443)
+      if (protocol === 'https:' || port === '' || port === '80' || port === '443') {
+        return true;
+      }
+      // Check user agent for Android WebView
+      const ua = navigator.userAgent || '';
+      if (/Android/i.test(ua) && (/wv/i.test(ua) || /Version\/4\.0/i.test(ua) || /Mobile/i.test(ua))) {
+        return true;
+      }
+    }
   } catch {
     return false;
   }
+  return false;
 };
 
 export const CLOUD_BACKEND_URL = 'https://ais-pre-vnvd2uudmu6l2atxxr7h75-18391378124.asia-southeast1.run.app';
@@ -60,7 +91,47 @@ export const getFullApiUrl = (path: string): string => {
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   const base = getApiBaseUrl();
   if (!base) {
+    // Crucial safeguard for APK: Never return relative path if running in native app
+    if (isNativeApp()) {
+      return `${CLOUD_BACKEND_URL}${cleanPath}`;
+    }
     return cleanPath;
   }
   return `${base}${cleanPath}`;
 };
+
+/**
+ * Safely fetch JSON from backend or external URL with timeout and content-type validation.
+ * Prevents "Unexpected token '<'" when receiving HTML error/redirect pages.
+ */
+export async function safeFetchJson<T = any>(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = 5000
+): Promise<T | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json, text/plain, */*',
+        ...(options.headers || {}),
+      },
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const contentType = res.headers.get('content-type') || '';
+    // If upstream returns HTML (e.g. 302 cookie check or error page), reject safely
+    if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
+      return null;
+    }
+    const data = await res.json();
+    return data as T;
+  } catch {
+    clearTimeout(timer);
+    return null;
+  }
+}
+
