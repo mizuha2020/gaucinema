@@ -1126,6 +1126,187 @@ setTimeout(seedInitialCastIndex, 2000);
     return res.status(502).send("Failed to fetch image upstream across all fallback sources");
   });
 
+  // --- NETFLIX VIETNAM TOP 10 SCRAPER & RESOLVER ENGINE ---
+  interface NetflixTop10Cache {
+    movies: any[];
+    tvShows: any[];
+    movieTitles: string[];
+    tvTitles: string[];
+    lastUpdated: number;
+  }
+
+  let netflixTop10Cache: NetflixTop10Cache = {
+    movies: [],
+    tvShows: [],
+    movieTitles: [],
+    tvTitles: [],
+    lastUpdated: 0,
+  };
+
+  async function parseNetflixTop10Titles(url: string): Promise<string[]> {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+        redirect: "follow",
+      });
+      if (!response.ok) return [];
+      const htmlText = await response.text();
+      const rows = [...htmlText.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
+      const titles: string[] = [];
+      for (const tr of rows) {
+        const tds = [...tr[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map(m => m[1].replace(/<[^>]+>/g, "").trim());
+        if (tds.length > 0 && tds[0]) {
+          let cleanName = tds[0].replace(/^(0[1-9]|10)\s*/, "").trim();
+          cleanName = cleanName.replace(/:\s*(Season|Limited Series|Part|\d+).*$/i, "").trim();
+          if (cleanName && !titles.includes(cleanName)) {
+            titles.push(cleanName);
+          }
+        }
+      }
+      return titles.slice(0, 10);
+    } catch (e: any) {
+      console.error("[Netflix Top10 Scraper Error]", e.message);
+      return [];
+    }
+  }
+
+  async function updateNetflixTop10Cache() {
+    try {
+      // 1. Live scrape dynamically from official Netflix Tudum Top 10 Vietnam
+      const [scrapedMovieTitles, scrapedTvTitles] = await Promise.all([
+        parseNetflixTop10Titles("https://www.netflix.com/tudum/top10/vietnam"),
+        parseNetflixTop10Titles("https://www.netflix.com/tudum/top10/vietnam/tv"),
+      ]);
+
+      // Title search alias dictionary (maps English release names to Vietnamese search keywords)
+      const titleSearchAlias: Record<string, string> = {
+        "bunny!": "Thỏ Ơi",
+        "bunny!!": "Thỏ Ơi",
+        "bunny": "Thỏ Ơi",
+        "grand theft auto vi: an extended look": "Grand Theft Auto VI",
+      };
+
+      // Fallback lists if live scraping fails
+      const fallbackMovies = [
+        "Anora", "The Whisper Man", "Grand Theft Auto VI: An Extended Look",
+        "The Magnificent Seven", "Gohan", "Bunny!!", "2012", "Safe", "Ocean's Eleven", "Wolf Man"
+      ];
+      const fallbackTv = [
+        "The Early Spring", "Mousetrap", "Four Hands, Two Sonatas", "Our Sticky Love",
+        "Agent Kim Reactivated", "Spooky in Love", "Though I Am an Inept Villainess",
+        "Teach You a Lesson", "The East Palace", "Can This Love Be Translated?"
+      ];
+
+      const movieTitles = scrapedMovieTitles.length > 0 ? scrapedMovieTitles : fallbackMovies;
+      const tvTitles = scrapedTvTitles.length > 0 ? scrapedTvTitles : fallbackTv;
+
+      const resolveList = async (rawTitles: string[], isTv: boolean) => {
+        const items: any[] = [];
+        const usedSlugs = new Set<string>();
+
+        for (const title of rawTitles) {
+          if (items.length >= 10) break;
+          try {
+            const lowerTitle = title.toLowerCase().trim();
+            const searchQuery = titleSearchAlias[lowerTitle] || title.replace(/\s*\(.*?\)/, "").replace(/:\s*.*$/, "").trim();
+
+            const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery || title)}&limit=5`;
+            const searchRes = await fetchWithTimeout(searchUrl, 3500).catch(() => null);
+            const foundItems = searchRes?.data?.items || searchRes?.items || [];
+            if (foundItems.length > 0) {
+              const matchedItem = foundItems.find((f: any) => !usedSlugs.has(f.slug)) || foundItems[0];
+              if (matchedItem) {
+                const resolved = await resolveMovieSlug(matchedItem.slug);
+                const finalItem = resolved || {
+                  slug: matchedItem.slug,
+                  name: matchedItem.name,
+                  origin_name: matchedItem.origin_name || "",
+                  poster_url: matchedItem.poster_url || matchedItem.thumb_url || "",
+                  thumb_url: matchedItem.thumb_url || matchedItem.poster_url || "",
+                  year: matchedItem.year,
+                  quality: matchedItem.quality || "HD",
+                  lang: matchedItem.lang || "Vietsub",
+                  source: "kkphim",
+                  sourceLabel: "KKPhim",
+                };
+                if (!usedSlugs.has(finalItem.slug)) {
+                  usedSlugs.add(finalItem.slug);
+                  items.push(finalItem);
+                }
+              }
+            }
+          } catch {}
+        }
+
+        // Fill up to 10 items if needed
+        if (items.length < 10) {
+          try {
+            const catUrl = isTv
+              ? "https://phimapi.com/v1/api/danh-sach/phim-bo?page=1&limit=20"
+              : "https://phimapi.com/v1/api/danh-sach/phim-le?page=1&limit=20";
+            const catRes = await fetchWithTimeout(catUrl, 3500).catch(() => null);
+            const catItems = catRes?.data?.items || catRes?.items || [];
+            for (const catItem of catItems) {
+              if (items.length >= 10) break;
+              if (!usedSlugs.has(catItem.slug)) {
+                const resolved = await resolveMovieSlug(catItem.slug);
+                const itemToPush = resolved || {
+                  slug: catItem.slug,
+                  name: catItem.name,
+                  origin_name: catItem.origin_name || "",
+                  poster_url: catItem.poster_url || catItem.thumb_url || "",
+                  thumb_url: catItem.thumb_url || catItem.poster_url || "",
+                  year: catItem.year,
+                  quality: catItem.quality || "HD",
+                  lang: catItem.lang || "Vietsub",
+                  source: "kkphim",
+                  sourceLabel: "KKPhim",
+                };
+                usedSlugs.add(itemToPush.slug);
+                items.push(itemToPush);
+              }
+            }
+          } catch {}
+        }
+
+        return items.slice(0, 10);
+      };
+
+      const resolvedMovies = await resolveList(movieTitles, false);
+      const resolvedTvShows = await resolveList(tvTitles, true);
+
+      if (resolvedMovies.length > 0 || resolvedTvShows.length > 0) {
+        netflixTop10Cache = {
+          movies: resolvedMovies,
+          tvShows: resolvedTvShows,
+          movieTitles,
+          tvTitles,
+          lastUpdated: Date.now(),
+        };
+        console.log(`[Netflix Top10 VN] Cache updated successfully: ${resolvedMovies.length} movies, ${resolvedTvShows.length} TV shows.`);
+      }
+    } catch (err: any) {
+      console.error("[Netflix Top10 VN Update Error]:", err.message);
+    }
+  }
+
+  // Trigger background update on startup & every 4 hours
+  setTimeout(updateNetflixTop10Cache, 2500);
+  setInterval(updateNetflixTop10Cache, 4 * 60 * 60 * 1000);
+
+  app.get("/api/top10/netflix-vn", async (req, res) => {
+    if (!netflixTop10Cache.lastUpdated || Date.now() - netflixTop10Cache.lastUpdated > 6 * 60 * 60 * 1000) {
+      await updateNetflixTop10Cache();
+    }
+    return res.json({
+      status: true,
+      data: netflixTop10Cache,
+    });
+  });
+
   // --- TRUYENQQ MANGA PROXY & SCRAPER ENGINE ---
   const TRUYENQQ_MIRRORS = [
     "https://truyenqqko.com",

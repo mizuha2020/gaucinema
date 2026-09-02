@@ -1140,4 +1140,30 @@ export const movieApi = {
       };
     });
   },
+
+  // 12. Netflix Vietnam Top 10 Scraped API
+  async getNetflixTop10VN(): Promise<{ movies: Movie[]; tvShows: Movie[]; movieTitles: string[]; tvTitles: string[] }> {
+    const cacheKey = 'netflix-top10-vn';
+    return cachedFetch(cacheKey, async () => {
+      try {
+        const res = await fetch(getFullApiUrl('/api/top10/netflix-vn'));
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.data) {
+            const rawMovies = json.data.movies || [];
+            const rawTv = json.data.tvShows || [];
+            return {
+              movies: rawMovies.map((m: any) => normalizeMovieItem(m, m.source || 'kkphim')),
+              tvShows: rawTv.map((m: any) => normalizeMovieItem(m, m.source || 'kkphim')),
+              movieTitles: json.data.movieTitles || [],
+              tvTitles: json.data.tvTitles || [],
+            };
+          }
+        }
+      } catch (e: any) {
+        console.error('Failed to load Netflix Top 10 VN:', e);
+      }
+      return { movies: [], tvShows: [], movieTitles: [], tvTitles: [] };
+    });
+  },
 };
