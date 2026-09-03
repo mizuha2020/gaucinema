@@ -28,7 +28,7 @@ import { CinematicCarousel } from "./components/CinematicCarousel";
 import { MovieRow } from "./components/MovieRow";
 import { ForYouRow } from "./components/ForYouRow";
 import { MovieDetailModal } from "./components/MovieDetailModal";
-import { ChophimPlayer } from "./components/ChophimPlayer";
+import { GauPlayer } from "./components/GauPlayer";
 import { ProfileSelector } from "./components/ProfileSelector";
 import { FilterSection } from "./components/FilterSection";
 import { MyListView } from "./components/MyListView";
@@ -1598,10 +1598,10 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* 2. Fullscreen HLS Video Player - Chophim minimal style */}
+        {/* 2. Fullscreen HLS Video Player - GauPlayer minimal style */}
         <AnimatePresence mode="wait">
           {playingMovie && playingEpisode && playingServer && (
-            <ChophimPlayer
+            <GauPlayer
               key={`player-${playingMovie.slug}-${playingEpisode.slug}`}
               movie={playingMovie}
               currentEpisode={playingEpisode}
