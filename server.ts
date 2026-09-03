@@ -464,6 +464,11 @@ async function startServer() {
 
   // IntroDB proxy - APK-safe (no cache, single fetch per episode). Handles CORS for native WebView.
   app.get("/api/intro/segments", async (req, res) => {
+    // Never allow browser/proxy caching here: Express ETag would answer 304
+    // with empty body, and FE fetch (res.ok=false on 304) would drop segments.
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     const imdb_id = String(req.query.imdb_id || "").trim();
     const season = Number(req.query.season);
     const episode = Number(req.query.episode);

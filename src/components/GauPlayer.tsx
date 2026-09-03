@@ -10,6 +10,21 @@ import { Capacitor } from '@capacitor/core';
 type IntroSegment = { start_sec: number; end_sec: number; start_ms: number; end_ms: number; confidence?: number; submission_count?: number } | null;
 type SegmentsResponse = { imdb_id: string; season: number; episode: number; intro: IntroSegment; recap: IntroSegment; outro: IntroSegment };
 
+// Some IntroDB records only carry start_ms/end_ms (no start_sec/end_sec).
+// Normalize so segment detection always has second-based bounds.
+function normalizeSegments(data: SegmentsResponse | null | undefined): SegmentsResponse | null {
+  if (!data || typeof data !== 'object') return null;
+  const fix = (seg: IntroSegment): IntroSegment => {
+    if (!seg || typeof seg !== 'object') return null;
+    const s = seg as any;
+    const start_sec = typeof s.start_sec === 'number' ? s.start_sec : (typeof s.start_ms === 'number' ? s.start_ms / 1000 : NaN);
+    const end_sec = typeof s.end_sec === 'number' ? s.end_sec : (typeof s.end_ms === 'number' ? s.end_ms / 1000 : NaN);
+    if (!isFinite(start_sec) || !isFinite(end_sec) || end_sec <= start_sec) return null;
+    return { ...s, start_sec, end_sec };
+  };
+  return { ...data, intro: fix(data.intro), recap: fix(data.recap), outro: fix(data.outro) };
+}
+
 interface GauPlayerProps {
   movie: Movie;
   currentEpisode: MovieEpisode;
@@ -118,13 +133,14 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     setSegments(null); setActiveSegment(null);
     // APK-safe: use backend proxy via getFullApiUrl so relative URL resolves to CLOUD_BACKEND_URL on native
     const url = getFullApiUrl(`/api/intro/segments?imdb_id=${encodeURIComponent(imdbId)}&season=${season}&episode=${epNum}`);
-    fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(6000) as any })
+    // cache:no-store -> server ETag could answer 304 with empty body (res.ok=false), killing segments
+    fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(6000) as any, cache: 'no-store' as RequestCache })
       .then(async r => {
         if (r.status === 404) return { imdb_id: imdbId, season, episode: epNum, intro: null, recap: null, outro: null } as any;
         if (!r.ok) throw new Error(String(r.status));
         return r.json();
       })
-      .then((data: SegmentsResponse) => { if (!cancelled) setSegments(data); })
+      .then((data: SegmentsResponse) => { if (!cancelled) setSegments(normalizeSegments(data)); })
       .catch(() => { if (!cancelled) setSegments(null); });
     return () => { cancelled = true; };
   }, [(movie as any)?.imdb?.id, (movie as any)?.tmdb?.season, currentEpisode.slug, currentEpisode.name, currentServer]);
