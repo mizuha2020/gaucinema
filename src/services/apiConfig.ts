@@ -48,7 +48,7 @@ export const isNativeApp = (): boolean => {
   return false;
 };
 
-export const CLOUD_BACKEND_URL = 'https://ais-pre-vnvd2uudmu6l2atxxr7h75-18391378124.asia-southeast1.run.app';
+export const CLOUD_BACKEND_URL = 'https://quocthubay-movie.ai.studio';
 
 export const getApiBaseUrl = (): string => {
   // 1. Check custom user/admin saved backend URL in localStorage

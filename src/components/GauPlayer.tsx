@@ -178,7 +178,8 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     const pv = previewVideoRef.current;
     if (!pv || !currentEpisode.link_m3u8) return;
     if (previewHlsRef.current) { previewHlsRef.current.destroy(); previewHlsRef.current = null; }
-    const raw = getMirrorUrls(currentEpisode.link_m3u8).map(getAdCleanUrl)[0];
+    // Direct first: server proxy IP is often blocked (502/404), client IP works
+    const raw = getMirrorUrls(currentEpisode.link_m3u8)[0];
     if (!raw) return;
     pv.muted = true;
     pv.preload = 'metadata';
@@ -235,16 +236,17 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
 
     const rawCandidates = getMirrorUrls(currentEpisode.link_m3u8);
     const candidates: string[] = [];
-    // 1. Try ad-cleaned proxied URLs first
+    // 1. Direct raw m3u8 URLs first (upstream allows CORS *, client VN IP works;
+    // AI Studio / Cloud server IP is blocked -> proxy returns 502/404)
+    rawCandidates.forEach((u) => {
+      if (u && !candidates.includes(u)) candidates.push(u);
+    });
+    // 2. Ad-cleaned proxied URLs as fallbacks (for ad segments)
     rawCandidates.forEach((u) => {
       if (u) {
         const proxied = getAdCleanUrl(u);
         if (proxied && !candidates.includes(proxied)) candidates.push(proxied);
       }
-    });
-    // 2. Direct raw m3u8 URLs as fallbacks
-    rawCandidates.forEach((u) => {
-      if (u && !candidates.includes(u)) candidates.push(u);
     });
 
     let candidateIndex = 0;
@@ -310,7 +312,8 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
         }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = getAdCleanUrl(currentEpisode.link_m3u8);
+      // Native HLS (Safari/iOS): direct first, proxy blocked on cloud IP
+      video.src = getMirrorUrls(currentEpisode.link_m3u8)[0] || getAdCleanUrl(currentEpisode.link_m3u8);
       const onLoaded = () => { setIsLoading(false); if (initialTime > 5) video.currentTime = initialTime; video.play().catch(() => {}); };
       video.addEventListener('loadedmetadata', onLoaded, { once: true });
       video.onerror = () => {

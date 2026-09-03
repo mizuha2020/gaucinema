@@ -798,8 +798,10 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     }
 
     const rawCandidates = getMirrorUrls(currentEpisode.link_m3u8);
-    // Force all HLS through ad-clean proxy (server strips SSAI)
-    const candidates = rawCandidates.map(getAdCleanUrl);
+    // Direct first (cloud proxy IP blocked -> 502/404), proxied as ad-clean fallback
+    const candidates: string[] = [];
+    rawCandidates.forEach((u) => { if (u && !candidates.includes(u)) candidates.push(u); });
+    rawCandidates.forEach((u) => { if (u) { const p = getAdCleanUrl(u); if (p && !candidates.includes(p)) candidates.push(p); } });
     let candidateIndex = 0;
 
     const tryNext = (hls: Hls) => {
@@ -870,7 +872,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
         }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = getAdCleanUrl(currentEpisode.link_m3u8);
+      video.src = getMirrorUrls(currentEpisode.link_m3u8)[0] || getAdCleanUrl(currentEpisode.link_m3u8);
       video.addEventListener('loadedmetadata', () => {
         setIsLoading(false);
         if (initialTime > 5) video.currentTime = initialTime;
@@ -907,7 +909,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
       previewHlsRef.current.destroy();
       previewHlsRef.current = null;
     }
-    const candidates = getMirrorUrls(currentEpisode.link_m3u8).map(getAdCleanUrl);
+    const candidates = getMirrorUrls(currentEpisode.link_m3u8);
     const onSeeked = () => {
       capturePreviewFrame();
     };
