@@ -174,49 +174,61 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     previewSeekTimer.current = window.setTimeout(() => { try { pv.currentTime = clamped; } catch {} }, 60);
   }, [duration]);
 
-  // preview hls setup (chophim style but lightweight canvas)
+  // preview hls setup: MUST use the same client-cleaned playlist as main player,
+  // otherwise thumbnails show ad frames that don't exist in cleaned playback
   useEffect(() => {
     const pv = previewVideoRef.current;
     if (!pv || !currentEpisode.link_m3u8) return;
     if (previewHlsRef.current) { previewHlsRef.current.destroy(); previewHlsRef.current = null; }
-    // Direct first: server proxy IP is often blocked (502/404), client IP works
-    const raw = getMirrorUrls(currentEpisode.link_m3u8)[0];
-    if (!raw) return;
+    const directRaw = getMirrorUrls(currentEpisode.link_m3u8)[0];
+    if (!directRaw) return;
+    let previewBlob: string | null = null;
+    let cancelled = false;
     pv.muted = true;
     pv.preload = 'metadata';
     // @ts-ignore
     pv.crossOrigin = 'anonymous';
     const onSeeked = () => capturePreviewFrame();
     pv.addEventListener('seeked', onSeeked);
-    if (Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: true,
-        backBufferLength: 10,
-        maxBufferLength: 10,
-        maxMaxBufferLength: 15,
-        maxBufferSize: 10 * 1000 * 1000,
-        manifestLoadingTimeOut: 8000,
-        levelLoadingTimeOut: 8000,
-        fragLoadingTimeOut: 15000,
-        startLevel: 2,
-        capLevelToPlayerSize: false,
-      });
-      previewHlsRef.current = hls;
-      hls.loadSource(raw);
-      hls.attachMedia(pv);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        // try to switch to highest available for sharp preview (if auto)
-        try {
-          const levels = (hls as any).levels || [];
-          if (levels.length > 2) hls.currentLevel = Math.min(2, levels.length - 1);
-        } catch {}
-      });
-    } else if (pv.canPlayType('application/vnd.apple.mpegurl')) {
-      pv.src = raw;
-    }
+    const attachPreview = (src: string) => {
+      if (cancelled) return;
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          backBufferLength: 10,
+          maxBufferLength: 10,
+          maxMaxBufferLength: 15,
+          maxBufferSize: 10 * 1000 * 1000,
+          manifestLoadingTimeOut: 8000,
+          levelLoadingTimeOut: 8000,
+          fragLoadingTimeOut: 15000,
+          startLevel: 2,
+          capLevelToPlayerSize: false,
+        });
+        previewHlsRef.current = hls;
+        hls.loadSource(src);
+        hls.attachMedia(pv);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          try {
+            const levels = (hls as any).levels || [];
+            if (levels.length > 2) hls.currentLevel = Math.min(2, levels.length - 1);
+          } catch {}
+        });
+      } else if (pv.canPlayType('application/vnd.apple.mpegurl')) {
+        pv.src = src;
+      }
+    };
+    // Same cleaner as main player so preview frames align with cleaned timeline
+    loadCleanedM3u8Url(directRaw).then((cleaned) => {
+      if (cancelled) { if (cleaned) revokeBlobUrl(cleaned.blobUrl); return; }
+      if (cleaned) { previewBlob = cleaned.blobUrl; attachPreview(previewBlob); }
+      else attachPreview(directRaw);
+    }).catch(() => { if (!cancelled) attachPreview(directRaw); });
     return () => {
+      cancelled = true;
       pv.removeEventListener('seeked', onSeeked);
       if (previewHlsRef.current) { previewHlsRef.current.destroy(); previewHlsRef.current = null; }
+      revokeBlobUrl(previewBlob);
     };
   }, [currentEpisode.link_m3u8, capturePreviewFrame]);
 

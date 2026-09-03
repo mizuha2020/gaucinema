@@ -928,7 +928,10 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
       previewHlsRef.current.destroy();
       previewHlsRef.current = null;
     }
-    const candidates = getMirrorUrls(currentEpisode.link_m3u8);
+    const directRaw = getMirrorUrls(currentEpisode.link_m3u8)[0];
+    if (!directRaw) return;
+    let previewBlob: string | null = null;
+    let cancelled = false;
     const onSeeked = () => {
       capturePreviewFrame();
     };
@@ -938,38 +941,49 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     // @ts-ignore
     pv.crossOrigin = 'anonymous';
 
-    if (Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: true,
-        backBufferLength: 10,
-        maxBufferLength: 10,
-        maxMaxBufferLength: 15,
-        maxBufferSize: 10 * 1000 * 1000,
-        manifestLoadingTimeOut: 8000,
-        levelLoadingTimeOut: 8000,
-        fragLoadingTimeOut: 15000,
-        startLevel: 0, // lowest quality for fast preview
-        capLevelToPlayerSize: true,
-      });
-      previewHlsRef.current = hls;
-      hls.loadSource(candidates[0]);
-      hls.attachMedia(pv);
-      hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.fatal) {
-          // fallback: try canvas from main video if preview fails (CORS)
-          setPreview(prev => prev ? { ...prev, loading: false } : prev);
-        }
-      });
-    } else if (pv.canPlayType('application/vnd.apple.mpegurl')) {
-      pv.src = candidates[0];
-    }
+    const attachPreview = (src: string) => {
+      if (cancelled) return;
+      if (Hls.isSupported()) {
+        const hls = new Hls({
+          enableWorker: true,
+          backBufferLength: 10,
+          maxBufferLength: 10,
+          maxMaxBufferLength: 15,
+          maxBufferSize: 10 * 1000 * 1000,
+          manifestLoadingTimeOut: 8000,
+          levelLoadingTimeOut: 8000,
+          fragLoadingTimeOut: 15000,
+          startLevel: 0, // lowest quality for fast preview
+          capLevelToPlayerSize: true,
+        });
+        previewHlsRef.current = hls;
+        hls.loadSource(src);
+        hls.attachMedia(pv);
+        hls.on(Hls.Events.ERROR, (_, data) => {
+          if (data.fatal) {
+            // fallback: try canvas from main video if preview fails (CORS)
+            setPreview(prev => prev ? { ...prev, loading: false } : prev);
+          }
+        });
+      } else if (pv.canPlayType('application/vnd.apple.mpegurl')) {
+        pv.src = src;
+      }
+    };
+    // Same cleaner as main player so preview aligns with cleaned timeline
+    loadCleanedM3u8Url(directRaw).then((cleaned) => {
+      if (cancelled) { if (cleaned) revokeBlobUrl(cleaned.blobUrl); return; }
+      if (cleaned) { previewBlob = cleaned.blobUrl; attachPreview(previewBlob); }
+      else attachPreview(directRaw);
+    }).catch(() => { if (!cancelled) attachPreview(directRaw); });
 
     return () => {
+      cancelled = true;
       pv.removeEventListener('seeked', onSeeked);
       if (previewHlsRef.current) {
         previewHlsRef.current.destroy();
         previewHlsRef.current = null;
       }
+      revokeBlobUrl(previewBlob);
     };
   }, [currentEpisode.link_m3u8, useEmbed, capturePreviewFrame]);
 
