@@ -703,7 +703,7 @@ async function startServer() {
               lang: matchedItem.lang || "Vietsub",
               source: "kkphim",
               sourceLabel: "KKPhim",
-              tmdb: { id: tmdbId },
+              tmdb: { id: tmdbId, type: "movie" },
               tmdbId: tmdbId,
               content: it.overview || "",
               vote_average: it.vote_average,
@@ -765,7 +765,7 @@ async function startServer() {
             sourceLabel: "KKPhim",
           };
           if (tmdbId) {
-            filler.tmdb = { id: tmdbId };
+            filler.tmdb = { id: tmdbId, type: "movie" };
             filler.tmdbId = tmdbId;
             try {
               const assets = await getTmdbAssetsInternal(tmdbId);

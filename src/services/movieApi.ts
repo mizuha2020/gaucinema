@@ -220,11 +220,12 @@ export async function getTmdbAssets(tmdbId: string | number, tmdbType?: string):
   let logoUrl: string | null = null;
 
   // 2. Try backend endpoint first (only if not running pure native localhost APK)
+  // Longer timeout: backend tries movie+tv sequentially and never logs 404 to browser console
   try {
     const fullUrl = getFullApiUrl(`/api/tmdb/backdrop/${id}${normalizedType ? `?type=${normalizedType}` : ''}`);
     const isLocalhostApk = typeof window !== 'undefined' && window.location.hostname === 'localhost' && !fullUrl.startsWith('http');
     if (!isLocalhostApk) {
-      const data = await safeFetchJson<{ backdropUrl?: string; logoUrl?: string }>(fullUrl, {}, 2500);
+      const data = await safeFetchJson<{ backdropUrl?: string; logoUrl?: string }>(fullUrl, {}, 6000);
       if (data) {
         backdropUrl = data.backdropUrl || null;
         logoUrl = data.logoUrl || null;
@@ -252,32 +253,37 @@ export async function getTmdbAssets(tmdbId: string | number, tmdbType?: string):
           } else if (!bestData) bestData = otherData;
         }
       } else {
-        const [movieData, tvData] = await Promise.all([
-          safeFetchJson<any>(`${TMDB_BASE_URL}/movie/${id}/images?include_image_language=${imgLangs}&api_key=${TMDB_API_KEY}`, {}, 3500).catch(() => null),
-          safeFetchJson<any>(`${TMDB_BASE_URL}/tv/${id}/images?include_image_language=${imgLangs}&api_key=${TMDB_API_KEY}`, {}, 3500).catch(() => null),
-        ]);
-        const scoreCandidate = (data: any) => {
-          if (!data || (!data.backdrops?.length && !data.logos?.length)) return -1;
-          const hasViLogo = Array.isArray(data.logos) && data.logos.some((l: any) => l.iso_639_1 === 'vi');
-          const hasViBackdrop = Array.isArray(data.backdrops) && data.backdrops.some((b: any) => b.iso_639_1 === 'vi');
-          const maxVote = Math.max(0, ...(data.backdrops || []).map((b: any) => Number(b.vote_average) || 0), ...(data.logos || []).map((l: any) => Number(l.vote_average) || 0));
-          const total = (data.backdrops?.length || 0) + (data.logos?.length || 0);
-          return (hasViLogo ? 1000 : 0) + (hasViBackdrop ? 500 : 0) + maxVote * 100 + total * 10;
-        };
-        const movieScore = scoreCandidate(movieData);
-        const tvScore = scoreCandidate(tvData);
-        if (movieScore >= 0 || tvScore >= 0) {
-          if (tvScore > movieScore) bestData = tvData;
-          else if (movieScore > tvScore) bestData = movieData;
-          else {
-            const mHasVi = movieData?.logos?.some((l: any) => l.iso_639_1 === 'vi');
-            const tHasVi = tvData?.logos?.some((l: any) => l.iso_639_1 === 'vi');
-            if (tHasVi && !mHasVi) bestData = tvData;
-            else bestData = movieData || tvData;
+        // Type unknown: sequential movie -> tv (NOT parallel). Parallel firing
+        // guarantees one browser 404 console error for the wrong type every time.
+        const movieData = await safeFetchJson<any>(`${TMDB_BASE_URL}/movie/${id}/images?include_image_language=${imgLangs}&api_key=${TMDB_API_KEY}`, {}, 3500).catch(() => null);
+        const hasContent = (d: any) => d && ((Array.isArray(d.backdrops) && d.backdrops.length > 0) || (Array.isArray(d.logos) && d.logos.length > 0));
+        if (hasContent(movieData)) {
+          bestData = movieData;
+        } else {
+          const tvData = await safeFetchJson<any>(`${TMDB_BASE_URL}/tv/${id}/images?include_image_language=${imgLangs}&api_key=${TMDB_API_KEY}`, {}, 3500).catch(() => null);
+          const scoreCandidate = (data: any) => {
+            if (!data || (!data.backdrops?.length && !data.logos?.length)) return -1;
+            const hasViLogo = Array.isArray(data.logos) && data.logos.some((l: any) => l.iso_639_1 === 'vi');
+            const hasViBackdrop = Array.isArray(data.backdrops) && data.backdrops.some((b: any) => b.iso_639_1 === 'vi');
+            const maxVote = Math.max(0, ...(data.backdrops || []).map((b: any) => Number(b.vote_average) || 0), ...(data.logos || []).map((l: any) => Number(l.vote_average) || 0));
+            const total = (data.backdrops?.length || 0) + (data.logos?.length || 0);
+            return (hasViLogo ? 1000 : 0) + (hasViBackdrop ? 500 : 0) + maxVote * 100 + total * 10;
+          };
+          const movieScore = scoreCandidate(movieData);
+          const tvScore = scoreCandidate(tvData);
+          if (movieScore >= 0 || tvScore >= 0) {
+            if (tvScore > movieScore) bestData = tvData;
+            else if (movieScore > tvScore) bestData = movieData;
+            else {
+              const mHasVi = movieData?.logos?.some((l: any) => l.iso_639_1 === 'vi');
+              const tHasVi = tvData?.logos?.some((l: any) => l.iso_639_1 === 'vi');
+              if (tHasVi && !mHasVi) bestData = tvData;
+              else bestData = movieData || tvData;
+            }
           }
+          if (!bestData) bestData = movieData || tvData;
+          otherData = bestData === movieData ? tvData : movieData;
         }
-        if (!bestData) bestData = movieData || tvData;
-        otherData = bestData === movieData ? tvData : movieData;
       }
 
       if (bestData) {
@@ -744,7 +750,7 @@ export async function getTmdbHeroPopular(): Promise<Movie[]> {
               status: 'completed',
               source: 'kkphim',
               sourceLabel: 'KKPhim',
-              tmdb: { id: String(item.id), vote_average: item.vote_average },
+              tmdb: { id: String(item.id), type: 'movie', vote_average: item.vote_average },
             });
           }
         } catch {}
@@ -765,8 +771,8 @@ export async function getTmdbHeroPopular(): Promise<Movie[]> {
     }
   } catch {}
 
-  // 4. Ultimate Fallback: High Quality Pre-curated Seed List
-  const fallbackList = SEED_HERO_POPULAR.map((m) => normalizeMovieItem(m, 'kkphim'));
+  // 4. Ultimate Fallback: High Quality Pre-curated Seed List (all movies -> type movie avoids tv 404)
+  const fallbackList = SEED_HERO_POPULAR.map((m) => normalizeMovieItem({ ...(m as any), tmdb: { ...((m as any).tmdb || {}), type: 'movie' } }, 'kkphim'));
   saveCacheToFirebase('hero_banner', { items: fallbackList, lastUpdated: nowTs });
   return fallbackList;
 }
@@ -835,7 +841,7 @@ export function tmdbTrendingToMovie(item: TmdbTrendingItem): any {
     lang: "Vietsub",
     year,
     view: Math.round((item.vote_average || 0) * 1000),
-    tmdb: { id: item.tmdbId },
+    tmdb: { id: item.tmdbId, type: 'movie' },
     source: "kkphim",
     sourceLabel: "TMDB Hot",
   };

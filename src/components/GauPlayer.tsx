@@ -93,6 +93,11 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   // intro/recap/outro segments (single fetch per episode, no cache)
   const [segments, setSegments] = useState<SegmentsResponse | null>(null);
   const [activeSegment, setActiveSegment] = useState<'intro' | 'recap' | 'outro' | null>(null);
+  // Netflix-style auto next episode (persisted)
+  const [autoNextEnabled, setAutoNextEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem('gau_auto_next_episode') !== '0'; } catch { return true; }
+  });
+  const nextFillRef = useRef<HTMLSpanElement>(null);
 
   // timeline refs like chophim n4
   const progressBarRef = useRef<HTMLDivElement>(null);
@@ -156,6 +161,30 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     }
     if (seg && typeof seg.end_sec === 'number') v.currentTime = seg.end_sec + 0.2;
   }, [segments, nextEpisode, currentServer, onSelectEpisode]);
+
+  // Netflix-style auto next: one 3s timer + button fill animation driven by the
+  // same clock (Web Animations API), so the fill hits 100% exactly when we advance.
+  useEffect(() => {
+    if (activeSegment !== 'outro' || !nextEpisode || !autoNextEnabled) return;
+    const t = window.setTimeout(() => {
+      onSelectEpisode(nextEpisode, currentServer);
+    }, 3000);
+    try {
+      nextFillRef.current?.animate(
+        [{ width: '0%' }, { width: '100%' }],
+        { duration: 3000, easing: 'linear', fill: 'forwards' },
+      );
+    } catch { /* WAAPI unsupported -> plain button, timer still fires */ }
+    return () => window.clearTimeout(t);
+  }, [activeSegment, nextEpisode, autoNextEnabled, currentEpisode.slug, currentServer, onSelectEpisode]);
+
+  const toggleAutoNext = useCallback(() => {
+    setAutoNextEnabled(prev => {
+      const next = !prev;
+      try { localStorage.setItem('gau_auto_next_episode', next ? '1' : '0'); } catch {}
+      return next;
+    });
+  }, []);
 
   const resetControlsTimer = useCallback(() => {
     setShowControls(true);
@@ -408,7 +437,9 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     if (progressInputRef.current && v.duration) {
       progressInputRef.current.value = String((cur / v.duration) * 100);
     }
-  }, [onTimeUpdate]);
+  // NOTE: segments must be in deps — otherwise this handler keeps the stale
+  // initial null and the skip button never appears even with data loaded.
+  }, [onTimeUpdate, segments]);
 
   // controls handlers
   const togglePlay = useCallback(() => {
@@ -622,19 +653,30 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
         {activeSegment && (
           <div className="absolute bottom-20 right-4 sm:bottom-24 sm:right-6 z-30 pointer-events-auto">
             {activeSegment === 'intro' && (
-              <button onClick={(e) => { e.stopPropagation(); handleSkipSegment('intro'); }} className="flex items-center gap-2 bg-white text-black px-4 py-2.5 rounded-lg text-sm font-bold shadow-2xl hover:bg-white/90 active:scale-95 transition-all border border-black/10">
+              <button onClick={(e) => { e.stopPropagation(); handleSkipSegment('intro'); }} className="cursor-pointer flex items-center gap-2 bg-white text-black px-4 py-2.5 rounded-lg text-sm font-bold shadow-2xl hover:bg-white/90 active:scale-95 transition-all border border-black/10">
                 <SkipForward className="w-4 h-4" /> Bỏ qua phần giới thiệu
               </button>
             )}
             {activeSegment === 'recap' && (
-              <button onClick={(e) => { e.stopPropagation(); handleSkipSegment('recap'); }} className="flex items-center gap-2 bg-white text-black px-4 py-2.5 rounded-lg text-sm font-bold shadow-2xl hover:bg-white/90 active:scale-95 transition-all border border-black/10">
+              <button onClick={(e) => { e.stopPropagation(); handleSkipSegment('recap'); }} className="cursor-pointer flex items-center gap-2 bg-white text-black px-4 py-2.5 rounded-lg text-sm font-bold shadow-2xl hover:bg-white/90 active:scale-95 transition-all border border-black/10">
                 <SkipForward className="w-4 h-4" /> Bỏ qua tóm tắt
               </button>
             )}
             {activeSegment === 'outro' && (
-              <button onClick={(e) => { e.stopPropagation(); handleSkipSegment('outro'); }} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold shadow-2xl hover:bg-blue-500 active:scale-95 transition-all">
-                <SkipForward className="w-4 h-4" /> {nextEpisode ? 'Tập tiếp theo' : 'Bỏ qua outro'}
-              </button>
+              nextEpisode ? (
+                <button onClick={(e) => { e.stopPropagation(); handleSkipSegment('outro'); }} className="cursor-pointer relative overflow-hidden flex items-center gap-2.5 bg-white text-black pl-4 pr-4 py-2.5 rounded-lg text-sm font-bold shadow-2xl hover:bg-white/90 active:scale-95 transition-all border border-black/10 min-w-[210px]">
+                  {/* Netflix-style: whole button is the progress bar, fill 0 -> 100% in 3s */}
+                  {autoNextEnabled && (
+                    <span ref={nextFillRef} className="absolute inset-y-0 left-0 bg-black/15" style={{ width: '0%' }} />
+                  )}
+                  <SkipForward className="w-4 h-4 shrink-0 relative" />
+                  <span className="relative flex-1 text-left">Tập tiếp theo</span>
+                </button>
+              ) : (
+                <button onClick={(e) => { e.stopPropagation(); handleSkipSegment('outro'); }} className="cursor-pointer flex items-center gap-2 bg-white text-black px-4 py-2.5 rounded-lg text-sm font-bold shadow-2xl hover:bg-white/90 active:scale-95 transition-all border border-black/10">
+                  <SkipForward className="w-4 h-4" /> Bỏ qua outro
+                </button>
+              )
             )}
           </div>
         )}
@@ -763,6 +805,13 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
                           {[0.5,1,1.25,1.5,2].map(v => (
                             <button key={v} onClick={() => { if(videoRef.current) videoRef.current.playbackRate=v; setPlaybackRate(v); }} className={`px-2 py-1.5 rounded-lg text-xs font-medium ${playbackRate===v ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 hover:bg-white/15'}`}>{v}x</button>
                           ))}
+                        </div>
+                      </div>
+                      <div className="mb-3">
+                        <p className="text-[11px] font-bold text-white/50 uppercase mb-2">Tự động chuyển tập</p>
+                        <div className="grid grid-cols-2 gap-1">
+                          <button onClick={() => { if (!autoNextEnabled) toggleAutoNext(); }} className={`px-2 py-1.5 rounded-lg text-xs font-medium ${autoNextEnabled ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 hover:bg-white/15'}`}>Bật</button>
+                          <button onClick={() => { if (autoNextEnabled) toggleAutoNext(); }} className={`px-2 py-1.5 rounded-lg text-xs font-medium ${!autoNextEnabled ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 hover:bg-white/15'}`}>Tắt</button>
                         </div>
                       </div>
                       <div>
