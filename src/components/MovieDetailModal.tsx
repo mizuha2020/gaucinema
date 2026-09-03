@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { EpisodeServer, Movie, MovieEpisode, RoomListItem, RoomVisibility, Account, UserProfile } from '../types';
-import { movieApi, getImageUrl, getTmdbAssets } from '../services/movieApi';
+import { movieApi, getImageUrl, getTmdbAssets, tmdbFetch } from '../services/movieApi';
 import {
   Play,
   Plus,
@@ -22,6 +22,7 @@ import {
   Loader2,
   Download,
   Trash2,
+  CalendarClock,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import DOMPurify from 'dompurify';
@@ -40,6 +41,7 @@ interface MovieDetailModalProps {
   onSelectRelatedMovie?: (movie: Movie) => void;
   onSearchSubmit?: (query: string) => void;
   onSelectGenre?: (genreSlug: string) => void;
+  onSelectCountry?: (countrySlug: string) => void;
   currentAccount?: Account | null;
   activeProfile?: UserProfile | null;
   activeRooms?: RoomListItem[];
@@ -87,6 +89,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   onSelectRelatedMovie,
   onSearchSubmit,
   onSelectGenre,
+  onSelectCountry,
   currentAccount,
   activeProfile,
   activeRooms = [],
@@ -202,40 +205,64 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   const currentData = fullMovieData || movie;
 
   // --- Detail backdrop logic: ưu tiên TMDB backdrop nếu có tmdb, fallback thumb_url ---
+  // 1+2: Backend đã enrich trong getMovieDetail, FE chỉ cần fallback + preload mượt
   const [tmdbBackdrop, setTmdbBackdrop] = useState<string | null>(null);
+  const [loadedTmdbSrc, setLoadedTmdbSrc] = useState<string | null>(null);
 
+  // Song song: nếu movie prop đã có tmdb.id thì fetch ngay, không chờ fullMovieData (giảm waterfall)
   useEffect(() => {
-    if (!currentData) { setTmdbBackdrop(null); return; }
-    const primaryUrl = currentData.backdrops?.find((b) => b.primary)?.url || '';
-    const hasTmdbInline = primaryUrl.includes('image.tmdb.org') || (currentData.backdrop_url || '').includes('image.tmdb.org');
+    const target = currentData || movie;
+    if (!target) { setTmdbBackdrop(null); return; }
+    const primaryUrl = target.backdrops?.find((b) => b.primary)?.url || '';
+    const hasTmdbInline = primaryUrl.includes('image.tmdb.org') || (target.backdrop_url || '').includes('image.tmdb.org');
     if (hasTmdbInline) { setTmdbBackdrop(null); return; }
-    const tmdbId = (currentData as any)?.tmdb?.id ? String((currentData as any).tmdb.id).trim() : '';
+    const tmdbId = (target as any)?.tmdb?.id ? String((target as any).tmdb.id).trim() : '';
     if (!tmdbId || !/^\d+$/.test(tmdbId)) { setTmdbBackdrop(null); return; }
+    const tmdbType = (target as any)?.tmdb?.type ? String((target as any).tmdb.type).trim() : undefined;
     let cancelled = false;
-    getTmdbAssets(tmdbId).then((assets) => {
+    getTmdbAssets(tmdbId, tmdbType).then((assets) => {
       if (!cancelled && assets.backdropUrl) setTmdbBackdrop(assets.backdropUrl);
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, [currentData?.slug, (currentData as any)?.tmdb?.id, currentData?.backdrop_url, currentData?.backdrops]);
+  }, [movie?.slug, (movie as any)?.tmdb?.id, (movie as any)?.tmdb?.type, currentData?.slug, (currentData as any)?.tmdb?.id, (currentData as any)?.tmdb?.type, currentData?.backdrop_url, currentData?.backdrops]);
+
+  // Preload TMDB image trước khi đổi src -> tránh flash kkphim -> tmdb khi ảnh chưa tải xong
+  useEffect(() => {
+    if (!tmdbBackdrop) { setLoadedTmdbSrc(null); return; }
+    let cancelled = false;
+    const img = new Image();
+    img.src = tmdbBackdrop;
+    // Nếu đã cache thì onload có thể không fire -> check complete
+    const done = () => { if (!cancelled) setLoadedTmdbSrc(tmdbBackdrop); };
+    img.onload = done;
+    img.onerror = () => { if (!cancelled) setLoadedTmdbSrc(null); };
+    if ((img as any).complete && img.naturalWidth) done();
+    return () => { cancelled = true; };
+  }, [tmdbBackdrop]);
+
+  // Reset loaded khi đổi phim
+  useEffect(() => { setLoadedTmdbSrc(null); setTmdbBackdrop(null); }, [movie?.slug]);
+
+  const fallbackThumbSrc = useMemo(() => {
+    if (!currentData) return '';
+    return getImageUrl(currentData.thumb_url || currentData.poster_url, (currentData as any).source);
+  }, [currentData]);
 
   const detailBackdropSrc = useMemo(() => {
     if (!currentData) return '';
-    // Nếu có TMDB backdrop fetch được -> ưu tiên cao nhất (theo yêu cầu: có tmdb thì dùng backdrop tmdb)
-    if (tmdbBackdrop) return tmdbBackdrop;
-    // 1. Ưu tiên backdrops primary (đã là TMDB backdrop nếu có)
+    if (loadedTmdbSrc) return loadedTmdbSrc;
     const primary = currentData.backdrops?.find((b) => b.primary)?.url;
     if (primary) {
       if (primary.includes('image.tmdb.org')) return primary.includes('/original') ? primary : primary.replace(/\/w\d+/, '/original');
-      // Nếu primary không phải TMDB nhưng có tmdbId thì đã fetch ở trên, còn lại dùng primary
       return primary;
     }
-    // 2. backdrop_url trực tiếp - chỉ dùng nếu là TMDB
     if (currentData.backdrop_url && currentData.backdrop_url.includes('image.tmdb.org')) {
       return currentData.backdrop_url.includes('/original') ? currentData.backdrop_url : currentData.backdrop_url.replace(/\/w\d+/, '/original');
     }
-    // 3. Fallback thumb_url / poster_url theo yêu cầu (khi không có tmdb)
-    return getImageUrl(currentData.thumb_url || currentData.poster_url, (currentData as any).source);
-  }, [currentData, tmdbBackdrop]);
+    return fallbackThumbSrc;
+  }, [currentData, loadedTmdbSrc, fallbackThumbSrc]);
+
+  const isShowingTmdb = Boolean(detailBackdropSrc && detailBackdropSrc !== fallbackThumbSrc && detailBackdropSrc.includes('image.tmdb.org'));
 
   const inList =
     typeof isInMyList === 'function'
@@ -244,6 +271,51 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
         : false
       : Boolean(isInMyList);
   const currentServer = episodes[selectedServerIndex];
+
+  // Next episode + full schedule cho phim bộ chưa hoàn thành (giống chophim.app)
+  const [nextEpisode, setNextEpisode] = useState<{ episode_number: number; air_date: string; name?: string } | null>(null);
+  const [seasonEpisodes, setSeasonEpisodes] = useState<Array<{ episode_number: number; air_date: string | null; name?: string }>>([]);
+  const [showSchedule, setShowSchedule] = useState(false);
+
+  useEffect(() => {
+    if (!currentData) { setNextEpisode(null); setSeasonEpisodes([]); setShowSchedule(false); return; }
+    const isSeries = currentData.type === 'series' || currentData.type === 'tvshows' || (currentData as any)?.tmdb?.type === 'tv';
+    if (!isSeries) { setNextEpisode(null); setSeasonEpisodes([]); return; }
+    const status = (currentData.status || '').toLowerCase();
+    const isCompleted = status === 'completed' || status === 'ended';
+    const epCur = currentData.episode_current || '';
+    const epTotal = currentData.episode_total || '';
+    if (epTotal && epCur.includes(epTotal)) { setNextEpisode(null); setSeasonEpisodes([]); return; }
+    if (isCompleted) { setNextEpisode(null); setSeasonEpisodes([]); return; }
+    const tmdbId = (currentData as any)?.tmdb?.id ? String((currentData as any).tmdb.id).trim() : '';
+    const tmdbType = (currentData as any)?.tmdb?.type ? String((currentData as any).tmdb.type).trim() : '';
+    const tmdbSeason = (currentData as any)?.tmdb?.season ?? 1;
+    if (!tmdbId || !/^\d+$/.test(tmdbId) || tmdbType !== 'tv') { setNextEpisode(null); setSeasonEpisodes([]); return; }
+    let cancelled = false;
+    tmdbFetch(`tv/${tmdbId}`, { language: 'vi-VN' }).then((data: any) => {
+      if (cancelled) return;
+      const next = data?.next_episode_to_air;
+      if (next?.air_date && next?.episode_number) {
+        const air = new Date(next.air_date);
+        if (!isNaN(air.getTime())) setNextEpisode({ episode_number: next.episode_number, air_date: next.air_date, name: next.name });
+        else setNextEpisode(null);
+      } else {
+        setNextEpisode(null);
+      }
+      // Fetch season để lấy lịch chiếu các tập khác cho dropdown
+      const seasonNum = Number(tmdbSeason) || 1;
+      return tmdbFetch(`tv/${tmdbId}/season/${seasonNum}`, { language: 'vi-VN' }).catch(() => null);
+    }).then((seasonData: any) => {
+      if (cancelled || !seasonData?.episodes?.length) return;
+      const eps = (seasonData.episodes as any[]).map((ep: any) => ({
+        episode_number: ep.episode_number,
+        air_date: ep.air_date || null,
+        name: ep.name || '',
+      }));
+      setSeasonEpisodes(eps);
+    }).catch(() => { if (!cancelled) { setNextEpisode(null); setSeasonEpisodes([]); } });
+    return () => { cancelled = true; };
+  }, [currentData?.slug, (currentData as any)?.tmdb?.id, (currentData as any)?.tmdb?.type, (currentData as any)?.tmdb?.season, currentData?.status, currentData?.episode_current, currentData?.episode_total, currentData?.type]);
 
   // Offline save state (only on native) - đặt sau currentData để tránh TS2448
   const isNativeApp = useMemo(() => {
@@ -373,6 +445,48 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   };
   const serverEpisodes = currentServer?.server_data || [];
 
+  // Build full episode list: hiển thị đủ số tập, tập chưa ra disable + soon (chophim style)
+  const allEpisodesForDisplay = useMemo(() => {
+    const base = serverEpisodes as Array<MovieEpisode & { isSoon?: boolean; airDate?: string | null }>;
+    // Ưu tiên TMDB season length
+    let total = 0;
+    if (seasonEpisodes.length > 0) total = seasonEpisodes.length;
+    else if (currentData?.episode_total) {
+      const parsed = parseInt(String(currentData.episode_total).replace(/\D/g, ''), 10);
+      if (!isNaN(parsed) && parsed > 0) total = parsed;
+    }
+    if (!total || total <= base.length) return base;
+    // Tạo map số tập đã có
+    const existingNums = new Set<number>();
+    base.forEach((ep) => {
+      const m = String(ep.name).match(/\d+/);
+      const n = m ? parseInt(m[0], 10) : NaN;
+      if (!isNaN(n)) existingNums.add(n);
+      else existingNums.add(9999);
+    });
+    const full: Array<MovieEpisode & { isSoon?: boolean; airDate?: string | null }> = [...base];
+    for (let i = 1; i <= total; i++) {
+      if (existingNums.has(i)) continue;
+      const sched = seasonEpisodes.find((s) => s.episode_number === i);
+      full.push({
+        name: String(i),
+        slug: `soon-${i}`,
+        filename: currentData?.name || '',
+        link_embed: '',
+        link_m3u8: '',
+        isSoon: true,
+        airDate: sched?.air_date || null,
+      } as any);
+    }
+    // Sắp xếp theo số tập
+    full.sort((a, b) => {
+      const na = parseInt(String(a.name).match(/\d+/)?.[0] || '0', 10);
+      const nb = parseInt(String(b.name).match(/\d+/)?.[0] || '0', 10);
+      return na - nb;
+    });
+    return full;
+  }, [serverEpisodes, seasonEpisodes, currentData?.episode_total, currentData?.name]);
+
   // Parse trailer url from movie data
   const trailerInfo = useMemo(() => {
     return parseTrailerUrl(currentData?.trailer_url);
@@ -417,13 +531,12 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
     }
   };
 
-  const filteredEpisodes = episodeSearch.trim()
-    ? serverEpisodes.filter(
-        (ep) =>
-          ep.name.toLowerCase().includes(episodeSearch.toLowerCase()) ||
-          ep.slug.toLowerCase().includes(episodeSearch.toLowerCase())
-      )
-    : serverEpisodes;
+  const filteredEpisodes = useMemo(() => {
+    const src = allEpisodesForDisplay as Array<MovieEpisode & { isSoon?: boolean }>;
+    if (!episodeSearch.trim()) return src;
+    const q = episodeSearch.toLowerCase();
+    return src.filter((ep) => ep.name.toLowerCase().includes(q) || ep.slug.toLowerCase().includes(q));
+  }, [allEpisodesForDisplay, episodeSearch]);
 
   const handleStartPlay = async () => {
     if (!currentData) return;
@@ -491,64 +604,223 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
           <X className="w-5 h-5 transition-transform group-hover:rotate-90" />
         </button>
 
+        {/* Loading overlay - minimalist luxurious, mờ sâu */}
+        <AnimatePresence>
+          {isLoading && (
+            <motion.div
+              id="detail-loading-overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.35, ease: 'easeOut' }}
+              className="absolute inset-0 z-40 flex items-center justify-center pointer-events-auto"
+              style={{
+                background: 'radial-gradient(ellipse at center, rgba(12,20,39,0.55) 0%, rgba(6,10,20,0.72) 55%, rgba(2,4,10,0.88) 100%)',
+                backdropFilter: 'blur(28px) saturate(1.25)',
+                WebkitBackdropFilter: 'blur(28px) saturate(1.25)',
+              }}
+            >
+              {/* subtle grain / vignette */}
+              <div className="absolute inset-0 bg-gradient-to-b from-white/[0.04] via-transparent to-black/20 pointer-events-none" />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.94, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: 6 }}
+                transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1], delay: 0.05 }}
+                className="relative flex flex-col items-center"
+              >
+                {/* soft ambient glow */}
+                <div className="absolute -inset-16 bg-sky-400/10 blur-[50px] rounded-full pointer-events-none" />
+                <div className="absolute -inset-8 bg-indigo-400/5 blur-[36px] rounded-full pointer-events-none" />
+
+                {/* minimalist spinner - thin hairline */}
+                <div className="relative w-14 h-14 flex items-center justify-center">
+                  <div className="absolute inset-0 rounded-full border border-white/[0.07]" />
+                  <motion.div
+                    className="absolute inset-0 rounded-full border border-t-white/90 border-r-white/15 border-b-white/5 border-l-white/15"
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1.2, repeat: Infinity, ease: 'linear' }}
+                  />
+                  <div className="w-[3px] h-[3px] rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.9),0_0_22px_rgba(125,211,252,0.5)]" />
+                </div>
+
+                <div className="mt-7 flex flex-col items-center gap-3">
+                  <p className="text-[10px] sm:text-[11px] tracking-[0.42em] font-light text-white/85 uppercase">
+                    Đang tải
+                  </p>
+                  {/* minimalist dots */}
+                  <div className="flex items-center gap-1.5">
+                    <motion.span
+                      className="w-1 h-1 rounded-full bg-white/90"
+                      animate={{ opacity: [0.3, 1, 0.3], scale: [0.8, 1, 0.8] }}
+                      transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
+                    />
+                    <motion.span
+                      className="w-1 h-1 rounded-full bg-white/90"
+                      animate={{ opacity: [0.3, 1, 0.3], scale: [0.8, 1, 0.8] }}
+                      transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut', delay: 0.2 }}
+                    />
+                    <motion.span
+                      className="w-1 h-1 rounded-full bg-white/90"
+                      animate={{ opacity: [0.3, 1, 0.3], scale: [0.8, 1, 0.8] }}
+                      transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut', delay: 0.4 }}
+                    />
+                  </div>
+                  <p className="text-[11px] font-light tracking-wide text-white/30 max-w-[220px] truncate text-center">
+                    {currentData?.name || movie?.name || 'Gấu Cinema'}
+                  </p>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Full-bleed Hero Stage (Panoramic Backdrop) */}
         <section
           id="detail-hero-stage"
           className="relative w-full min-h-[480px] sm:min-h-[520px] md:min-h-[580px] lg:min-h-[640px] bg-black select-none flex flex-col justify-end"
         >
             <div className="relative w-full h-full min-h-[480px] sm:min-h-[520px] md:min-h-[580px] lg:min-h-[640px] flex flex-col justify-end pt-24 sm:pt-28 pb-8 sm:pb-12">
+              {/* Base layer: thumb_url làm placeholder mờ, luôn có để không trống khi chờ TMDB */}
               <img
-                src={detailBackdropSrc}
-                alt={currentData.name}
+                src={fallbackThumbSrc}
+                alt=""
+                aria-hidden
                 className="absolute inset-0 w-full h-full object-cover object-top sm:object-center pointer-events-none"
                 onError={(e) => {
-                  const fallback = getImageUrl(currentData.thumb_url || currentData.poster_url, (currentData as any).source);
-                  const img = e.target as HTMLImageElement;
-                  if (img.src !== fallback) {
-                    img.src = fallback;
-                    return;
-                  }
-                  img.src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
+                  (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
                 }}
               />
+              {/* Top layer: TMDB backdrop - chỉ hiện khi đã preload xong, fade mượt */}
+              <AnimatePresence>
+                {isShowingTmdb && (
+                  <motion.img
+                    key={detailBackdropSrc}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.6, ease: 'easeOut' }}
+                    src={detailBackdropSrc}
+                    alt={currentData.name}
+                    className="absolute inset-0 w-full h-full object-cover object-top sm:object-center pointer-events-none"
+                    onError={(e) => {
+                      const img = e.target as HTMLImageElement;
+                      img.style.display = 'none';
+                    }}
+                  />
+                )}
+              </AnimatePresence>
+              {/* Khi không có TMDB, dùng single img với detailBackdropSrc (chính là thumb) để giữ logic cũ */}
+              {!isShowingTmdb && detailBackdropSrc !== fallbackThumbSrc && (
+                <img
+                  src={detailBackdropSrc}
+                  alt={currentData.name}
+                  className="absolute inset-0 w-full h-full object-cover object-top sm:object-center pointer-events-none"
+                  onError={(e) => {
+                    const fallback = fallbackThumbSrc;
+                    const img = e.target as HTMLImageElement;
+                    if (img.src !== fallback) { img.src = fallback; return; }
+                    img.src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
+                  }}
+                />
+              )}
               {/* Multi-layered cinematic gradients */}
               <div className="absolute inset-0 bg-gradient-to-t from-[#060a14] via-[#060a14]/65 to-black/30 pointer-events-none" />
               <div className="absolute inset-0 bg-gradient-to-r from-[#060a14]/95 via-[#060a14]/50 to-transparent pointer-events-none" />
 
-              {/* Hero Banner Content Overlay */}
+              {/* Hero Content - giống chophim.app: poster trái + info phải */}
               <div className="relative z-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
-                <div className="max-w-3xl space-y-3 sm:space-y-4">
-                  {/* Badges */}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-xs font-black uppercase px-3 py-1 rounded-full shadow-lg shadow-blue-600/30">
-                      Gấu Cinema HD
-                    </span>
-                    {currentData.quality && (
-                      <span className="bg-slate-900/90 text-sky-300 border border-blue-800/80 text-xs font-semibold px-2.5 py-0.5 rounded-md">
-                        {currentData.quality}
-                      </span>
-                    )}
-                    {currentData.lang && (
-                      <span className="bg-slate-900/90 text-slate-200 border border-slate-700 text-xs font-semibold px-2.5 py-0.5 rounded-md">
-                        {currentData.lang}
-                      </span>
-                    )}
-                    {currentData.year && (
-                      <span className="text-slate-300 text-xs font-medium bg-slate-900/60 px-2 py-0.5 rounded">
-                        {currentData.year}
-                      </span>
-                    )}
+                <div className="flex flex-row gap-5 sm:gap-7 lg:gap-8 items-end">
+                  {/* Poster - chophim style */}
+                  <div className="shrink-0 hidden sm:block">
+                    <div className="w-[160px] sm:w-[180px] lg:w-[210px] aspect-[2/3] rounded-xl sm:rounded-2xl overflow-hidden shadow-[0_12px_40px_rgba(0,0,0,0.6)] border border-white/10 bg-slate-900">
+                      <img
+                        src={getImageUrl(currentData.poster_url || currentData.thumb_url, (currentData as any).source)}
+                        alt={currentData.name}
+                        className="w-full h-full object-cover"
+                        loading="eager"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400&auto=format&fit=crop&q=80';
+                        }}
+                      />
+                    </div>
+                  </div>
+                  {/* Mobile poster small (inline) */}
+                  <div className="shrink-0 sm:hidden">
+                    <div className="w-[112px] aspect-[2/3] rounded-xl overflow-hidden shadow-xl border border-white/10 bg-slate-900">
+                      <img
+                        src={getImageUrl(currentData.poster_url || currentData.thumb_url, (currentData as any).source)}
+                        alt={currentData.name}
+                        className="w-full h-full object-cover"
+                        loading="eager"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400&auto=format&fit=crop&q=80';
+                        }}
+                      />
+                    </div>
                   </div>
 
-                  {/* Title & Origin Name */}
-                  <h1 className="text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-black text-white drop-shadow-2xl tracking-tight leading-tight">
-                    {currentData.name}
-                  </h1>
-                  {currentData.origin_name && (
-                    <p className="text-xs sm:text-base md:text-lg text-slate-300 font-medium drop-shadow">
-                      {currentData.origin_name}
-                    </p>
-                  )}
+                  <div className="flex-1 min-w-0 space-y-3 sm:space-y-4 pb-1">
+                    {/* Badges - chophim: FHD Song Ngữ Tập 10 */}
+                    <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                      <span className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-[10px] sm:text-xs font-black uppercase px-2.5 sm:px-3 py-1 rounded-full shadow-lg shadow-blue-600/30">
+                        Gấu Cinema HD
+                      </span>
+                      {currentData.quality && (
+                        <span className="bg-slate-900/90 text-sky-300 border border-blue-800/80 text-[10px] sm:text-xs font-semibold px-2 py-0.5 rounded-md">
+                          {currentData.quality}
+                        </span>
+                      )}
+                      {currentData.lang && (
+                        <span className="bg-slate-900/90 text-slate-200 border border-slate-700 text-[10px] sm:text-xs font-semibold px-2 py-0.5 rounded-md">
+                          {currentData.lang}
+                        </span>
+                      )}
+                      {currentData.episode_current && (
+                        <span className="bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[10px] sm:text-xs font-bold px-2 py-0.5 rounded-md">
+                          {currentData.episode_current}
+                        </span>
+                      )}
+                      {(currentData as any)?.tmdb?.vote_average ? (
+                        <span className="bg-yellow-500 text-black text-[10px] sm:text-xs font-black px-1.5 sm:px-2 py-0.5 rounded flex items-center gap-1">
+                          TMDb {(currentData as any).tmdb.vote_average.toFixed(1)}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    {/* Title & Origin Name */}
+                    <div className="space-y-1">
+                      <h1 className="text-xl sm:text-3xl md:text-4xl lg:text-5xl font-black text-white drop-shadow-2xl tracking-tight leading-tight line-clamp-2">
+                        {currentData.name}
+                      </h1>
+                      {currentData.origin_name && (
+                        <p className="text-xs sm:text-sm md:text-base text-slate-300 font-medium drop-shadow line-clamp-1">
+                          {currentData.origin_name}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Meta line chophim: Trạng thái / Loại / Năm / Thời lượng */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] sm:text-xs text-slate-300">
+                      {currentData.episode_current && currentData.episode_total && (
+                        <span className="flex items-center gap-1"><span className="text-slate-500">Trạng thái:</span> <span className="text-white font-semibold">{currentData.episode_current} / {currentData.episode_total}</span></span>
+                      )}
+                      {!currentData.episode_total && currentData.episode_current && (
+                        <span className="flex items-center gap-1"><span className="text-slate-500">Trạng thái:</span> <span className="text-white font-semibold">{currentData.episode_current}</span></span>
+                      )}
+                      {currentData.type && (
+                        <span className="flex items-center gap-1"><span className="text-slate-500">Loại:</span> <span className="text-white">{currentData.type === 'series' ? 'Phim Bộ' : currentData.type === 'single' ? 'Phim Lẻ' : currentData.type}</span></span>
+                      )}
+                      {currentData.year && (
+                        <span className="flex items-center gap-1"><span className="text-slate-500">Năm:</span> <span className="text-white">{currentData.year}</span></span>
+                      )}
+                      {currentData.time && (
+                        <span className="flex items-center gap-1"><span className="text-slate-500">Thời lượng:</span> <span className="text-white">{currentData.time}</span></span>
+                      )}
+                      {currentData.country?.[0] && (
+                        <span className="flex items-center gap-1"><span className="text-slate-500">Quốc gia:</span> <span className="text-white">{currentData.country[0].name}</span></span>
+                      )}
+                    </div>
 
                   {/* Primary Hero Actions (Chỉ có 1 nút Xem Trailer ở đây) */}
                   <div className="flex flex-wrap items-center gap-3 pt-1 sm:pt-2">
@@ -698,6 +970,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                   </div>
                 </div>
               </div>
+            </div>
             </div>
           </section>
 
@@ -949,10 +1222,36 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
 
                 {currentData.country && currentData.country.length > 0 && (
                   <div>
-                    <span className="text-slate-400 block mb-1 font-semibold">Quốc gia:</span>
-                    <div className="flex items-center gap-1.5 text-slate-200">
-                      <Globe className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{currentData.country.map((c) => c.name).join(', ')}</span>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-slate-400 font-semibold flex items-center gap-1.5">
+                        <Globe className="w-3.5 h-3.5 text-slate-400" />
+                        <span>Quốc gia:</span>
+                      </span>
+                      {onSearchSubmit && (
+                        <span className="text-[10px] text-slate-500 italic">Bấm để tìm phim</span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {currentData.country.map((c) => (
+                        <button
+                          key={c.slug}
+                          type="button"
+                          onClick={() => {
+                            if (onSelectCountry) {
+                              onSelectCountry(c.slug);
+                              onClose();
+                            } else if (onSearchSubmit) {
+                              onSearchSubmit(c.name);
+                              onClose();
+                            }
+                          }}
+                          title={`Lọc phim quốc gia ${c.name}`}
+                          className="group/country inline-flex items-center gap-1.5 bg-slate-900/90 hover:bg-sky-600/90 text-slate-200 hover:text-white px-2.5 py-1 rounded-lg border border-slate-800 hover:border-sky-500 text-xs font-medium transition-all active:scale-95 text-left cursor-pointer"
+                        >
+                          <Search className="w-3 h-3 text-slate-400 group-hover/country:text-white transition-colors" />
+                          <span>{c.name}</span>
+                        </button>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -972,7 +1271,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                     Danh Sách Tập Phim
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Tổng cộng {serverEpisodes.length} tập • Hỗ trợ phát chuẩn Full HD
+                    Tổng cộng {allEpisodesForDisplay.length} tập • Hỗ trợ phát chuẩn Full HD
                   </p>
                 </div>
               </div>
@@ -1004,8 +1303,82 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
               )}
             </div>
 
+            {/* Chophim-style next episode notification + dropdown lịch chiếu */}
+            {nextEpisode && (() => {
+              const airDate = new Date(nextEpisode.air_date);
+              const isValid = !isNaN(airDate.getTime());
+              const formatted = isValid
+                ? airDate.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })
+                : nextEpisode.air_date;
+              const today = new Date(); today.setHours(0,0,0,0);
+              const air0 = new Date(airDate); air0.setHours(0,0,0,0);
+              const diffDays = Math.round((air0.getTime() - today.getTime()) / 86400000);
+              let countdown = '';
+              if (diffDays === 0) countdown = ' • Hôm nay';
+              else if (diffDays === 1) countdown = ' • Ngày mai';
+              else if (diffDays > 1 && diffDays <= 7) countdown = ` • Còn ${diffDays} ngày nữa`;
+              else if (diffDays < 0) countdown = ` • Đã qua ${Math.abs(diffDays)} ngày`;
+              return (
+                <div className="rounded-xl bg-gradient-to-r from-sky-500/10 via-blue-500/10 to-indigo-500/10 border border-sky-500/20 backdrop-blur-sm overflow-hidden">
+                  <div className="flex items-start gap-3 sm:gap-3.5 p-3.5 sm:p-4">
+                    <div className="shrink-0 w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-sky-500/15 border border-sky-500/20 flex items-center justify-center text-sky-400">
+                      <CalendarClock className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </div>
+                    <div className="flex-1 min-w-0 space-y-0.5">
+                      <p className="text-xs sm:text-sm font-bold text-sky-200">
+                        Tập {nextEpisode.episode_number} dự kiến phát sóng
+                      </p>
+                      <p className="text-xs sm:text-sm text-slate-200">
+                        <span className="font-semibold text-white capitalize">{formatted}</span>
+                        <span className="text-sky-300 font-medium">{countdown}</span>
+                      </p>
+                    </div>
+                    {seasonEpisodes.length > 0 && (
+                      <button
+                        onClick={() => setShowSchedule(!showSchedule)}
+                        className="shrink-0 flex items-center gap-1.5 text-xs font-semibold text-sky-300 hover:text-white bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/20 px-3 py-1.5 rounded-full transition-colors cursor-pointer"
+                      >
+                        <span>Lịch chiếu</span>
+                        <motion.span animate={{ rotate: showSchedule ? 180 : 0 }} transition={{ duration: 0.2 }} className="text-[10px]">▼</motion.span>
+                      </button>
+                    )}
+                  </div>
+                  <AnimatePresence>
+                    {showSchedule && seasonEpisodes.length > 0 && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.25, ease: 'easeOut' }}
+                        className="border-t border-sky-500/15 bg-slate-900/30 overflow-hidden"
+                      >
+                        <div className="p-3 sm:p-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-64 overflow-y-auto pr-1">
+                            {seasonEpisodes.map((ep) => {
+                              const epAir = ep.air_date ? new Date(ep.air_date) : null;
+                              const isFuture = epAir ? epAir.getTime() > Date.now() : false;
+                              const fmt = epAir && !isNaN(epAir.getTime())
+                                ? epAir.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                                : 'Chưa có lịch';
+                              return (
+                                <div key={ep.episode_number} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs border ${ep.episode_number === nextEpisode.episode_number ? 'bg-sky-500/15 border-sky-500/30 text-sky-200' : isFuture ? 'bg-slate-800/50 border-slate-700/50 text-slate-400' : 'bg-slate-800/80 border-slate-700/60 text-slate-200'}`}>
+                                  <span className="font-semibold">Tập {ep.episode_number}</span>
+                                  <span className="text-[11px]">{fmt}</span>
+                                  {isFuture && <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded">soon</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              );
+            })()}
+
             {/* Episode Search for long series */}
-            {serverEpisodes.length > 15 && (
+            {allEpisodesForDisplay.length > 15 && (
               <div className="max-w-xs">
                 <input
                   type="text"
@@ -1023,28 +1396,45 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                 Đang nạp danh sách tập phim...
               </div>
             ) : filteredEpisodes.length > 0 ? (
-              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-2.5 sm:gap-3 max-h-96 overflow-y-auto pr-1">
-                {filteredEpisodes.map((ep, idx) => (
-                  <button
-                    key={ep.slug || idx}
-                    id={`detail-ep-btn-${ep.slug}`}
-                    onClick={() => {
-                      if (onPlayEpisode) {
-                        onPlayEpisode(currentData, ep, currentServer);
-                      } else if (onPlayMovie) {
-                        onPlayMovie(currentData);
-                      }
-                    }}
-                    className="group flex flex-col items-center justify-center p-2.5 sm:p-3 bg-slate-900 hover:bg-blue-600 border border-slate-800 hover:border-blue-500 rounded-xl transition-all text-center cursor-pointer shadow-sm hover:scale-105 active:scale-95"
-                  >
-                    <span className="text-xs sm:text-sm font-bold text-white group-hover:text-white line-clamp-1">
-                      {ep.name.startsWith('Tập') ? ep.name : `Tập ${ep.name}`}
-                    </span>
-                    <span className="text-[10px] text-sky-400 group-hover:text-sky-100 flex items-center gap-1 mt-1 font-semibold">
-                      <Play className="w-2.5 h-2.5 fill-current" /> Phát HD
-                    </span>
-                  </button>
-                ))}
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-2.5 sm:gap-3 max-h-96 overflow-y-auto overflow-x-hidden p-1 -m-1 pr-2 scrollbar-thin">
+                {filteredEpisodes.map((ep, idx) => {
+                  const isSoon = (ep as any).isSoon;
+                  if (isSoon) {
+                    return (
+                      <div
+                        key={ep.slug || idx}
+                        id={`detail-ep-btn-${ep.slug}`}
+                        className="flex flex-col items-center justify-center p-2.5 sm:p-3 bg-slate-800/40 border border-slate-700/40 rounded-xl text-center opacity-60 cursor-not-allowed select-none"
+                      >
+                        <span className="text-xs sm:text-sm font-bold text-slate-400 line-clamp-1">
+                          {ep.name.startsWith('Tập') ? ep.name : `Tập ${ep.name}`}
+                        </span>
+                        <span className="text-[10px] bg-amber-500/15 text-amber-300 border border-amber-500/20 px-1.5 py-0.5 rounded-full mt-1 font-semibold">soon</span>
+                      </div>
+                    );
+                  }
+                  return (
+                    <button
+                      key={ep.slug || idx}
+                      id={`detail-ep-btn-${ep.slug}`}
+                      onClick={() => {
+                        if (onPlayEpisode) {
+                          onPlayEpisode(currentData, ep, currentServer);
+                        } else if (onPlayMovie) {
+                          onPlayMovie(currentData);
+                        }
+                      }}
+                      className="group flex flex-col items-center justify-center p-2.5 sm:p-3 bg-slate-900 hover:bg-blue-600 border border-slate-800 hover:border-blue-500 rounded-xl transition-colors duration-200 text-center cursor-pointer shadow-sm hover:shadow-md will-change-transform"
+                    >
+                      <span className="text-xs sm:text-sm font-bold text-white group-hover:text-white line-clamp-1">
+                        {ep.name.startsWith('Tập') ? ep.name : `Tập ${ep.name}`}
+                      </span>
+                      <span className="text-[10px] text-sky-400 group-hover:text-sky-100 flex items-center gap-1 mt-1 font-semibold">
+                        <Play className="w-2.5 h-2.5 fill-current" /> Phát HD
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             ) : (
               <div className="p-8 bg-slate-900/50 rounded-xl text-center text-slate-400 text-sm border border-slate-800">

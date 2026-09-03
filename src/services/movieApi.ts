@@ -207,19 +207,21 @@ export function clearTmdbAssetsCache() {
   }
 }
 
-export async function getTmdbAssets(tmdbId: string | number): Promise<{ backdropUrl: string | null; logoUrl: string | null }> {
+export async function getTmdbAssets(tmdbId: string | number, tmdbType?: string): Promise<{ backdropUrl: string | null; logoUrl: string | null }> {
   const id = String(tmdbId || "").trim();
   if (!id || !/^\d+$/.test(id)) return { backdropUrl: null, logoUrl: null };
+  const normalizedType = tmdbType === 'tv' ? 'tv' : tmdbType === 'movie' ? 'movie' : undefined;
+  const cacheKey = normalizedType ? `${id}:${normalizedType}` : id;
 
   // 1. Memory cache check
-  if (tmdbAssetsCacheClient.has(id)) return tmdbAssetsCacheClient.get(id)!;
+  if (tmdbAssetsCacheClient.has(cacheKey)) return tmdbAssetsCacheClient.get(cacheKey)!;
 
   let backdropUrl: string | null = null;
   let logoUrl: string | null = null;
 
   // 2. Try backend endpoint first (only if not running pure native localhost APK)
   try {
-    const fullUrl = getFullApiUrl(`/api/tmdb/backdrop/${id}`);
+    const fullUrl = getFullApiUrl(`/api/tmdb/backdrop/${id}${normalizedType ? `?type=${normalizedType}` : ''}`);
     const isLocalhostApk = typeof window !== 'undefined' && window.location.hostname === 'localhost' && !fullUrl.startsWith('http');
     if (!isLocalhostApk) {
       const data = await safeFetchJson<{ backdropUrl?: string; logoUrl?: string }>(fullUrl, {}, 2500);
@@ -230,44 +232,85 @@ export async function getTmdbAssets(tmdbId: string | number): Promise<{ backdrop
     }
   } catch {}
 
-  // 3. Fallback: Direct TMDB Image API (CORS friendly, works everywhere including native APK)
+  // 3. Fallback: Direct TMDB Image API - nếu có type thì chỉ fetch type đó, không đoán
   if (!backdropUrl || !logoUrl) {
     try {
       const imgLangs = 'vi,en,null';
-      let data: any = await safeFetchJson(
-        `${TMDB_BASE_URL}/movie/${id}/images?include_image_language=${imgLangs}&api_key=${TMDB_API_KEY}`,
-        {},
-        3500
-      );
+      let bestData: any = null;
+      let otherData: any = null;
 
-      // If no images found for movie, try TV series
-      if (!data || (!data.backdrops?.length && !data.logos?.length)) {
-        data = await safeFetchJson(
-          `${TMDB_BASE_URL}/tv/${id}/images?include_image_language=${imgLangs}&api_key=${TMDB_API_KEY}`,
-          {},
-          3500
-        );
+      if (normalizedType) {
+        const targetUrl = `${TMDB_BASE_URL}/${normalizedType}/${id}/images?include_image_language=${imgLangs}&api_key=${TMDB_API_KEY}`;
+        bestData = await safeFetchJson<any>(targetUrl, {}, 3500).catch(() => null);
+        // Nếu thiếu 1 trong 2, thử fetch type còn lại làm fallback
+        if (!bestData || (!bestData.backdrops?.length && !bestData.logos?.length)) {
+          const fallbackType = normalizedType === 'tv' ? 'movie' : 'tv';
+          otherData = await safeFetchJson<any>(`${TMDB_BASE_URL}/${fallbackType}/${id}/images?include_image_language=${imgLangs}&api_key=${TMDB_API_KEY}`, {}, 3500).catch(() => null);
+          if (bestData && otherData) {
+            // Ưu tiên type gốc, nhưng nếu gốc trống thì dùng fallback
+            if (!bestData.backdrops?.length && !bestData.logos?.length) bestData = otherData;
+          } else if (!bestData) bestData = otherData;
+        }
+      } else {
+        const [movieData, tvData] = await Promise.all([
+          safeFetchJson<any>(`${TMDB_BASE_URL}/movie/${id}/images?include_image_language=${imgLangs}&api_key=${TMDB_API_KEY}`, {}, 3500).catch(() => null),
+          safeFetchJson<any>(`${TMDB_BASE_URL}/tv/${id}/images?include_image_language=${imgLangs}&api_key=${TMDB_API_KEY}`, {}, 3500).catch(() => null),
+        ]);
+        const scoreCandidate = (data: any) => {
+          if (!data || (!data.backdrops?.length && !data.logos?.length)) return -1;
+          const hasViLogo = Array.isArray(data.logos) && data.logos.some((l: any) => l.iso_639_1 === 'vi');
+          const hasViBackdrop = Array.isArray(data.backdrops) && data.backdrops.some((b: any) => b.iso_639_1 === 'vi');
+          const maxVote = Math.max(0, ...(data.backdrops || []).map((b: any) => Number(b.vote_average) || 0), ...(data.logos || []).map((l: any) => Number(l.vote_average) || 0));
+          const total = (data.backdrops?.length || 0) + (data.logos?.length || 0);
+          return (hasViLogo ? 1000 : 0) + (hasViBackdrop ? 500 : 0) + maxVote * 100 + total * 10;
+        };
+        const movieScore = scoreCandidate(movieData);
+        const tvScore = scoreCandidate(tvData);
+        if (movieScore >= 0 || tvScore >= 0) {
+          if (tvScore > movieScore) bestData = tvData;
+          else if (movieScore > tvScore) bestData = movieData;
+          else {
+            const mHasVi = movieData?.logos?.some((l: any) => l.iso_639_1 === 'vi');
+            const tHasVi = tvData?.logos?.some((l: any) => l.iso_639_1 === 'vi');
+            if (tHasVi && !mHasVi) bestData = tvData;
+            else bestData = movieData || tvData;
+          }
+        }
+        if (!bestData) bestData = movieData || tvData;
+        otherData = bestData === movieData ? tvData : movieData;
       }
 
-      if (data) {
-        // Pick best logo: preference Vietnamese -> English -> first available
-        if (!logoUrl && data.logos && Array.isArray(data.logos) && data.logos.length > 0) {
-          const viLogo = data.logos.find((l: any) => l.iso_639_1 === 'vi');
-          const enLogo = data.logos.find((l: any) => l.iso_639_1 === 'en');
-          const bestLogo = viLogo || enLogo || data.logos[0];
+      if (bestData) {
+        if (!logoUrl && bestData.logos && Array.isArray(bestData.logos) && bestData.logos.length > 0) {
+          const viLogo = bestData.logos.find((l: any) => l.iso_639_1 === 'vi');
+          const enLogo = bestData.logos.find((l: any) => l.iso_639_1 === 'en');
+          const bestLogo = viLogo || enLogo || bestData.logos[0];
           if (bestLogo?.file_path) {
             logoUrl = `https://image.tmdb.org/t/p/original${bestLogo.file_path}`;
           }
         }
-
-        // Pick best backdrop: prioritize textless, highest resolution and rating
-        if (!backdropUrl && data.backdrops && Array.isArray(data.backdrops) && data.backdrops.length > 0) {
-          const textless = data.backdrops.filter((b: any) => !b.iso_639_1 || b.iso_639_1 === 'xx');
-          const candidates = textless.length > 0 ? textless : [...data.backdrops];
+        if (!backdropUrl && bestData.backdrops && Array.isArray(bestData.backdrops) && bestData.backdrops.length > 0) {
+          const textless = bestData.backdrops.filter((b: any) => !b.iso_639_1 || b.iso_639_1 === 'xx');
+          const candidates = textless.length > 0 ? textless : [...bestData.backdrops];
           candidates.sort((a: any, b: any) => (b.vote_average || 0) - (a.vote_average || 0) || (b.width || 0) - (a.width || 0));
           const bestBackdrop = candidates[0];
           if (bestBackdrop?.file_path) {
             backdropUrl = `https://image.tmdb.org/t/p/original${bestBackdrop.file_path}`;
+          }
+        }
+        if (otherData) {
+          if (!logoUrl && otherData.logos?.length) {
+            const viLogo = otherData.logos.find((l: any) => l.iso_639_1 === 'vi');
+            const enLogo = otherData.logos.find((l: any) => l.iso_639_1 === 'en');
+            const bestLogo = viLogo || enLogo || otherData.logos[0];
+            if (bestLogo?.file_path) logoUrl = `https://image.tmdb.org/t/p/original${bestLogo.file_path}`;
+          }
+          if (!backdropUrl && otherData.backdrops?.length) {
+            const textless = otherData.backdrops.filter((b: any) => !b.iso_639_1 || b.iso_639_1 === 'xx');
+            const candidates = textless.length > 0 ? textless : [...otherData.backdrops];
+            candidates.sort((a: any, b: any) => (b.vote_average || 0) - (a.vote_average || 0) || (b.width || 0) - (a.width || 0));
+            const bestBackdrop = candidates[0];
+            if (bestBackdrop?.file_path) backdropUrl = `https://image.tmdb.org/t/p/original${bestBackdrop.file_path}`;
           }
         }
       }
@@ -275,20 +318,20 @@ export async function getTmdbAssets(tmdbId: string | number): Promise<{ backdrop
   }
 
   const result = { backdropUrl, logoUrl };
-  tmdbBackdropCacheClient.set(id, backdropUrl);
-  tmdbLogoCacheClient.set(id, logoUrl);
-  tmdbAssetsCacheClient.set(id, result);
+  tmdbBackdropCacheClient.set(cacheKey, backdropUrl);
+  tmdbLogoCacheClient.set(cacheKey, logoUrl);
+  tmdbAssetsCacheClient.set(cacheKey, result);
 
   return result;
 }
 
-export async function getTmdbBackdropUrl(tmdbId: string | number): Promise<string | null> {
-  const assets = await getTmdbAssets(tmdbId);
+export async function getTmdbBackdropUrl(tmdbId: string | number, tmdbType?: string): Promise<string | null> {
+  const assets = await getTmdbAssets(tmdbId, tmdbType);
   return assets.backdropUrl;
 }
 
-export async function getTmdbLogoUrl(tmdbId: string | number): Promise<string | null> {
-  const assets = await getTmdbAssets(tmdbId);
+export async function getTmdbLogoUrl(tmdbId: string | number, tmdbType?: string): Promise<string | null> {
+  const assets = await getTmdbAssets(tmdbId, tmdbType);
   return assets.logoUrl;
 }
 
@@ -1004,6 +1047,7 @@ function normalizeMovieItem(raw: any, source: ApiSource = 'kkphim'): Movie {
     logos,
     color_palette: (raw as any).color_palette || undefined,
     tmdb: (raw as any).tmdb || undefined,
+    imdb: (raw as any).imdb || undefined,
     is_copyright: raw.is_copyright || false,
     sub_docquyen: raw.sub_docquyen || false,
     chieurap: raw.chieurap || false,

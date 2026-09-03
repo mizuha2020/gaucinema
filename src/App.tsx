@@ -266,6 +266,8 @@ export default function App() {
   }, [activeTab]);
 
   const [searchKeyword, setSearchKeyword] = useState<string>("");
+  const [filterCountry, setFilterCountry] = useState<string>("");
+  const [filterGenre, setFilterGenre] = useState<string>("");
 
   // Auto scroll to top when entering home tab
   useTabScroll(activeTab);
@@ -1167,7 +1169,11 @@ export default function App() {
 
     window.history.pushState({ tab }, "", "");
     setActiveTab(tab);
-    if (tab !== "filter") setSearchKeyword("");
+    if (tab !== "filter") {
+      setSearchKeyword("");
+      setFilterCountry("");
+      setFilterGenre("");
+    }
   };
 
   const openAdminDashboard = () => {
@@ -1449,11 +1455,43 @@ export default function App() {
   // Search Submit Handler
   const handleSearchSubmit = (keyword: string) => {
     setSearchKeyword(keyword);
+    setFilterCountry("");
+    setFilterGenre("");
     if (activeTab !== "filter") {
       window.history.pushState({ tab: "filter" }, "", "");
       setActiveTab("filter");
     } else {
       // Already in filter tab, just scroll to top
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    if (selectedMovieForDetail) {
+      setSelectedMovieForDetail(null);
+    }
+  };
+
+  const handleSelectCountry = (countrySlug: string) => {
+    setFilterCountry(countrySlug);
+    setFilterGenre("");
+    setSearchKeyword("");
+    if (activeTab !== "filter") {
+      window.history.pushState({ tab: "filter" }, "", "");
+      setActiveTab("filter");
+    } else {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    if (selectedMovieForDetail) {
+      setSelectedMovieForDetail(null);
+    }
+  };
+
+  const handleSelectGenre = (genreSlug: string) => {
+    setFilterGenre(genreSlug);
+    setFilterCountry("");
+    setSearchKeyword("");
+    if (activeTab !== "filter") {
+      window.history.pushState({ tab: "filter" }, "", "");
+      setActiveTab("filter");
+    } else {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
     if (selectedMovieForDetail) {
@@ -2078,7 +2116,10 @@ export default function App() {
                 {activeTab === "filter" && (
                   <div className="pt-20">
                     <FilterSection
+                      key={`filter-${filterCountry}-${filterGenre}-${searchKeyword}`}
                       initialKeyword={searchKeyword}
+                      initialCountry={filterCountry}
+                      initialGenre={filterGenre}
                       onOpenDetail={(m) => openDetailModal(m)}
                       onSelectMovie={(m) => openDetailModal(m)}
                       onPlay={handlePlayMovie}
@@ -2291,6 +2332,8 @@ export default function App() {
               isInMyList={isInMyList}
               onSelectRelatedMovie={(m) => openDetailModal(m)}
               onSearchSubmit={handleSearchSubmit}
+              onSelectGenre={handleSelectGenre}
+              onSelectCountry={handleSelectCountry}
               currentAccount={currentAccount}
               activeProfile={activeProfile}
               activeRooms={activeRoomsForFilm}

@@ -279,7 +279,7 @@ async function startServer() {
   }
 
   // Internal TMDB Backdrop & Logo fetcher with caching (up to 3 backdrops & 3 logos)
-  async function getTmdbAssetsInternal(tmdbId: string, force = false): Promise<{
+  async function getTmdbAssetsInternal(tmdbId: string, force = false, tmdbType?: string): Promise<{
     backdropUrl: string | null;
     logoUrl: string | null;
     width?: number;
@@ -289,13 +289,15 @@ async function startServer() {
   }> {
     const id = String(tmdbId || "").trim();
     if (!id || !/^\d+$/.test(id)) return { backdropUrl: null, logoUrl: null, backdrops: [], logos: [] };
-    const cached = tmdbBackdropCache.get(id);
-    if (!force && cached && Date.now() - cached.timestamp < TMDB_TTL_MS && (cached as any).backdrops) {
+    const normalizedType = tmdbType === 'tv' ? 'tv' : tmdbType === 'movie' ? 'movie' : undefined;
+    const cacheKey = normalizedType ? `${id}:${normalizedType}` : id;
+    const cached = tmdbBackdropCache.get(cacheKey) as any;
+    if (!force && cached && Date.now() - cached.timestamp < TMDB_TTL_MS && cached.backdrops) {
       return {
         backdropUrl: cached.url,
         logoUrl: cached.logoUrl || null,
-        backdrops: (cached as any).backdrops || [],
-        logos: (cached as any).logos || [],
+        backdrops: cached.backdrops || [],
+        logos: cached.logos || [],
       };
     }
     const bearer = process.env.TMDB_BEARER_TOKEN || process.env.TMDB_READ_TOKEN || "";
@@ -305,10 +307,18 @@ async function startServer() {
     const tryUrls: string[] = [];
     
     const imgLangs = "null,en,vi,ja,ko,zh,th,fr,de,es,xx";
-    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/movie/${id}/images?include_image_language=${imgLangs}`);
-    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/movie/${id}/images?include_image_language=${imgLangs}&api_key=${apiKey}`);
-    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/tv/${id}/images?include_image_language=${imgLangs}`);
-    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/tv/${id}/images?include_image_language=${imgLangs}&api_key=${apiKey}`);
+    // Nếu có type thì ưu tiên type đó trước (fix 296206: type=tv)
+    const movieUrls: string[] = [];
+    const tvUrls: string[] = [];
+    if (bearer) movieUrls.push(`https://api.themoviedb.org/3/movie/${id}/images?include_image_language=${imgLangs}`);
+    if (apiKey) movieUrls.push(`https://api.themoviedb.org/3/movie/${id}/images?include_image_language=${imgLangs}&api_key=${apiKey}`);
+    if (bearer) tvUrls.push(`https://api.themoviedb.org/3/tv/${id}/images?include_image_language=${imgLangs}`);
+    if (apiKey) tvUrls.push(`https://api.themoviedb.org/3/tv/${id}/images?include_image_language=${imgLangs}&api_key=${apiKey}`);
+    if (normalizedType === 'tv') tryUrls.push(...tvUrls, ...movieUrls);
+    else if (normalizedType === 'movie') tryUrls.push(...movieUrls, ...tvUrls);
+    else tryUrls.push(...movieUrls, ...tvUrls);
+
+    const candidates: Array<{ url: string; backdropUrl: string | null; logoUrl: string | null; backdrops: any[]; logos: any[]; score: number }> = [];
 
     for (const url of tryUrls) {
       try {
@@ -411,35 +421,84 @@ async function startServer() {
         const primaryLogo = extractedLogos.find(l => l.primary)?.url || (extractedLogos[0]?.url || null);
 
         if (primaryBackdrop || primaryLogo) {
-          (tmdbBackdropCache as any).set(id, {
-            url: primaryBackdrop,
-            logoUrl: primaryLogo,
-            backdrops: extractedBackdrops,
-            logos: extractedLogos,
-            timestamp: Date.now(),
-          });
-          return {
-            backdropUrl: primaryBackdrop,
-            logoUrl: primaryLogo,
-            backdrops: extractedBackdrops,
-            logos: extractedLogos,
-            width: extractedBackdrops[0]?.width,
-            height: extractedBackdrops[0]?.height,
-          };
+          // Score để chọn giữa movie vs tv khi cùng ID tồn tại (ví dụ 296206)
+          const hasViLogo = extractedLogos.some(l => l.iso_639_1 === 'vi');
+          const hasViBackdrop = extractedBackdrops.some(b => b.iso_639_1 === 'vi');
+          const maxVote = Math.max(0, ...extractedBackdrops.map(b => Number(b.vote_average) || 0), ...extractedLogos.map(l => Number(l.vote_average) || 0));
+          const totalCount = extractedBackdrops.length + extractedLogos.length;
+          const score = (hasViLogo ? 1000 : 0) + (hasViBackdrop ? 500 : 0) + maxVote * 100 + totalCount * 10 + (primaryBackdrop ? 5 : 0) + (primaryLogo ? 5 : 0);
+          candidates.push({ url, backdropUrl: primaryBackdrop, logoUrl: primaryLogo, backdrops: extractedBackdrops, logos: extractedLogos, score });
         }
       } catch {}
     }
 
-    tmdbBackdropCache.set(id, { url: null, logoUrl: null, timestamp: Date.now() });
+    if (candidates.length > 0) {
+      // Nếu có type thì ưu tiên type đó, không dùng điểm để đoán
+      let pool = candidates;
+      if (normalizedType) {
+        const typed = candidates.filter(c => c.url.includes(`/${normalizedType}/`));
+        if (typed.length > 0) pool = typed;
+      }
+      pool.sort((a, b) => b.score - a.score);
+      const best = pool[0];
+      (tmdbBackdropCache as any).set(cacheKey, {
+        url: best.backdropUrl,
+        logoUrl: best.logoUrl,
+        backdrops: best.backdrops,
+        logos: best.logos,
+        timestamp: Date.now(),
+      });
+      return {
+        backdropUrl: best.backdropUrl,
+        logoUrl: best.logoUrl,
+        backdrops: best.backdrops,
+        logos: best.logos,
+        width: best.backdrops[0]?.width,
+        height: best.backdrops[0]?.height,
+      };
+    }
+
+    tmdbBackdropCache.set(cacheKey, { url: null, logoUrl: null, timestamp: Date.now() } as any);
     return { backdropUrl: null, logoUrl: null, backdrops: [], logos: [] };
   }
+
+  // IntroDB proxy - APK-safe (no cache, single fetch per episode). Handles CORS for native WebView.
+  app.get("/api/intro/segments", async (req, res) => {
+    const imdb_id = String(req.query.imdb_id || "").trim();
+    const season = Number(req.query.season);
+    const episode = Number(req.query.episode);
+    if (!/^tt\d{7,8}$/.test(imdb_id) || !season || !episode || season < 1 || episode < 1) {
+      return res.status(400).json({ error: "Invalid imdb_id/season/episode", imdb_id, season, episode });
+    }
+    const target = `https://api.introdb.app/segments?imdb_id=${encodeURIComponent(imdb_id)}&season=${season}&episode=${episode}`;
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 6000);
+      const r = await fetch(target, {
+        headers: { Accept: "application/json", "User-Agent": "GauCinema/1.0" },
+        signal: controller.signal,
+      });
+      clearTimeout(t);
+      const text = await r.text();
+      // IntroDB returns 404 when no segments -> forward as 200 with nulls so FE can skip gracefully
+      if (r.status === 404) {
+        return res.json({ imdb_id, season, episode, intro: null, recap: null, outro: null });
+      }
+      if (!r.ok) return res.status(r.status).send(text);
+      res.setHeader("Content-Type", "application/json");
+      return res.send(text);
+    } catch (e: any) {
+      return res.status(502).json({ error: e.message || "IntroDB proxy failed", imdb_id, season, episode });
+    }
+  });
 
   // TMDB Backdrop + Logo proxy (like chophim.app) - returns original backdrop/logotype for hero banner
   app.get("/api/tmdb/backdrop/:tmdbId", async (req, res) => {
     const tmdbId = String(req.params.tmdbId || "").trim();
     if (!tmdbId || !/^\d+$/.test(tmdbId)) return res.status(400).json({ error: "Invalid tmdbId" });
     const force = req.query.force === "true" || req.query.force === "1";
-    const assets = await getTmdbAssetsInternal(tmdbId, force);
+    const tmdbType = typeof req.query.type === 'string' ? req.query.type : undefined;
+    const assets = await getTmdbAssetsInternal(tmdbId, force, tmdbType);
     return res.json({ tmdbId, ...assets, cached: !force });
   });
 

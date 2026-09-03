@@ -6,6 +6,9 @@ import { getMirrorUrls } from '../utils/mirrorUrls';
 import { getFullApiUrl } from '../services/apiConfig';
 import { Capacitor } from '@capacitor/core';
 
+type IntroSegment = { start_sec: number; end_sec: number; start_ms: number; end_ms: number; confidence?: number; submission_count?: number } | null;
+type SegmentsResponse = { imdb_id: string; season: number; episode: number; intro: IntroSegment; recap: IntroSegment; outro: IntroSegment };
+
 interface ChophimPlayerProps {
   movie: Movie;
   currentEpisode: MovieEpisode;
@@ -71,6 +74,9 @@ export const ChophimPlayer: React.FC<ChophimPlayerProps> = memo(({
   const [showServerMenu, setShowServerMenu] = useState(false);
   const [showEpisodes, setShowEpisodes] = useState(false);
   const [isPip, setIsPip] = useState(false);
+  // intro/recap/outro segments (single fetch per episode, no cache)
+  const [segments, setSegments] = useState<SegmentsResponse | null>(null);
+  const [activeSegment, setActiveSegment] = useState<'intro' | 'recap' | 'outro' | null>(null);
 
   // timeline refs like chophim n4
   const progressBarRef = useRef<HTMLDivElement>(null);
@@ -93,6 +99,46 @@ export const ChophimPlayer: React.FC<ChophimPlayerProps> = memo(({
     const idx = currentServer.server_data.findIndex(e => e.slug === currentEpisode.slug);
     return idx !== -1 && idx < currentServer.server_data.length - 1 ? currentServer.server_data[idx + 1] : null;
   }, [currentServer, currentEpisode]);
+
+  // single fetch per episode: imdb from movie detail (movie.imdb.id), season/episode parsed locally
+  useEffect(() => {
+    const imdbId = (movie as any)?.imdb?.id ? String((movie as any).imdb.id).trim() : '';
+    if (!imdbId || !/^tt\d{7,8}$/.test(imdbId)) { setSegments(null); setActiveSegment(null); return; }
+    const season = Number((movie as any)?.tmdb?.season) > 0 ? Number((movie as any).tmdb.season) : 1;
+    let epNum = NaN;
+    const m = String(currentEpisode.name || '').match(/\d+/);
+    if (m) epNum = parseInt(m[0], 10);
+    if (isNaN(epNum)) {
+      const idx2 = currentServer.server_data.findIndex(e => e.slug === currentEpisode.slug);
+      epNum = idx2 >= 0 ? idx2 + 1 : 1;
+    }
+    if (epNum < 1) epNum = 1;
+    let cancelled = false;
+    setSegments(null); setActiveSegment(null);
+    // APK-safe: use backend proxy via getFullApiUrl so relative URL resolves to CLOUD_BACKEND_URL on native
+    const url = getFullApiUrl(`/api/intro/segments?imdb_id=${encodeURIComponent(imdbId)}&season=${season}&episode=${epNum}`);
+    fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(6000) as any })
+      .then(async r => {
+        if (r.status === 404) return { imdb_id: imdbId, season, episode: epNum, intro: null, recap: null, outro: null } as any;
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      })
+      .then((data: SegmentsResponse) => { if (!cancelled) setSegments(data); })
+      .catch(() => { if (!cancelled) setSegments(null); });
+    return () => { cancelled = true; };
+  }, [(movie as any)?.imdb?.id, (movie as any)?.tmdb?.season, currentEpisode.slug, currentEpisode.name, currentServer]);
+
+  const handleSkipSegment = useCallback((type: 'intro' | 'recap' | 'outro') => {
+    const v = videoRef.current;
+    if (!v) return;
+    const seg = type === 'intro' ? segments?.intro : type === 'recap' ? segments?.recap : segments?.outro;
+    if (type === 'outro') {
+      if (nextEpisode) onSelectEpisode(nextEpisode, currentServer);
+      else if (seg && typeof seg.end_sec === 'number' && seg.end_sec > 0) v.currentTime = Math.min(v.duration || seg.end_sec, seg.end_sec);
+      return;
+    }
+    if (seg && typeof seg.end_sec === 'number') v.currentTime = seg.end_sec + 0.2;
+  }, [segments, nextEpisode, currentServer, onSelectEpisode]);
 
   const resetControlsTimer = useCallback(() => {
     setShowControls(true);
@@ -258,13 +304,22 @@ export const ChophimPlayer: React.FC<ChophimPlayerProps> = memo(({
     v.muted = isMuted;
   }, [volume, isMuted]);
 
-  // time update - no ad skip
+  // time update - segment detection (intro/recap/outro) + progress
   const handleTimeUpdate = useCallback(() => {
     const v = videoRef.current;
     if (!v) return;
     const cur = v.currentTime;
     setCurrentTime(cur);
     onTimeUpdate?.(cur, v.duration || 0);
+    if (segments) {
+      const inIntro = segments.intro && cur >= segments.intro.start_sec && cur < segments.intro.end_sec - 0.15;
+      const inRecap = segments.recap && cur >= segments.recap.start_sec && cur < segments.recap.end_sec - 0.15;
+      const inOutro = segments.outro && cur >= segments.outro.start_sec && cur < (segments.outro.end_sec || (v.duration || 1e9));
+      const next = inIntro ? 'intro' as const : inRecap ? 'recap' as const : inOutro ? 'outro' as const : null;
+      setActiveSegment(prev => prev !== next ? next : prev);
+    } else {
+      setActiveSegment(null);
+    }
     if (v.buffered.length > 0) setBuffered(v.buffered.end(v.buffered.length - 1));
     // update progress bar width directly via ref for performance (no re-render)
     if (progressBarRef.current && v.duration) {
@@ -440,10 +495,11 @@ export const ChophimPlayer: React.FC<ChophimPlayerProps> = memo(({
       if (e.key === 'ArrowRight') { e.preventDefault(); skip(10); }
       if (e.key === 'f') toggleFullscreen();
       if (e.key === 'm') toggleMute();
+      if (e.key.toLowerCase() === 's' && activeSegment) { e.preventDefault(); handleSkipSegment(activeSegment); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [togglePlay, skip, toggleFullscreen, toggleMute]);
+  }, [togglePlay, skip, toggleFullscreen, toggleMute, activeSegment, handleSkipSegment]);
 
   return (
     <div
@@ -478,6 +534,27 @@ export const ChophimPlayer: React.FC<ChophimPlayerProps> = memo(({
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 p-6 text-center">
             <p className="text-white font-medium">{errorMsg}</p>
             <button onClick={onBack} className="mt-4 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium">Thoát</button>
+          </div>
+        )}
+
+        {/* Skip intro/recap/outro - always visible when in segment, APK-safe (fixed position, no dependency on showControls) */}
+        {activeSegment && (
+          <div className="absolute bottom-20 right-4 sm:bottom-24 sm:right-6 z-30 pointer-events-auto">
+            {activeSegment === 'intro' && (
+              <button onClick={(e) => { e.stopPropagation(); handleSkipSegment('intro'); }} className="flex items-center gap-2 bg-white text-black px-4 py-2.5 rounded-lg text-sm font-bold shadow-2xl hover:bg-white/90 active:scale-95 transition-all border border-black/10">
+                <SkipForward className="w-4 h-4" /> Bỏ qua phần giới thiệu
+              </button>
+            )}
+            {activeSegment === 'recap' && (
+              <button onClick={(e) => { e.stopPropagation(); handleSkipSegment('recap'); }} className="flex items-center gap-2 bg-white text-black px-4 py-2.5 rounded-lg text-sm font-bold shadow-2xl hover:bg-white/90 active:scale-95 transition-all border border-black/10">
+                <SkipForward className="w-4 h-4" /> Bỏ qua tóm tắt
+              </button>
+            )}
+            {activeSegment === 'outro' && (
+              <button onClick={(e) => { e.stopPropagation(); handleSkipSegment('outro'); }} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold shadow-2xl hover:bg-blue-500 active:scale-95 transition-all">
+                <SkipForward className="w-4 h-4" /> {nextEpisode ? 'Tập tiếp theo' : 'Bỏ qua outro'}
+              </button>
+            )}
           </div>
         )}
 

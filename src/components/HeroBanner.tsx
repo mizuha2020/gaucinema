@@ -118,7 +118,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
       const needLogo = !hasLogo && !tmdbLogoMap[m.slug];
       if (!needBackdrop && !needLogo) return;
       try {
-        const assets = await getTmdbAssets(tmdbId);
+        const assets = await getTmdbAssets(tmdbId, (m as any)?.tmdb?.type);
         if (cancelled) return;
         if (assets.backdropUrl && needBackdrop) {
           setTmdbBackdropMap((prev) => ({ ...prev, [m.slug]: assets.backdropUrl! }));

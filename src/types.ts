@@ -71,6 +71,7 @@ export interface Movie {
     textContrast?: string;
   };
   tmdb?: { id?: string; type?: string; season?: any; vote_average?: number; vote_count?: number };
+  imdb?: { id?: string; vote_average?: number; vote_count?: number };
   is_copyright?: boolean;
   sub_docquyen?: boolean;
   chieurap?: boolean;
