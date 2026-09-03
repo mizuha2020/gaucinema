@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { SystemApiEndpoint, ApiCategory, ApiHealthStatus } from '../../types';
 import { systemApiService } from '../../services/systemApiService';
+import { AdminHeroAssetsTab } from './AdminHeroAssetsTab';
 import {
   Server,
   Plus,
@@ -26,8 +27,8 @@ import {
 
 interface AdminApisTabProps {
   onShowToast: (msg: string) => void;
-  currentSubTab?: 'api_status' | 'fallback_routing' | 'system_info';
-  onChangeSubTab?: (tab: 'api_status' | 'fallback_routing' | 'system_info') => void;
+  currentSubTab?: 'api_status' | 'fallback_routing' | 'system_info' | 'hero_assets';
+  onChangeSubTab?: (tab: 'api_status' | 'fallback_routing' | 'system_info' | 'hero_assets') => void;
 }
 
 export const AdminApisTab: React.FC<AdminApisTabProps> = ({
@@ -35,10 +36,10 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = ({
   currentSubTab,
   onChangeSubTab,
 }) => {
-  const [internalSubTab, setInternalSubTab] = useState<'api_status' | 'fallback_routing' | 'system_info'>('api_status');
+  const [internalSubTab, setInternalSubTab] = useState<'api_status' | 'fallback_routing' | 'system_info' | 'hero_assets'>('api_status');
   const subTab = currentSubTab || internalSubTab;
 
-  const handleSetSubTab = (tab: 'api_status' | 'fallback_routing' | 'system_info') => {
+  const handleSetSubTab = (tab: 'api_status' | 'fallback_routing' | 'system_info' | 'hero_assets') => {
     if (onChangeSubTab) {
       onChangeSubTab(tab);
     } else {
@@ -96,6 +97,51 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = ({
 
   // Cache stats
   const [cacheClearState, setCacheClearState] = useState<boolean>(false);
+
+  // RTDB Pre-computed Batch Worker state
+  const [batchStats, setBatchStats] = useState<any>(null);
+  const [isSyncingBatch, setIsSyncingBatch] = useState<boolean>(false);
+
+  const fetchBatchStatus = async () => {
+    try {
+      const res = await fetch('/api/system/batch-status');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success) {
+          setBatchStats(json.stats);
+        }
+      }
+    } catch {}
+  };
+
+  const handleForceBatchSync = async () => {
+    setIsSyncingBatch(true);
+    onShowToast('🚀 Đang chạy tác vụ Batch & trích xuất bảng màu TMDB vào Firebase RTDB...');
+    try {
+      const res = await fetch('/api/system/batch-sync', { method: 'POST' });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success) {
+          setBatchStats(json.stats);
+          onShowToast('✅ Đồng bộ Batch Hero Banner & Netflix Top 10 vào RTDB thành công!');
+        } else {
+          onShowToast(`⚠️ ${json.error || 'Lỗi đồng bộ'}`);
+        }
+      } else {
+        onShowToast('⚠️ Máy chủ phản hồi lỗi khi đồng bộ.');
+      }
+    } catch {
+      onShowToast('⚠️ Không thể kết nối đến API Batch Sync.');
+    } finally {
+      setIsSyncingBatch(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchBatchStatus();
+    const interval = setInterval(fetchBatchStatus, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = systemApiService.subscribe((updated) => {
@@ -350,6 +396,19 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = ({
           >
             <Cpu className="w-3.5 h-3.5 text-emerald-400" />
             <span>Hạ Tầng & Dữ Liệu Cache</span>
+          </button>
+
+          <button
+            id="subtab-hero-assets-btn"
+            onClick={() => handleSetSubTab('hero_assets')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              subTab === 'hero_assets'
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-pink-400" />
+            <span>Ảnh Hero (3 Backdrop & 3 Logo)</span>
           </button>
         </div>
 
@@ -735,6 +794,75 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = ({
       {/* --- SUBTAB 3: SYSTEM INFO & CACHE --- */}
       {subTab === 'system_info' && (
         <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Firebase Realtime Database Batch Worker Card */}
+          <div className="bg-[#0f172a] border border-blue-900/60 p-5 sm:p-6 rounded-3xl shadow-xl space-y-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-indigo-950 border border-indigo-800 flex items-center justify-center text-indigo-400 shrink-0">
+                  <Zap className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                    <span>Batch Worker & Firebase RTDB Edge Caching</span>
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-700">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse"></span>
+                      <span>12h Định Kỳ & Pre-computed</span>
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Tác vụ ngầm 12h định kỳ crawl TMDB 4K + PhimAPI, trích xuất bảng màu tương phản (Color Palette) và lưu vào RTDB Edge.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+                <button
+                  onClick={() => handleSetSubTab('hero_assets')}
+                  className="flex items-center gap-1.5 text-xs font-bold text-sky-300 bg-sky-950/80 hover:bg-sky-900 px-3.5 py-2.5 rounded-xl border border-sky-800 transition-colors cursor-pointer"
+                >
+                  <Layers className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Xem & Chọn 3 Backdrop/Logo</span>
+                </button>
+
+                <button
+                  onClick={handleForceBatchSync}
+                  disabled={isSyncingBatch || (batchStats && batchStats.isRunning)}
+                  className="flex items-center gap-2 text-xs font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 px-5 py-2.5 rounded-xl shadow-lg shadow-blue-600/30 transition-transform active:scale-95 cursor-pointer disabled:opacity-50 shrink-0"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isSyncingBatch || (batchStats && batchStats.isRunning) ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingBatch || (batchStats && batchStats.isRunning) ? 'Đang Đồng Bộ Batch...' : 'Kích Hoạt Đồng Bộ Ngay'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-[#131f37] p-3.5 rounded-2xl border border-slate-800 space-y-1">
+                <p className="text-[11px] text-slate-400">Hero Banner TMDB (4K + Palette)</p>
+                <p className="text-xs font-mono font-bold text-emerald-400">
+                  {batchStats?.heroCount || 10} / 10 phim đã sẵn sàng
+                </p>
+              </div>
+              <div className="bg-[#131f37] p-3.5 rounded-2xl border border-slate-800 space-y-1">
+                <p className="text-[11px] text-slate-400">Netflix Top 10 VN (Phim & TV)</p>
+                <p className="text-xs font-mono font-bold text-sky-400">
+                  {batchStats?.netflixMoviesCount || 10} Phim Lẻ + {batchStats?.netflixTvCount || 10} Phim Bộ
+                </p>
+              </div>
+              <div className="bg-[#131f37] p-3.5 rounded-2xl border border-slate-800 space-y-1">
+                <p className="text-[11px] text-slate-400">Lần chạy gần nhất</p>
+                <p className="text-xs font-mono font-bold text-indigo-400">
+                  {batchStats?.lastRun ? new Date(batchStats.lastRun).toLocaleTimeString('vi-VN') : 'Vừa mới chạy'}
+                </p>
+              </div>
+              <div className="bg-[#131f37] p-3.5 rounded-2xl border border-slate-800 space-y-1">
+                <p className="text-[11px] text-slate-400">Trạng Thái RTDB Node</p>
+                <p className="text-xs font-mono font-bold text-emerald-400 truncate">
+                  gaucinema-default-rtdb (Edge)
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* Cloud Firestore Info Card */}
           <div className="bg-[#0f172a] border border-blue-900/60 p-5 sm:p-6 rounded-3xl shadow-xl space-y-4">
             <div className="flex items-center gap-3 pb-4 border-b border-slate-800">
@@ -818,6 +946,15 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* --- SUBTAB 4: HERO BANNER ASSETS (3 BACKDROPS & 3 LOGOS) --- */}
+      {subTab === 'hero_assets' && (
+        <AdminHeroAssetsTab
+          onShowToast={onShowToast}
+          onRefreshBatch={handleForceBatchSync}
+          isSyncingBatch={isSyncingBatch}
+        />
       )}
 
       {/* Add / Edit API Modal */}

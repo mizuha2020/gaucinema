@@ -828,11 +828,37 @@ export default function App() {
     fetchHomeData();
   }, [fetchHomeData]);
 
-  // Hero Banner: lấy từ TMDB Popular (en-US, region VN) đã validate tồn tại trong API phim hiện tại
+  // Hero Banner: lấy từ TMDB Popular (en-US, region VN) đã validate tồn tại trong API phim hiện tại + subscribe RTDB realtime
   useEffect(() => {
     movieApi.getTmdbHeroPopular().then((items) => {
       if (items && items.length) setHeroTmdbMovies(items);
     }).catch(() => {});
+
+    const unsubscribe = movieApi.subscribeTmdbHeroPopular((items) => {
+      if (items && items.length) {
+        setHeroTmdbMovies(items);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Netflix Top 10: Subscribe RTDB realtime để luôn cập nhật dữ liệu mới nhất
+  useEffect(() => {
+    const unsubscribe = movieApi.subscribeNetflixTop10((res) => {
+      if (res?.movies?.length) {
+        setMovieCollection("netflixTop10Movies", res.movies);
+      }
+      if (res?.tvShows?.length) {
+        setMovieCollection("netflixTop10TV", res.tvShows);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // Auth Handlers

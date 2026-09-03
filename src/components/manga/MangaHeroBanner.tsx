@@ -58,6 +58,11 @@ export const MangaHeroBanner: React.FC<MangaHeroBannerProps> = ({
   const current = mangas[currentIndex] || mangas[0];
   const saved = isSaved ? isSaved(current.id) : false;
 
+  const touchStartXRef = useRef<number | null>(null);
+  const touchStartYRef = useRef<number | null>(null);
+  const touchEndXRef = useRef<number | null>(null);
+  const touchEndYRef = useRef<number | null>(null);
+
   const handlePrev = () => {
     setCurrentIndex((prev) => (prev === 0 ? Math.min(mangas.length, 5) - 1 : prev - 1));
     resetInterval();
@@ -67,8 +72,53 @@ export const MangaHeroBanner: React.FC<MangaHeroBannerProps> = ({
     resetInterval();
   };
 
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length > 1) return;
+    touchStartXRef.current = e.touches[0].clientX;
+    touchStartYRef.current = e.touches[0].clientY;
+    touchEndXRef.current = e.touches[0].clientX;
+    touchEndYRef.current = e.touches[0].clientY;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length > 1) return;
+    touchEndXRef.current = e.touches[0].clientX;
+    touchEndYRef.current = e.touches[0].clientY;
+  };
+
+  const handleTouchEnd = () => {
+    if (touchStartXRef.current === null || touchEndXRef.current === null) return;
+
+    const deltaX = touchStartXRef.current - touchEndXRef.current;
+    const deltaY = touchStartYRef.current !== null && touchEndYRef.current !== null
+      ? Math.abs(touchStartYRef.current - touchEndYRef.current)
+      : 0;
+
+    const minSwipeDistance = 35;
+
+    if (Math.abs(deltaX) > minSwipeDistance && Math.abs(deltaX) > deltaY * 1.1) {
+      if (deltaX > 0) {
+        handleNext();
+      } else {
+        handlePrev();
+      }
+    }
+
+    touchStartXRef.current = null;
+    touchStartYRef.current = null;
+    touchEndXRef.current = null;
+    touchEndYRef.current = null;
+  };
+
   return (
-    <div id="manga-hero-banner" className="relative w-full h-[62vh] min-h-[480px] max-h-[680px] bg-[#0b0c16] overflow-hidden rounded-[2rem] border border-purple-900/30 shadow-2xl select-none">
+    <div
+      id="manga-hero-banner"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      style={{ touchAction: 'pan-y' }}
+      className="relative w-full h-[62vh] min-h-[480px] max-h-[680px] bg-[#0b0c16] overflow-hidden rounded-[2rem] border border-purple-900/30 shadow-2xl select-none touch-pan-y"
+    >
       {/* Background with fade */}
       <AnimatePresence mode="wait">
         <motion.div

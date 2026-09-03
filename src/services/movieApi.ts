@@ -1,6 +1,57 @@
 import { Movie, MovieDetailResponse, MovieListResponse, EpisodeServer, ApiSource } from '../types';
 import { getFullApiUrl, safeFetchJson, isNativeApp } from './apiConfig';
 import { systemApiService } from './systemApiService';
+import { db, rtdb, sanitizeData } from './firebase';
+import { ref, get, set, onValue } from 'firebase/database';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+
+async function saveCacheToFirebase(cacheKey: string, payload: any): Promise<void> {
+  // 1. Save to RTDB (Primary Database)
+  try {
+    if (rtdb) {
+      await set(ref(rtdb, `system_cache/${cacheKey}`), payload);
+    }
+  } catch (err) {
+    console.warn(`[RTDB Save Cache Error on ${cacheKey}]:`, err);
+  }
+
+  // 2. Secondary backup to Firestore
+  try {
+    if (db) {
+      await setDoc(doc(db, 'system_cache', cacheKey), sanitizeData(payload));
+    }
+  } catch (err) {
+    console.warn(`[Firestore Save Cache Error on ${cacheKey}]:`, err);
+  }
+}
+
+async function readCacheFromFirebase(cacheKey: string): Promise<any | null> {
+  // 1. Try RTDB first (Primary Database)
+  try {
+    if (rtdb) {
+      const snapshot = await get(ref(rtdb, `system_cache/${cacheKey}`));
+      if (snapshot.exists()) {
+        return snapshot.val();
+      }
+    }
+  } catch (err) {
+    console.warn(`[RTDB Read Cache Error on ${cacheKey}]:`, err);
+  }
+
+  // 2. Try Firestore fallback
+  try {
+    if (db) {
+      const snap = await getDoc(doc(db, 'system_cache', cacheKey));
+      if (snap.exists()) {
+        return snap.data();
+      }
+    }
+  } catch (err) {
+    console.warn(`[Firestore Read Cache Error on ${cacheKey}]:`, err);
+  }
+
+  return null;
+}
 
 function isMovieSourceEnabled(id: ApiSource): boolean {
   try {
@@ -141,6 +192,21 @@ const tmdbBackdropCacheClient = new Map<string, string | null>();
 const tmdbLogoCacheClient = new Map<string, string | null>();
 const tmdbAssetsCacheClient = new Map<string, { backdropUrl: string | null; logoUrl: string | null }>();
 
+export function clearTmdbAssetsCache() {
+  tmdbAssetsCacheClient.clear();
+  tmdbBackdropCacheClient.clear();
+  tmdbLogoCacheClient.clear();
+  if (typeof window !== 'undefined') {
+    try {
+      Object.keys(localStorage).forEach((key) => {
+        if (key.startsWith('tmdb_asset_')) {
+          localStorage.removeItem(key);
+        }
+      });
+    } catch {}
+  }
+}
+
 export async function getTmdbAssets(tmdbId: string | number): Promise<{ backdropUrl: string | null; logoUrl: string | null }> {
   const id = String(tmdbId || "").trim();
   if (!id || !/^\d+$/.test(id)) return { backdropUrl: null, logoUrl: null };
@@ -148,24 +214,10 @@ export async function getTmdbAssets(tmdbId: string | number): Promise<{ backdrop
   // 1. Memory cache check
   if (tmdbAssetsCacheClient.has(id)) return tmdbAssetsCacheClient.get(id)!;
 
-  // 2. LocalStorage cache check (instant load across page reloads & app restarts)
-  if (typeof window !== 'undefined') {
-    try {
-      const cached = localStorage.getItem(`tmdb_asset_${id}`);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (parsed && (parsed.backdropUrl || parsed.logoUrl)) {
-          tmdbAssetsCacheClient.set(id, parsed);
-          return parsed;
-        }
-      }
-    } catch {}
-  }
-
   let backdropUrl: string | null = null;
   let logoUrl: string | null = null;
 
-  // 3. Try backend endpoint first (only if not running pure native localhost APK)
+  // 2. Try backend endpoint first (only if not running pure native localhost APK)
   try {
     const fullUrl = getFullApiUrl(`/api/tmdb/backdrop/${id}`);
     const isLocalhostApk = typeof window !== 'undefined' && window.location.hostname === 'localhost' && !fullUrl.startsWith('http');
@@ -178,7 +230,7 @@ export async function getTmdbAssets(tmdbId: string | number): Promise<{ backdrop
     }
   } catch {}
 
-  // 4. Fallback: Direct TMDB Image API (CORS friendly, works everywhere including native APK)
+  // 3. Fallback: Direct TMDB Image API (CORS friendly, works everywhere including native APK)
   if (!backdropUrl || !logoUrl) {
     try {
       const imgLangs = 'vi,en,null';
@@ -226,12 +278,6 @@ export async function getTmdbAssets(tmdbId: string | number): Promise<{ backdrop
   tmdbBackdropCacheClient.set(id, backdropUrl);
   tmdbLogoCacheClient.set(id, logoUrl);
   tmdbAssetsCacheClient.set(id, result);
-
-  if (typeof window !== 'undefined' && (backdropUrl || logoUrl)) {
-    try {
-      localStorage.setItem(`tmdb_asset_${id}`, JSON.stringify(result));
-    } catch {}
-  }
 
   return result;
 }
@@ -516,50 +562,97 @@ const SEED_HERO_POPULAR: Partial<Movie>[] = [
   },
 ];
 
-export async function getTmdbHeroPopular(): Promise<Movie[]> {
-  // 1. In-memory cache
-  if (clientTmdbHeroCache && Date.now() - clientTmdbHeroCache.time < 15 * 60 * 1000) {
-    return clientTmdbHeroCache.data;
-  }
+// Cache helpers for Client-side with auto reset at 00:00 & 12:00 Vietnam Time (UTC+7)
+export function isVietnamCacheValid(savedAt: number): boolean {
+  if (!savedAt || typeof savedAt !== 'number') return false;
+  const now = Date.now();
+  const vnMs = now + 7 * 60 * 60 * 1000;
+  const vnDate = new Date(vnMs);
+  const year = vnDate.getUTCFullYear();
+  const month = vnDate.getUTCMonth();
+  const day = vnDate.getUTCDate();
+  const hours = vnDate.getUTCHours();
 
-  // 2. LocalStorage cache check (instant load)
+  let lastBoundaryVnMs: number;
+  if (hours >= 12) {
+    // Boundary is today 12:00:00 ICT
+    lastBoundaryVnMs = Date.UTC(year, month, day, 12, 0, 0, 0);
+  } else {
+    // Boundary is today 00:00:00 ICT
+    lastBoundaryVnMs = Date.UTC(year, month, day, 0, 0, 0, 0);
+  }
+  const lastBoundaryUtc = lastBoundaryVnMs - 7 * 60 * 60 * 1000;
+
+  return savedAt >= lastBoundaryUtc;
+}
+
+export function setClientHeroCache(_items: Movie[], _savedAt = Date.now()) {
+  // Client-side cache disabled per request
   if (typeof window !== 'undefined') {
     try {
-      const cached = localStorage.getItem('qtb_tmdb_hero_popular_v3');
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (parsed?.items && Array.isArray(parsed.items) && parsed.items.length >= 8) {
-          const normalized = parsed.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
-          clientTmdbHeroCache = { data: normalized, time: Date.now() };
-          // If less than 30 mins old, return immediately
-          if (Date.now() - (parsed.time || 0) < 30 * 60 * 1000) {
-            return normalized;
-          }
-        }
-      }
+      localStorage.removeItem('qtb_hero_banner_cache_v5');
     } catch {}
   }
+}
 
-  // 3. Try backend endpoint
+export function getClientHeroCache(): Movie[] | null {
+  // Client-side cache disabled per request
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem('qtb_hero_banner_cache_v5');
+    } catch {}
+  }
+  return null;
+}
+
+export function setClientNetflixCache(_data: any, _savedAt = Date.now()) {
+  // Client-side cache disabled per request
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem('qtb_netflix_top10_cache_v5');
+    } catch {}
+  }
+}
+
+export function getClientNetflixCache(): any | null {
+  // Client-side cache disabled per request
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem('qtb_netflix_top10_cache_v5');
+    } catch {}
+  }
+  return null;
+}
+
+export async function getTmdbHeroPopular(): Promise<Movie[]> {
+  const nowTs = Date.now();
+
+  // 1. Direct Firebase Read (Firestore + RTDB)
   try {
-    const fullUrl = getFullApiUrl("/api/tmdb/hero-popular");
+    const cached = await readCacheFromFirebase('hero_banner');
+    if (cached?.items && Array.isArray(cached.items) && cached.items.length >= 8) {
+      const items = cached.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
+      return items;
+    }
+  } catch (err) {
+    console.warn('[Firebase Hero Popular Read Error]:', err);
+  }
+
+  // 2. Try backend endpoint with precomputed data
+  try {
+    const fullUrl = getFullApiUrl(`/api/tmdb/hero-popular?t=${nowTs}`);
     const isLocalhostApk = typeof window !== 'undefined' && window.location.hostname === 'localhost' && !fullUrl.startsWith('http');
     if (!isLocalhostApk) {
-      const data = await safeFetchJson<{ items: any[] }>(fullUrl, {}, 3500);
+      const data = await safeFetchJson<{ items: any[] }>(fullUrl, { cache: 'no-store' as RequestCache }, 4000);
       if (data?.items && Array.isArray(data.items) && data.items.length >= 8) {
         const normalized = data.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
-        clientTmdbHeroCache = { data: normalized, time: Date.now() };
-        if (typeof window !== 'undefined') {
-          try {
-            localStorage.setItem('qtb_tmdb_hero_popular_v3', JSON.stringify({ items: data.items, time: Date.now() }));
-          } catch {}
-        }
+        saveCacheToFirebase('hero_banner', { items: data.items, lastUpdated: nowTs });
         return normalized;
       }
     }
   } catch {}
 
-  // 4. Direct Client-Side Fallback Engine: Discover TMDB + Search KKPhim
+  // 3. Direct Client-Side Fallback Engine: Discover TMDB + Search KKPhim
   try {
     const tmdbRes = await safeFetchJson<{ results?: any[] }>(
       `${TMDB_BASE_URL}/discover/movie?language=vi-VN&region=VN&sort_by=popularity.desc&page=1&api_key=${TMDB_API_KEY}`,
@@ -623,21 +716,64 @@ export async function getTmdbHeroPopular(): Promise<Movie[]> {
             resolvedItems.push(seed as Movie);
           }
         }
-        clientTmdbHeroCache = { data: resolvedItems, time: Date.now() };
-        if (typeof window !== 'undefined') {
-          try {
-            localStorage.setItem('qtb_tmdb_hero_popular_v3', JSON.stringify({ items: resolvedItems, time: Date.now() }));
-          } catch {}
-        }
+        saveCacheToFirebase('hero_banner', { items: resolvedItems, lastUpdated: nowTs });
         return resolvedItems;
       }
     }
   } catch {}
 
-  // 5. Ultimate Fallback: High Quality Pre-curated Seed List
+  // 4. Ultimate Fallback: High Quality Pre-curated Seed List
   const fallbackList = SEED_HERO_POPULAR.map((m) => normalizeMovieItem(m, 'kkphim'));
-  clientTmdbHeroCache = { data: fallbackList, time: Date.now() };
+  saveCacheToFirebase('hero_banner', { items: fallbackList, lastUpdated: nowTs });
   return fallbackList;
+}
+
+export function subscribeTmdbHeroPopular(callback: (items: Movie[]) => void): () => void {
+  if (!rtdb) return () => {};
+  try {
+    const heroRef = ref(rtdb, 'system_cache/hero_banner');
+    return onValue(heroRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const cached = snapshot.val();
+        if (cached?.items && Array.isArray(cached.items) && cached.items.length >= 8) {
+          const items = cached.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
+          callback(items);
+        }
+      }
+    }, (err) => {
+      console.warn('[RTDB Hero Subscription Error]:', err);
+    });
+  } catch {
+    return () => {};
+  }
+}
+
+export function subscribeNetflixTop10(
+  callback: (data: { movies: Movie[]; tvShows: Movie[]; movieTitles: string[]; tvTitles: string[] }) => void
+): () => void {
+  if (!rtdb) return () => {};
+  try {
+    const netflixRef = ref(rtdb, 'system_cache/netflix_top10');
+    return onValue(netflixRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const cached = snapshot.val();
+        if (cached?.data?.movies?.length >= 6 || cached?.data?.tvShows?.length >= 6) {
+          const rawMovies = cached.data.movies || [];
+          const rawTv = cached.data.tvShows || [];
+          callback({
+            movies: rawMovies.map((m: any) => normalizeMovieItem(m, m.source || 'kkphim')),
+            tvShows: rawTv.map((m: any) => normalizeMovieItem(m, m.source || 'kkphim')),
+            movieTitles: cached.data.movieTitles || rawMovies.map((m: any) => m.name || m.title || ''),
+            tvTitles: cached.data.tvTitles || rawTv.map((m: any) => m.name || m.title || ''),
+          });
+        }
+      }
+    }, (err) => {
+      console.warn('[RTDB Netflix Top10 Subscription Error]:', err);
+    });
+  } catch {
+    return () => {};
+  }
 }
 
 export function tmdbTrendingToMovie(item: TmdbTrendingItem): any {
@@ -846,6 +982,11 @@ function normalizeMovieItem(raw: any, source: ApiSource = 'kkphim'): Movie {
   const src = raw.source || source;
   const srcLabel = src === 'kkphim' ? 'KKPhim' : src === 'ophim' ? 'OPhim' : 'NguonC';
 
+  const backdrops = Array.isArray((raw as any).backdrops) ? (raw as any).backdrops : undefined;
+  const logos = Array.isArray((raw as any).logos) ? (raw as any).logos : undefined;
+  const primaryBackdrop = backdrops?.find((b: any) => b.primary)?.url;
+  const primaryLogo = logos?.find((l: any) => l.primary)?.url;
+
   return {
     _id: raw._id || raw.id || raw.slug,
     id: raw.id || raw._id || raw.slug,
@@ -857,8 +998,11 @@ function normalizeMovieItem(raw: any, source: ApiSource = 'kkphim'): Movie {
     status: raw.status || 'completed',
     poster_url: getImageUrl(raw.poster_url || raw.thumb_url, src),
     thumb_url: getImageUrl(raw.thumb_url || raw.poster_url, src),
-    backdrop_url: (raw as any).backdrop_url || (raw as any).backdrop || (raw as any).cover_url || undefined,
-    logo_url: (raw as any).logo_url || undefined,
+    backdrop_url: primaryBackdrop || (raw as any).backdrop_url || (raw as any).backdrop || (raw as any).cover_url || undefined,
+    logo_url: primaryLogo || (raw as any).logo_url || undefined,
+    backdrops,
+    logos,
+    color_palette: (raw as any).color_palette || undefined,
     tmdb: (raw as any).tmdb || undefined,
     is_copyright: raw.is_copyright || false,
     sub_docquyen: raw.sub_docquyen || false,
@@ -1587,32 +1731,44 @@ export const movieApi = {
     return getTmdbHeroPopular();
   },
 
-  // 13. Netflix Vietnam Top 10 Scraped API (với fallback offline và client-side seed data cho APK)
-  async getNetflixTop10VN(): Promise<{ movies: Movie[]; tvShows: Movie[]; movieTitles: string[]; tvTitles: string[] }> {
-    const cacheKey = 'netflix-top10-vn-v2';
+  subscribeTmdbHeroPopular(callback: (items: Movie[]) => void): () => void {
+    return subscribeTmdbHeroPopular(callback);
+  },
 
-    // 1. Kiểm tra cache localStorage để hiển thị tức thì trên cả Web và APK
-    if (typeof window !== 'undefined') {
-      try {
-        const cached = localStorage.getItem(cacheKey);
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (parsed?.data?.movies?.length >= 8 && parsed?.data?.tvShows?.length >= 8) {
-            // Nếu cache còn mới (< 2 giờ), trả về ngay lập tức
-            if (Date.now() - (parsed.savedAt || 0) < 2 * 60 * 60 * 1000) {
-              return parsed.data;
-            }
-          }
-        }
-      } catch {}
+  subscribeNetflixTop10(
+    callback: (data: { movies: Movie[]; tvShows: Movie[]; movieTitles: string[]; tvTitles: string[] }) => void
+  ): () => void {
+    return subscribeNetflixTop10(callback);
+  },
+
+  // 13. Netflix Vietnam Top 10 API - Đọc trực tiếp từ RTDB / Firebase để luôn mới nhất
+  async getNetflixTop10VN(): Promise<{ movies: Movie[]; tvShows: Movie[]; movieTitles: string[]; tvTitles: string[] }> {
+    const nowTs = Date.now();
+
+    // 1. Đọc trực tiếp từ RTDB (Primary Database)
+    try {
+      const rtdbJson = await readCacheFromFirebase('netflix_top10');
+      if (rtdbJson?.data?.movies?.length >= 6 || rtdbJson?.data?.tvShows?.length >= 6) {
+        const rawMovies = rtdbJson.data.movies || [];
+        const rawTv = rtdbJson.data.tvShows || [];
+        const result = {
+          movies: rawMovies.map((m: any) => normalizeMovieItem(m, m.source || 'kkphim')),
+          tvShows: rawTv.map((m: any) => normalizeMovieItem(m, m.source || 'kkphim')),
+          movieTitles: rtdbJson.data.movieTitles || rawMovies.map((m: any) => m.name || m.title || ''),
+          tvTitles: rtdbJson.data.tvTitles || rawTv.map((m: any) => m.name || m.title || ''),
+        };
+        return result;
+      }
+    } catch (err) {
+      console.warn('[Firebase Netflix Top10 Read Error]:', err);
     }
 
     // 2. Thử gọi backend endpoint
     try {
-      const fullUrl = getFullApiUrl('/api/top10/netflix-vn');
+      const fullUrl = getFullApiUrl(`/api/top10/netflix-vn?t=${nowTs}`);
       const isLocalhostApk = typeof window !== 'undefined' && window.location.hostname === 'localhost' && !fullUrl.startsWith('http');
       if (!isLocalhostApk) {
-        const json = await safeFetchJson<{ status?: boolean; data?: any }>(fullUrl, {}, 3500);
+        const json = await safeFetchJson<{ status?: boolean; data?: any }>(fullUrl, { cache: 'no-store' as RequestCache }, 4000);
         if (json?.data?.movies?.length >= 6 || json?.data?.tvShows?.length >= 6) {
           const rawMovies = json.data.movies || [];
           const rawTv = json.data.tvShows || [];
@@ -1622,11 +1778,7 @@ export const movieApi = {
             movieTitles: json.data.movieTitles || rawMovies.map((m: any) => m.name || m.title || ''),
             tvTitles: json.data.tvTitles || rawTv.map((m: any) => m.name || m.title || ''),
           };
-          if (typeof window !== 'undefined') {
-            try {
-              localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data: result }));
-            } catch {}
-          }
+          saveCacheToFirebase('netflix_top10', { status: true, data: json.data, lastUpdated: nowTs });
           return result;
         }
       }
@@ -1666,12 +1818,132 @@ export const movieApi = {
       tvTitles: seedTv.map((t) => t.name),
     };
 
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data: fallbackResult }));
-      } catch {}
-    }
+    saveCacheToFirebase('netflix_top10', { status: true, data: fallbackResult, lastUpdated: nowTs });
 
     return fallbackResult;
   },
 };
+
+export async function getHeroAdminList(): Promise<{ success: boolean; items: Movie[]; total?: number; lastUpdated?: number }> {
+  // 1. Try Firebase first
+  try {
+    const val = await readCacheFromFirebase('hero_banner');
+    if (val?.items && Array.isArray(val.items)) {
+      const items = val.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
+      return { success: true, items, total: items.length, lastUpdated: val.lastUpdated };
+    }
+  } catch {}
+
+  // 2. Try backend endpoint
+  try {
+    const fullUrl = getFullApiUrl("/api/hero/admin/list");
+    const res = await safeFetchJson<{ success: boolean; items: any[]; total: number; lastUpdated: number }>(fullUrl, {}, 4000);
+    if (res?.items && Array.isArray(res.items)) {
+      const items = res.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
+      return { success: true, items, total: res.total, lastUpdated: res.lastUpdated };
+    }
+  } catch {}
+
+  return { success: false, items: [] };
+}
+
+export async function selectHeroAsset(
+  slug: string,
+  assetType: 'backdrop' | 'logo',
+  selectedUrl: string
+): Promise<{ success: boolean; message?: string; movie?: Movie; error?: string }> {
+  try {
+    let updatedMovie: Movie | null = null;
+    let fullPayload: any = null;
+
+    // 1. Read existing hero banner data from Firebase (Firestore / RTDB)
+    try {
+      fullPayload = await readCacheFromFirebase('hero_banner');
+    } catch (e) {
+      console.warn('[selectHeroAsset Firebase get error]:', e);
+    }
+
+    // 2. If Firebase didn't have payload yet, get admin list from server
+    if (!fullPayload || !Array.isArray(fullPayload.items)) {
+      const adminList = await getHeroAdminList();
+      if (adminList.success && adminList.items.length > 0) {
+        fullPayload = { items: adminList.items, lastUpdated: Date.now() };
+      }
+    }
+
+    if (fullPayload && Array.isArray(fullPayload.items)) {
+      const target = fullPayload.items.find((m: any) => m.slug === slug);
+      if (target) {
+        if (assetType === 'backdrop') {
+          target.backdrop_url = selectedUrl;
+          if (Array.isArray(target.backdrops)) {
+            let found = false;
+            target.backdrops = target.backdrops.map((b: any) => {
+              const isMatch = b.url === selectedUrl;
+              if (isMatch) found = true;
+              return { ...b, primary: isMatch };
+            });
+            if (!found) {
+              target.backdrops.unshift({ url: selectedUrl, primary: true });
+            }
+          } else {
+            target.backdrops = [{ url: selectedUrl, primary: true }];
+          }
+        } else if (assetType === 'logo') {
+          target.logo_url = selectedUrl;
+          if (Array.isArray(target.logos)) {
+            let found = false;
+            target.logos = target.logos.map((l: any) => {
+              const isMatch = l.url === selectedUrl;
+              if (isMatch) found = true;
+              return { ...l, primary: isMatch };
+            });
+            if (!found) {
+              target.logos.unshift({ url: selectedUrl, primary: true });
+            }
+          } else {
+            target.logos = [{ url: selectedUrl, primary: true }];
+          }
+        }
+
+        fullPayload.lastUpdated = Date.now();
+        updatedMovie = normalizeMovieItem(target, target.source || 'kkphim');
+
+        // 3. Save directly to Firebase (Firestore + RTDB)
+        await saveCacheToFirebase('hero_banner', fullPayload);
+        
+        // Save to individual movie override in Firebase
+        const overrideItem = {
+          slug: target.slug,
+          name: target.name,
+          logo_url: target.logo_url,
+          backdrop_url: target.backdrop_url,
+          logos: target.logos,
+          backdrops: target.backdrops,
+          lastUpdated: Date.now(),
+        };
+        await saveCacheToFirebase(`movie_overrides/${slug}`, overrideItem);
+      }
+    }
+
+    // Also notify server endpoint to update memory cache
+    try {
+      const fullUrl = getFullApiUrl("/api/hero/select-asset");
+      await fetch(fullUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug, assetType, selectedUrl }),
+      });
+    } catch {}
+
+    if (updatedMovie) {
+      clientTmdbHeroCache = null;
+      clearTmdbAssetsCache();
+      return { success: true, message: `Đã đổi ${assetType} và lưu vào Firebase thành công!`, movie: updatedMovie };
+    }
+
+    return { success: false, error: "Không tìm thấy phim để cập nhật trong Firebase" };
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Lỗi kết nối máy chủ" };
+  }
+}

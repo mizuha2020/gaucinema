@@ -38,6 +38,16 @@ export interface EpisodeServer {
   sourceLabel?: string;
 }
 
+export interface HeroImageOption {
+  url: string;
+  width?: number;
+  height?: number;
+  vote_average?: number;
+  vote_count?: number;
+  iso_639_1?: string;
+  primary: boolean;
+}
+
 export interface Movie {
   _id?: string;
   id?: string;
@@ -51,6 +61,15 @@ export interface Movie {
   thumb_url: string;
   backdrop_url?: string;
   logo_url?: string;
+  backdrops?: HeroImageOption[];
+  logos?: HeroImageOption[];
+  color_palette?: {
+    primary?: string;
+    accent?: string;
+    ambientGlow?: string;
+    isDark?: boolean;
+    textContrast?: string;
+  };
   tmdb?: { id?: string; type?: string; season?: any; vote_average?: number; vote_count?: number };
   is_copyright?: boolean;
   sub_docquyen?: boolean;

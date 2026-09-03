@@ -94,7 +94,8 @@ async function fetchWithTimeout(url: string, timeoutMs = 12000): Promise<any> {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const isProd = process.env.NODE_ENV === "production";
+  const PORT = Number(process.env.PORT) || (isProd ? 8080 : 3000);
 
   // Enable CORS for Android app and other origins
   app.use(cors({
@@ -113,19 +114,189 @@ async function startServer() {
 
   app.use(express.json());
 
-  // Health check
-  app.get("/api/health", (req, res) => {
+  // Health check endpoints for Cloud Run, GCP load balancers, and monitoring
+  app.get(["/api/health", "/healthz", "/_ah/health"], (req, res) => {
     res.json({ status: "ok", message: "Gấu Cinema API Server is healthy", timestamp: Date.now() });
   });
 
-  // TMDB Backdrop + Logo proxy (like chophim.app) - returns original backdrop/logotype for hero banner
-  app.get("/api/tmdb/backdrop/:tmdbId", async (req, res) => {
-    const tmdbId = String(req.params.tmdbId || "").trim();
-    if (!tmdbId || !/^\d+$/.test(tmdbId)) return res.status(400).json({ error: "Invalid tmdbId" });
-    const force = req.query.force === "true" || req.query.force === "1";
-    const cached = tmdbBackdropCache.get(tmdbId);
-    if (!force && cached && Date.now() - cached.timestamp < TMDB_TTL_MS) {
-      return res.json({ tmdbId, backdropUrl: cached.url, logoUrl: cached.logoUrl || null, cached: true });
+  // --- FIREBASE REALTIME DATABASE SYNC & PRE-COMPUTED CACHE HELPERS ---
+  const RTDB_URL = "https://gaucinema-default-rtdb.asia-southeast1.firebasedatabase.app";
+  
+  async function syncToRtdb(endpointPath: string, payload: any): Promise<boolean> {
+    try {
+      const cleanPath = endpointPath.replace(/^\/+/, "").replace(/\.json$/, "");
+      const url = `${RTDB_URL}/${cleanPath}.json`;
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(6000),
+      });
+      return res.ok;
+    } catch (err: any) {
+      console.warn(`[RTDB Sync Error on ${endpointPath}]:`, err?.message);
+      return false;
+    }
+  }
+
+  async function fetchFromRtdb(endpointPath: string): Promise<any | null> {
+    try {
+      const cleanPath = endpointPath.replace(/^\/+/, "").replace(/\.json$/, "");
+      const url = `${RTDB_URL}/${cleanPath}.json`;
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(4000),
+        headers: { Accept: "application/json" },
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (err: any) {
+      console.warn(`[RTDB Fetch Error on ${endpointPath}]:`, err?.message);
+    }
+    return null;
+  }
+
+  // Helper to generate dynamic aesthetic color palette and contrast tokens for movies
+  function generateMoviePalette(movie: { name?: string; origin_name?: string; genre?: string; content?: string }): {
+    primary: string;
+    accent: string;
+    ambientGlow: string;
+    isDark: boolean;
+    textContrast: string;
+  } {
+    const text = `${movie.name || ""} ${movie.origin_name || ""} ${movie.genre || ""} ${movie.content || ""}`.toLowerCase();
+    
+    // Aesthetic Cinematic Palettes based on vibe/genre keywords
+    if (text.includes("hành động") || text.includes("action") || text.includes("chiến tranh") || text.includes("lửa") || text.includes("sát thủ")) {
+      return { primary: "#dc2626", accent: "#f87171", ambientGlow: "rgba(220, 38, 38, 0.35)", isDark: true, textContrast: "#ffffff" };
+    }
+    if (text.includes("kinh dị") || text.includes("horror") || text.includes("ma") || text.includes("quỷ") || text.includes("máu")) {
+      return { primary: "#7f1d1d", accent: "#ef4444", ambientGlow: "rgba(127, 29, 29, 0.4)", isDark: true, textContrast: "#fecaca" };
+    }
+    if (text.includes("tình cảm") || text.includes("romance") || text.includes("lãng mạn") || text.includes("yêu")) {
+      return { primary: "#db2777", accent: "#f472b6", ambientGlow: "rgba(219, 39, 119, 0.3)", isDark: true, textContrast: "#ffffff" };
+    }
+    if (text.includes("viễn tưởng") || text.includes("sci-fi") || text.includes("vũ trụ") || text.includes("cyberpunk")) {
+      return { primary: "#06b6d4", accent: "#22d3ee", ambientGlow: "rgba(6, 182, 212, 0.35)", isDark: true, textContrast: "#ffffff" };
+    }
+    if (text.includes("hoạt hình") || text.includes("anime") || text.includes("animation") || text.includes("doraemon") || text.includes("dragon ball")) {
+      return { primary: "#f59e0b", accent: "#fbbf24", ambientGlow: "rgba(245, 158, 11, 0.35)", isDark: true, textContrast: "#ffffff" };
+    }
+    if (text.includes("hài hước") || text.includes("comedy") || text.includes("phiêu lưu") || text.includes("adventure")) {
+      return { primary: "#10b981", accent: "#34d399", ambientGlow: "rgba(16, 185, 129, 0.3)", isDark: true, textContrast: "#ffffff" };
+    }
+    if (text.includes("cổ trang") || text.includes("kiếm hiệp") || text.includes("thần thoại")) {
+      return { primary: "#8b5cf6", accent: "#a78bfa", ambientGlow: "rgba(139, 92, 246, 0.35)", isDark: true, textContrast: "#ffffff" };
+    }
+    
+    // Default refined cinematic blue / indigo palette
+    return { primary: "#2563eb", accent: "#38bdf8", ambientGlow: "rgba(37, 99, 235, 0.3)", isDark: true, textContrast: "#ffffff" };
+  }
+
+  // --- PERSISTENT ADMIN MOVIE OVERRIDES (LOGOS, BACKDROPS, POSTERS, CUSTOM PALETTES) ---
+  const movieOverridesMap = new Map<string, any>();
+  let isMovieOverridesLoaded = false;
+
+  async function loadMovieOverrides(): Promise<Map<string, any>> {
+    try {
+      const overridesFromRtdb = await fetchFromRtdb("system_cache/movie_overrides");
+      if (overridesFromRtdb && typeof overridesFromRtdb === "object") {
+        for (const [key, val] of Object.entries(overridesFromRtdb)) {
+          if (val && typeof val === "object") {
+            movieOverridesMap.set(key, val);
+            if ((val as any).slug) {
+              movieOverridesMap.set((val as any).slug, val);
+            }
+          }
+        }
+        isMovieOverridesLoaded = true;
+      }
+    } catch (err: any) {
+      console.warn("[loadMovieOverrides Warning]:", err?.message);
+    }
+    return movieOverridesMap;
+  }
+
+  async function saveMovieOverride(slug: string, overrideData: any): Promise<boolean> {
+    if (!slug) return false;
+    const existing = movieOverridesMap.get(slug) || {};
+    const merged = { ...existing, ...overrideData, slug, lastUpdated: Date.now() };
+    movieOverridesMap.set(slug, merged);
+    
+    // Asynchronously save to RTDB
+    return syncToRtdb(`system_cache/movie_overrides/${slug}`, merged);
+  }
+
+  function mergeMovieOverrides(movie: any, prevMovie?: any): any {
+    if (!movie) return movie;
+    const slug = movie.slug;
+    const tmdbId = movie.tmdbId || movie.tmdb?.id;
+    const override = (slug ? movieOverridesMap.get(slug) : null) || (tmdbId ? movieOverridesMap.get(String(tmdbId)) : null);
+
+    const merged = { ...movie };
+
+    // 1. If persistent override exists in database
+    if (override) {
+      if (override.logo_url) merged.logo_url = override.logo_url;
+      if (override.backdrop_url) merged.backdrop_url = override.backdrop_url;
+      if (override.poster_url) merged.poster_url = override.poster_url;
+      if (override.thumb_url) merged.thumb_url = override.thumb_url;
+      if (override.color_palette) merged.color_palette = override.color_palette;
+      if (Array.isArray(override.logos) && override.logos.length > 0) {
+        merged.logos = override.logos;
+      }
+      if (Array.isArray(override.backdrops) && override.backdrops.length > 0) {
+        merged.backdrops = override.backdrops;
+      }
+    }
+
+    // 2. If previous movie had custom logo/backdrop selected (e.g. from existing cache or hero list)
+    if (prevMovie) {
+      if (!merged.logo_url && prevMovie.logo_url) merged.logo_url = prevMovie.logo_url;
+      if (prevMovie.backdrop_url && (!merged.backdrop_url || prevMovie.backdrop_url !== movie.thumb_url)) {
+        merged.backdrop_url = prevMovie.backdrop_url;
+      }
+      if (Array.isArray(prevMovie.logos) && prevMovie.logos.length > 0) {
+        const primaryLogo = prevMovie.logos.find((l: any) => l.primary);
+        if (primaryLogo) {
+          merged.logo_url = primaryLogo.url;
+          merged.logos = prevMovie.logos;
+        }
+      }
+      if (Array.isArray(prevMovie.backdrops) && prevMovie.backdrops.length > 0) {
+        const primaryBackdrop = prevMovie.backdrops.find((b: any) => b.primary);
+        if (primaryBackdrop) {
+          merged.backdrop_url = primaryBackdrop.url;
+          merged.backdrops = prevMovie.backdrops;
+        }
+      }
+      if (prevMovie.color_palette) {
+        merged.color_palette = prevMovie.color_palette;
+      }
+    }
+
+    return merged;
+  }
+
+  // Internal TMDB Backdrop & Logo fetcher with caching (up to 3 backdrops & 3 logos)
+  async function getTmdbAssetsInternal(tmdbId: string, force = false): Promise<{
+    backdropUrl: string | null;
+    logoUrl: string | null;
+    width?: number;
+    height?: number;
+    backdrops: Array<{ url: string; width?: number; height?: number; vote_average?: number; vote_count?: number; iso_639_1?: string; primary: boolean }>;
+    logos: Array<{ url: string; width?: number; height?: number; vote_average?: number; vote_count?: number; iso_639_1?: string; primary: boolean }>;
+  }> {
+    const id = String(tmdbId || "").trim();
+    if (!id || !/^\d+$/.test(id)) return { backdropUrl: null, logoUrl: null, backdrops: [], logos: [] };
+    const cached = tmdbBackdropCache.get(id);
+    if (!force && cached && Date.now() - cached.timestamp < TMDB_TTL_MS && (cached as any).backdrops) {
+      return {
+        backdropUrl: cached.url,
+        logoUrl: cached.logoUrl || null,
+        backdrops: (cached as any).backdrops || [],
+        logos: (cached as any).logos || [],
+      };
     }
     const bearer = process.env.TMDB_BEARER_TOKEN || process.env.TMDB_READ_TOKEN || "";
     const apiKey = process.env.TMDB_API_KEY || "";
@@ -133,12 +304,11 @@ async function startServer() {
     if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
     const tryUrls: string[] = [];
     
-    // Backdrop: TMDB API include_image_language parameter (null = No Language / textless, en, vi, xx)
     const imgLangs = "null,en,vi,ja,ko,zh,th,fr,de,es,xx";
-    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/movie/${tmdbId}/images?include_image_language=${imgLangs}`);
-    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/movie/${tmdbId}/images?include_image_language=${imgLangs}&api_key=${apiKey}`);
-    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/tv/${tmdbId}/images?include_image_language=${imgLangs}`);
-    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/tv/${tmdbId}/images?include_image_language=${imgLangs}&api_key=${apiKey}`);
+    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/movie/${id}/images?include_image_language=${imgLangs}`);
+    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/movie/${id}/images?include_image_language=${imgLangs}&api_key=${apiKey}`);
+    if (bearer) tryUrls.push(`https://api.themoviedb.org/3/tv/${id}/images?include_image_language=${imgLangs}`);
+    if (apiKey) tryUrls.push(`https://api.themoviedb.org/3/tv/${id}/images?include_image_language=${imgLangs}&api_key=${apiKey}`);
 
     for (const url of tryUrls) {
       try {
@@ -148,12 +318,13 @@ async function startServer() {
         clearTimeout(t);
         if (!r.ok) continue;
         const data: any = await r.json();
-        const backdrops: any[] = data.backdrops || [];
-        const logos: any[] = (data.logos || []) as any[];
-        // pick best logo: ưu tiên vi-VN -> en_US (TMDB trả iso_639_1 = "vi"/"en")
-        let logoUrl: string | null = null;
-        if (logos.length > 0) {
-          const sortedLogos = [...logos].sort((a, b) => {
+        const rawBackdrops: any[] = data.backdrops || [];
+        const rawLogos: any[] = (data.logos || []) as any[];
+
+        // Extract up to 3 candidate logos (sorted by vi -> en -> others, then rating/vote/score)
+        const extractedLogos: Array<{ url: string; width?: number; height?: number; vote_average?: number; vote_count?: number; iso_639_1?: string; primary: boolean }> = [];
+        if (rawLogos.length > 0) {
+          const sortedLogos = [...rawLogos].sort((a, b) => {
             const langScore = (iso: string | null) => iso === 'vi' ? 0 : iso === 'en' ? 1 : 2;
             const ls = langScore(a.iso_639_1) - langScore(b.iso_639_1);
             if (ls !== 0) return ls;
@@ -161,17 +332,28 @@ async function startServer() {
             const scoreB = (Number(b.vote_count) > 0 ? (Number(b.vote_average) * Number(b.vote_count) + 15) / (Number(b.vote_count) + 3) : 0) * 1000 + (b.width || 0);
             return scoreB - scoreA;
           });
-          const bestLogo = sortedLogos[0];
-          if (bestLogo?.file_path) logoUrl = `https://image.tmdb.org/t/p/original${bestLogo.file_path}`;
+          
+          const topLogos = sortedLogos.slice(0, 3);
+          topLogos.forEach((l, idx) => {
+            if (l.file_path) {
+              extractedLogos.push({
+                url: `https://image.tmdb.org/t/p/original${l.file_path}`,
+                width: l.width,
+                height: l.height,
+                vote_average: l.vote_average,
+                vote_count: l.vote_count,
+                iso_639_1: l.iso_639_1,
+                primary: idx === 0,
+              });
+            }
+          });
         }
 
-        // Helper check No-Language (textless) theo chuẩn TMDB
         const isNoLanguage = (img: any) => {
           const iso = img.iso_639_1;
           return !iso || iso === 'null' || iso === 'xx' || iso === '';
         };
 
-        // Sort theo chuẩn TMDB Web: Rating Descending -> Vote Count Descending -> Width Descending
         const sortTmdbRatingDesc = (list: any[]) => {
           return [...list].sort((a, b) => {
             const avgDiff = (Number(b.vote_average) || 0) - (Number(a.vote_average) || 0);
@@ -182,48 +364,83 @@ async function startServer() {
           });
         };
 
-        // Ưu tiên chọn ảnh No Language (textless) top rating trên TMDB
-        if (backdrops.length > 0) {
-          const noLangBackdrops = backdrops.filter(isNoLanguage);
-          const candidateList = noLangBackdrops.length > 0 ? noLangBackdrops : backdrops;
+        // Extract up to 3 candidate backdrops (prioritizing textless high-resolution)
+        const extractedBackdrops: Array<{ url: string; width?: number; height?: number; vote_average?: number; vote_count?: number; iso_639_1?: string; primary: boolean }> = [];
+        if (rawBackdrops.length > 0) {
+          const noLangBackdrops = rawBackdrops.filter(isNoLanguage);
+          const candidateList = noLangBackdrops.length >= 3 ? noLangBackdrops : rawBackdrops;
           const sorted = sortTmdbRatingDesc(candidateList);
-          const best = sorted[0];
+          const topBackdrops = sorted.slice(0, 3);
+          topBackdrops.forEach((b, idx) => {
+            if (b.file_path) {
+              extractedBackdrops.push({
+                url: `https://image.tmdb.org/t/p/original${b.file_path}`,
+                width: b.width,
+                height: b.height,
+                vote_average: b.vote_average,
+                vote_count: b.vote_count,
+                iso_639_1: b.iso_639_1,
+                primary: idx === 0,
+              });
+            }
+          });
+        }
 
-          if (best?.file_path) {
-            const backdropUrl = `https://image.tmdb.org/t/p/original${best.file_path}`;
-            tmdbBackdropCache.set(tmdbId, { url: backdropUrl, logoUrl, timestamp: Date.now() });
-            return res.json({
-              tmdbId,
-              backdropUrl,
-              logoUrl,
-              width: best.width,
-              height: best.height,
-              iso_639_1: best.iso_639_1,
-              vote_average: best.vote_average,
-              vote_count: best.vote_count,
+        // Fallback to posters if no backdrops available
+        if (extractedBackdrops.length === 0) {
+          const rawPosters: any[] = data.posters || [];
+          if (rawPosters.length > 0) {
+            const sortedPosters = sortTmdbRatingDesc(rawPosters);
+            sortedPosters.slice(0, 3).forEach((p, idx) => {
+              if (p.file_path) {
+                extractedBackdrops.push({
+                  url: `https://image.tmdb.org/t/p/original${p.file_path}`,
+                  width: p.width,
+                  height: p.height,
+                  vote_average: p.vote_average,
+                  vote_count: p.vote_count,
+                  iso_639_1: p.iso_639_1,
+                  primary: idx === 0,
+                });
+              }
             });
           }
         }
-        // fallback to poster if no backdrop but has posters
-        const posters: any[] = data.posters || [];
-        if (posters.length > 0) {
-          const noLangPosters = posters.filter(isNoLanguage);
-          const candidatePosters = noLangPosters.length > 0 ? noLangPosters : posters;
-          const sortedPosters = sortTmdbRatingDesc(candidatePosters);
-          const best = sortedPosters[0];
-          const backdropUrl = `https://image.tmdb.org/t/p/original${best.file_path}`;
-          tmdbBackdropCache.set(tmdbId, { url: backdropUrl, logoUrl, timestamp: Date.now() });
-          return res.json({ tmdbId, backdropUrl, logoUrl, width: best.width, height: best.height });
-        }
-        // nếu chỉ có logo mà không có backdrop
-        if (logoUrl) {
-          tmdbBackdropCache.set(tmdbId, { url: null, logoUrl, timestamp: Date.now() });
-          return res.json({ tmdbId, backdropUrl: null, logoUrl });
+
+        const primaryBackdrop = extractedBackdrops.find(b => b.primary)?.url || (extractedBackdrops[0]?.url || null);
+        const primaryLogo = extractedLogos.find(l => l.primary)?.url || (extractedLogos[0]?.url || null);
+
+        if (primaryBackdrop || primaryLogo) {
+          (tmdbBackdropCache as any).set(id, {
+            url: primaryBackdrop,
+            logoUrl: primaryLogo,
+            backdrops: extractedBackdrops,
+            logos: extractedLogos,
+            timestamp: Date.now(),
+          });
+          return {
+            backdropUrl: primaryBackdrop,
+            logoUrl: primaryLogo,
+            backdrops: extractedBackdrops,
+            logos: extractedLogos,
+            width: extractedBackdrops[0]?.width,
+            height: extractedBackdrops[0]?.height,
+          };
         }
       } catch {}
     }
-    tmdbBackdropCache.set(tmdbId, { url: null, logoUrl: null, timestamp: Date.now() });
-    return res.json({ tmdbId, backdropUrl: null, logoUrl: null });
+
+    tmdbBackdropCache.set(id, { url: null, logoUrl: null, timestamp: Date.now() });
+    return { backdropUrl: null, logoUrl: null, backdrops: [], logos: [] };
+  }
+
+  // TMDB Backdrop + Logo proxy (like chophim.app) - returns original backdrop/logotype for hero banner
+  app.get("/api/tmdb/backdrop/:tmdbId", async (req, res) => {
+    const tmdbId = String(req.params.tmdbId || "").trim();
+    if (!tmdbId || !/^\d+$/.test(tmdbId)) return res.status(400).json({ error: "Invalid tmdbId" });
+    const force = req.query.force === "true" || req.query.force === "1";
+    const assets = await getTmdbAssetsInternal(tmdbId, force);
+    return res.json({ tmdbId, ...assets, cached: !force });
   });
 
   // TMDB Generic Proxy - expose toàn bộ TMDb v3 endpoints bạn liệt kê qua Bearer server-side
@@ -318,7 +535,7 @@ async function startServer() {
     return res.status(502).json({ results: [], error: "TMDB trending failed" });
   });
 
-    // Hero Banner - TMDB Discover (vi-VN, region VN, sort popularity.desc) + validate tồn tại trong API phim hiện tại (phimapi.com)
+    // Hero Banner - TMDB Discover (vi-VN, region VN, sort popularity.desc) + validate stream availability + Precompute 4K backdrop, Logo, and Color Palette
   const tmdbHeroCache = new LRUCache<string, { data: any; timestamp: number }>(10);
   let isHeroRefreshing = false;
 
@@ -346,16 +563,22 @@ async function startServer() {
         const results = data.results || [];
         if (results.length) {
           tmdbResults = tmdbResults.concat(results);
-          if (tmdbResults.length >= 25) break;
+          if (tmdbResults.length >= 30) break;
         }
       } catch {}
     }
 
     if (tmdbResults.length === 0) {
+      // Try to load pre-computed batch from Firebase RTDB
+      const rtdbBackup = await fetchFromRtdb("system_cache/hero_banner");
+      if (rtdbBackup && rtdbBackup.items && rtdbBackup.items.length >= 6) {
+        tmdbHeroCache.set(cacheKey, { data: rtdbBackup, timestamp: Date.now() });
+        return rtdbBackup;
+      }
       return null;
     }
 
-    // Parallel batch validation: kiểm tra song song các phim thay vì tuần tự từng phim một
+    // Parallel batch validation: kiểm tra song song các phim và tự động lấy Logo + Backdrop 4K + Palette
     const candidates = tmdbResults.slice(0, 30);
     const checkBatch = async (itemsToCheck: any[]) => {
       return Promise.all(
@@ -372,20 +595,52 @@ async function startServer() {
             const matchedItem = foundItems[0];
             if (!matchedItem?.slug) return null;
 
+            const tmdbId = String(it.id);
+            // Parallel fetch TMDB Backdrop & Logo
+            let backdropUrl = it.backdrop_path ? `https://image.tmdb.org/t/p/original${it.backdrop_path}` : matchedItem.thumb_url || "";
+            let logoUrl: string | null = null;
+            let backdrops: any[] = [];
+            let logos: any[] = [];
+            try {
+              const assets = await getTmdbAssetsInternal(tmdbId);
+              if (assets.backdropUrl) backdropUrl = assets.backdropUrl;
+              if (assets.logoUrl) logoUrl = assets.logoUrl;
+              backdrops = assets.backdrops || [];
+              logos = assets.logos || [];
+            } catch {}
+
+            if (backdrops.length === 0 && backdropUrl) {
+              backdrops = [{ url: backdropUrl, primary: true }];
+            }
+            if (logos.length === 0 && logoUrl) {
+              logos = [{ url: logoUrl, primary: true }];
+            }
+
+            // Compute dynamic color palette and contrast tokens
+            const color_palette = generateMoviePalette({
+              name: matchedItem.name || it.title,
+              origin_name: matchedItem.origin_name || it.original_title,
+              content: it.overview || "",
+            });
+
             return {
               slug: matchedItem.slug,
               name: matchedItem.name || it.title,
               origin_name: matchedItem.origin_name || it.original_title || "",
               poster_url: (it.poster_path ? `https://image.tmdb.org/t/p/w500${it.poster_path}` : matchedItem.poster_url || matchedItem.thumb_url || ""),
               thumb_url: (it.poster_path ? `https://image.tmdb.org/t/p/w500${it.poster_path}` : matchedItem.thumb_url || matchedItem.poster_url || ""),
-              backdrop_url: it.backdrop_path ? `https://image.tmdb.org/t/p/original${it.backdrop_path}` : matchedItem.thumb_url || "",
+              backdrop_url: backdropUrl,
+              logo_url: logoUrl,
+              backdrops,
+              logos,
+              color_palette,
               year: matchedItem.year || (it.release_date ? Number(String(it.release_date).slice(0, 4)) : undefined),
               quality: matchedItem.quality || "FHD",
               lang: matchedItem.lang || "Vietsub",
               source: "kkphim",
               sourceLabel: "KKPhim",
-              tmdb: { id: String(it.id) },
-              tmdbId: String(it.id),
+              tmdb: { id: tmdbId },
+              tmdbId: tmdbId,
               content: it.overview || "",
               vote_average: it.vote_average,
               popularity: it.popularity,
@@ -397,7 +652,7 @@ async function startServer() {
       );
     };
 
-    // Chạy song song 2 batch (mỗi batch 10-15 phim)
+    // Chạy song song 2 batch (mỗi batch 15 phim)
     const items: any[] = [];
     const usedSlugs = new Set<string>();
 
@@ -421,7 +676,7 @@ async function startServer() {
       }
     }
 
-    // Fallback: nếu vẫn <10 thì lấy nhanh phim lẻ mới để bù
+    // Fallback nếu vẫn < 10: lấy nhanh phim lẻ chất lượng cao
     if (items.length < 10) {
       try {
         const catRes = await fetchWithTimeout(`https://phimapi.com/v1/api/danh-sach/phim-le?page=1&limit=20`, 4000).catch(() => null);
@@ -430,6 +685,7 @@ async function startServer() {
           if (items.length >= 10) break;
           if (!catItem.slug || usedSlugs.has(catItem.slug)) continue;
           const tmdbId = catItem.tmdb?.id ? String(catItem.tmdb.id) : null;
+          const palette = generateMoviePalette({ name: catItem.name, origin_name: catItem.origin_name });
           const filler: any = {
             slug: catItem.slug,
             name: catItem.name,
@@ -437,6 +693,7 @@ async function startServer() {
             poster_url: catItem.poster_url || catItem.thumb_url || "",
             thumb_url: catItem.thumb_url || catItem.poster_url || "",
             backdrop_url: catItem.poster_url || catItem.thumb_url || "",
+            color_palette: palette,
             year: catItem.year,
             quality: catItem.quality || "FHD",
             lang: catItem.lang || "Vietsub",
@@ -446,6 +703,19 @@ async function startServer() {
           if (tmdbId) {
             filler.tmdb = { id: tmdbId };
             filler.tmdbId = tmdbId;
+            try {
+              const assets = await getTmdbAssetsInternal(tmdbId);
+              if (assets.backdropUrl) filler.backdrop_url = assets.backdropUrl;
+              if (assets.logoUrl) filler.logo_url = assets.logoUrl;
+              filler.backdrops = assets.backdrops || [];
+              filler.logos = assets.logos || [];
+            } catch {}
+          }
+          if (!filler.backdrops || filler.backdrops.length === 0) {
+            filler.backdrops = [{ url: filler.backdrop_url, primary: true }];
+          }
+          if (!filler.logos || filler.logos.length === 0) {
+            filler.logos = filler.logo_url ? [{ url: filler.logo_url, primary: true }] : [];
           }
           usedSlugs.add(filler.slug);
           items.push(filler);
@@ -453,27 +723,55 @@ async function startServer() {
       } catch {}
     }
 
-    const payload = { status: true, items: items.slice(0, 10), total: items.slice(0, 10).length, source: "tmdb_discover_vi-VN_VN_popularity.desc_validated" };
+    // Load overrides and merge with any existing hero configs
+    await loadMovieOverrides();
+    const existingHero = tmdbHeroCache.get(cacheKey)?.data?.items || [];
+    const prevHeroMap = new Map<string, any>();
+    for (const h of existingHero) {
+      if (h.slug) prevHeroMap.set(h.slug, h);
+    }
+    const finalItems = items.slice(0, 10).map((m: any) => mergeMovieOverrides(m, prevHeroMap.get(m.slug)));
+
+    const payload = {
+      status: true,
+      items: finalItems,
+      total: finalItems.length,
+      source: "tmdb_discover_vi-VN_VN_popularity.desc_validated_rtdb",
+      lastUpdated: Date.now(),
+    };
+
+    // Save to LRU Memory Cache
     tmdbHeroCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+
+    // Asynchronously Persist to Firebase Realtime Database for instant global reads
+    syncToRtdb("system_cache/hero_banner", payload).catch(() => {});
+
     return payload;
   }
 
   app.get("/api/tmdb/hero-popular", async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
     const cacheKey = "hero:discover:vi-VN:VN:popularity.desc:v3";
+    const force = req.query.refresh === '1' || req.query.force === '1';
     const cached = tmdbHeroCache.get(cacheKey);
 
-    // Stale-while-revalidate: trả ngay nếu có cache (tối đa 2 giờ), refresh ngầm nếu quá 30 phút
-    if (cached && cached.data?.items?.length >= 8) {
-      const isStale = Date.now() - cached.timestamp > 30 * 60 * 1000;
-      if (isStale && !isHeroRefreshing) {
-        isHeroRefreshing = true;
-        refreshHeroPopular().finally(() => { isHeroRefreshing = false; });
-      }
+    // [TESTING MODE] If force requested or no cache, prioritize fresh fetch or real-time RTDB
+    if (!force && cached && cached.data?.items?.length >= 8) {
       return res.json(cached.data);
     }
 
     try {
-      const payload = await refreshHeroPopular();
+      // First try real-time RTDB for instant accurate data
+      const rtdbData = await fetchFromRtdb("system_cache/hero_banner");
+      if (rtdbData && rtdbData.items && rtdbData.items.length >= 8) {
+        tmdbHeroCache.set(cacheKey, { data: rtdbData, timestamp: Date.now() });
+        return res.json(rtdbData);
+      }
+
+      const payload = await refreshHeroPopular(force);
       if (payload) return res.json(payload);
       if (cached) return res.json(cached.data);
       return res.status(502).json({ status: false, items: [], error: "TMDB popular fetch failed" });
@@ -1550,13 +1848,62 @@ setTimeout(seedInitialCastIndex, 2000);
       ]);
 
       if (resolvedMovies.length >= 8 || resolvedTvShows.length >= 8) {
+        let finalMovies = resolvedMovies.length >= 10 ? resolvedMovies.slice(0, 10) : [...resolvedMovies, ...initialSeedNetflixMovies].slice(0, 10);
+        let finalTvShows = resolvedTvShows.length >= 10 ? resolvedTvShows.slice(0, 10) : [...resolvedTvShows, ...initialSeedNetflixTv].slice(0, 10);
+        
+        // Load persistent overrides & existing RTDB data to preserve admin custom configs
+        await loadMovieOverrides();
+        let existingRtdbNetflix: any = null;
+        try {
+          existingRtdbNetflix = await fetchFromRtdb("system_cache/netflix_top10");
+        } catch {}
+
+        const prevMoviesMap = new Map<string, any>();
+        if (existingRtdbNetflix?.data?.movies) {
+          for (const m of existingRtdbNetflix.data.movies) {
+            if (m.slug) prevMoviesMap.set(m.slug, m);
+          }
+        }
+        if (existingRtdbNetflix?.data?.tvShows) {
+          for (const m of existingRtdbNetflix.data.tvShows) {
+            if (m.slug) prevMoviesMap.set(m.slug, m);
+          }
+        }
+        if (netflixTop10Cache.movies) {
+          for (const m of netflixTop10Cache.movies) {
+            if (m.slug && !prevMoviesMap.has(m.slug)) prevMoviesMap.set(m.slug, m);
+          }
+        }
+        if (netflixTop10Cache.tvShows) {
+          for (const m of netflixTop10Cache.tvShows) {
+            if (m.slug && !prevMoviesMap.has(m.slug)) prevMoviesMap.set(m.slug, m);
+          }
+        }
+
+        // Apply custom overrides to each scraped movie so admin settings are never overwritten
+        finalMovies = finalMovies.map((m: any) => mergeMovieOverrides(m, prevMoviesMap.get(m.slug)));
+        finalTvShows = finalTvShows.map((m: any) => mergeMovieOverrides(m, prevMoviesMap.get(m.slug)));
+
         netflixTop10Cache = {
-          movies: resolvedMovies.length >= 10 ? resolvedMovies : [...resolvedMovies, ...initialSeedNetflixMovies].slice(0, 10),
-          tvShows: resolvedTvShows.length >= 10 ? resolvedTvShows : [...resolvedTvShows, ...initialSeedNetflixTv].slice(0, 10),
+          movies: finalMovies,
+          tvShows: finalTvShows,
           movieTitles,
           tvTitles,
           lastUpdated: Date.now(),
         };
+
+        // Asynchronously persist to Firebase RTDB
+        const rtdbPayload = {
+          status: true,
+          data: {
+            movies: finalMovies,
+            tvShows: finalTvShows,
+            movieTitles,
+            tvTitles,
+            lastUpdated: Date.now(),
+          }
+        };
+        syncToRtdb("system_cache/netflix_top10", rtdbPayload).catch(() => {});
       }
     } catch (err: any) {
       console.error("[Netflix Top10 VN Update Error]:", err.message);
@@ -1565,14 +1912,305 @@ setTimeout(seedInitialCastIndex, 2000);
     }
   }
 
-  // Trigger background update on startup (delayed 3s) & every 4 hours
-  setTimeout(() => { updateNetflixTop10Cache().catch(() => {}); }, 3000);
-  setInterval(() => { updateNetflixTop10Cache().catch(() => {}); }, 4 * 60 * 60 * 1000);
+  // --- UNIFIED PRE-COMPUTED BATCH RUNNER (FIXED 00:00 & 12:00 VIETNAM TIME UTC+7) ---
+  function getNextVietnamScheduleTime(): number {
+    const now = Date.now();
+    const vnMs = now + 7 * 60 * 60 * 1000;
+    const vnDate = new Date(vnMs);
+    const year = vnDate.getUTCFullYear();
+    const month = vnDate.getUTCMonth();
+    const day = vnDate.getUTCDate();
+    const hours = vnDate.getUTCHours();
+
+    let targetVnMs: number;
+    if (hours < 12) {
+      // Target is today 12:00:00 Vietnam time
+      targetVnMs = Date.UTC(year, month, day, 12, 0, 0, 0);
+    } else {
+      // Target is tomorrow 00:00:00 Vietnam time
+      targetVnMs = Date.UTC(year, month, day + 1, 0, 0, 0);
+    }
+    return targetVnMs - 7 * 60 * 60 * 1000;
+  }
+
+  let batchTimerId: NodeJS.Timeout | null = null;
+
+  let systemBatchStats = {
+    lastRun: Date.now(),
+    nextRun: getNextVietnamScheduleTime(),
+    isRunning: false,
+    heroCount: 10,
+    netflixMoviesCount: 10,
+    netflixTvCount: 10,
+    lastDurationMs: 0,
+    status: "idle",
+  };
+
+  async function runFullSystemBatch(force = false) {
+    if (systemBatchStats.isRunning) return systemBatchStats;
+    const startTime = Date.now();
+    systemBatchStats.isRunning = true;
+    systemBatchStats.status = "running";
+    console.log("[Batch Worker] 🚀 Starting Pre-computed Batch Caching for Hero Banner & Netflix Top 10...");
+
+    try {
+      const [heroRes] = await Promise.allSettled([
+        refreshHeroPopular(force),
+        updateNetflixTop10Cache(),
+      ]);
+
+      const heroCount = heroRes.status === "fulfilled" && heroRes.value?.items ? heroRes.value.items.length : 10;
+      const netflixMoviesCount = netflixTop10Cache.movies.length;
+      const netflixTvCount = netflixTop10Cache.tvShows.length;
+      const duration = Date.now() - startTime;
+
+      systemBatchStats = {
+        lastRun: Date.now(),
+        nextRun: getNextVietnamScheduleTime(),
+        isRunning: false,
+        heroCount,
+        netflixMoviesCount,
+        netflixTvCount,
+        lastDurationMs: duration,
+        status: "success",
+      };
+
+      // Sync batch status to RTDB
+      syncToRtdb("system_cache/batch_status", systemBatchStats).catch(() => {});
+      console.log(`[Batch Worker] ✅ Pre-computed Batch completed in ${duration}ms (Hero: ${heroCount}, Netflix M: ${netflixMoviesCount}, Netflix TV: ${netflixTvCount})`);
+    } catch (err: any) {
+      systemBatchStats.isRunning = false;
+      systemBatchStats.status = `error: ${err?.message || "unknown"}`;
+      console.error("[Batch Worker Error]:", err?.message);
+    }
+
+    return systemBatchStats;
+  }
+
+  function scheduleNextVietnamBatch() {
+    if (batchTimerId) clearTimeout(batchTimerId);
+    const nextTargetUtc = getNextVietnamScheduleTime();
+    systemBatchStats.nextRun = nextTargetUtc;
+    const delay = Math.max(1000, nextTargetUtc - Date.now());
+    const vnTimeStr = new Date(nextTargetUtc + 7 * 3600 * 1000).toISOString().replace("T", " ").slice(0, 19);
+    console.log(`[Batch Worker] ⏰ Lịch chạy tiếp theo cố định theo giờ Việt Nam (00:00 / 12:00 ICT): ${vnTimeStr} (sau ${Math.round(delay / 60000)} phút)`);
+
+    batchTimerId = setTimeout(() => {
+      runFullSystemBatch().finally(() => {
+        scheduleNextVietnamBatch();
+      });
+    }, delay);
+  }
+
+  // Pre-seed from RTDB or trigger initial background batch (delayed 2s)
+  setTimeout(async () => {
+    try {
+      // 1. Try fast-hydration from RTDB first
+      const [rtdbHero, rtdbNetflix] = await Promise.all([
+        fetchFromRtdb("system_cache/hero_banner"),
+        fetchFromRtdb("system_cache/netflix_top10"),
+      ]);
+      if (rtdbHero && rtdbHero.items && rtdbHero.items.length >= 8) {
+        tmdbHeroCache.set("hero:discover:vi-VN:VN:popularity.desc:v3", { data: rtdbHero, timestamp: Date.now() });
+      }
+      if (rtdbNetflix && rtdbNetflix.data && rtdbNetflix.data.movies && rtdbNetflix.data.movies.length >= 8) {
+        netflixTop10Cache = {
+          movies: rtdbNetflix.data.movies.slice(0, 10),
+          tvShows: (rtdbNetflix.data.tvShows || []).slice(0, 10),
+          movieTitles: rtdbNetflix.data.movieTitles || [],
+          tvTitles: rtdbNetflix.data.tvTitles || [],
+          lastUpdated: rtdbNetflix.data.lastUpdated || Date.now(),
+        };
+      }
+    } catch {}
+
+    // Run batch sync
+    runFullSystemBatch().catch(() => {});
+  }, 2000);
+
+  // Start fixed schedule (00:00 & 12:00 Vietnam time)
+  scheduleNextVietnamBatch();
+
+  // Admin Batch Management Endpoints
+  app.post("/api/system/batch-sync", async (req, res) => {
+    try {
+      const stats = await runFullSystemBatch(true);
+      return res.json({ success: true, message: "Đã kích hoạt đồng bộ dữ liệu Batch & RTDB thành công", stats });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || "Batch sync failed" });
+    }
+  });
+
+  app.get("/api/system/batch-status", (req, res) => {
+    return res.json({
+      success: true,
+      stats: systemBatchStats,
+      cache: {
+        heroCached: tmdbHeroCache.get("hero:discover:vi-VN:VN:popularity.desc:v3")?.data?.items?.length || 0,
+        netflixMovies: netflixTop10Cache.movies.length,
+        netflixTvShows: netflixTop10Cache.tvShows.length,
+        netflixLastUpdated: netflixTop10Cache.lastUpdated,
+      }
+    });
+  });
+
+  // Admin Hero Banner Assets Listing & Selection
+  app.get("/api/hero/admin/list", async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    try {
+      const cacheKey = "hero:discover:vi-VN:VN:popularity.desc:v3";
+      let payload = await fetchFromRtdb("system_cache/hero_banner");
+      if (!payload || !payload.items || payload.items.length === 0) {
+        payload = tmdbHeroCache.get(cacheKey)?.data;
+      }
+      if (!payload || !payload.items) {
+        return res.json({ success: true, items: [] });
+      }
+      return res.json({
+        success: true,
+        items: payload.items,
+        total: payload.items.length,
+        lastUpdated: payload.lastUpdated,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || "Failed to fetch hero items" });
+    }
+  });
+
+  app.post("/api/hero/select-asset", async (req, res) => {
+    try {
+      const { slug, assetType, selectedUrl } = req.body || {};
+      if (!slug || !selectedUrl || (assetType !== "backdrop" && assetType !== "logo")) {
+        return res.status(400).json({ success: false, error: "Thiếu thông tin slug, assetType ('backdrop' | 'logo') hoặc selectedUrl" });
+      }
+
+      const cacheKey = "hero:discover:vi-VN:VN:popularity.desc:v3";
+      let payload = tmdbHeroCache.get(cacheKey)?.data;
+      if (!payload || !payload.items) {
+        payload = await fetchFromRtdb("system_cache/hero_banner");
+      }
+
+      if (!payload || !payload.items) {
+        return res.status(404).json({ success: false, error: "Không tìm thấy dữ liệu hero banner" });
+      }
+
+      const targetMovie = payload.items.find((m: any) => m.slug === slug);
+      if (!targetMovie) {
+        return res.status(404).json({ success: false, error: `Không tìm thấy phim có slug: ${slug}` });
+      }
+
+      if (assetType === "backdrop") {
+        targetMovie.backdrop_url = selectedUrl;
+        if (Array.isArray(targetMovie.backdrops)) {
+          let found = false;
+          targetMovie.backdrops = targetMovie.backdrops.map((b: any) => {
+            const isMatch = b.url === selectedUrl;
+            if (isMatch) found = true;
+            return { ...b, primary: isMatch };
+          });
+          if (!found) {
+            targetMovie.backdrops.unshift({ url: selectedUrl, primary: true });
+          }
+        } else {
+          targetMovie.backdrops = [{ url: selectedUrl, primary: true }];
+        }
+      } else if (assetType === "logo") {
+        targetMovie.logo_url = selectedUrl;
+        if (Array.isArray(targetMovie.logos)) {
+          let found = false;
+          targetMovie.logos = targetMovie.logos.map((l: any) => {
+            const isMatch = l.url === selectedUrl;
+            if (isMatch) found = true;
+            return { ...l, primary: isMatch };
+          });
+          if (!found) {
+            targetMovie.logos.unshift({ url: selectedUrl, primary: true });
+          }
+        } else {
+          targetMovie.logos = [{ url: selectedUrl, primary: true }];
+        }
+      }
+
+      payload.lastUpdated = Date.now();
+      tmdbHeroCache.set(cacheKey, { data: payload, timestamp: Date.now() });
+      syncToRtdb("system_cache/hero_banner", payload).catch(() => {});
+
+      // Persist to permanent movie overrides so subsequent data scrapers / batch jobs never overwrite this config
+      await saveMovieOverride(slug, {
+        slug,
+        name: targetMovie.name,
+        logo_url: targetMovie.logo_url,
+        backdrop_url: targetMovie.backdrop_url,
+        logos: targetMovie.logos,
+        backdrops: targetMovie.backdrops,
+      });
+
+      // Also update Netflix Top 10 cache if this movie is in Netflix Top 10
+      let netflixUpdated = false;
+      if (netflixTop10Cache.movies) {
+        netflixTop10Cache.movies = netflixTop10Cache.movies.map((m: any) => {
+          if (m.slug === slug) {
+            netflixUpdated = true;
+            return mergeMovieOverrides(m, targetMovie);
+          }
+          return m;
+        });
+      }
+      if (netflixTop10Cache.tvShows) {
+        netflixTop10Cache.tvShows = netflixTop10Cache.tvShows.map((m: any) => {
+          if (m.slug === slug) {
+            netflixUpdated = true;
+            return mergeMovieOverrides(m, targetMovie);
+          }
+          return m;
+        });
+      }
+      if (netflixUpdated) {
+        syncToRtdb("system_cache/netflix_top10", {
+          status: true,
+          data: {
+            movies: netflixTop10Cache.movies,
+            tvShows: netflixTop10Cache.tvShows,
+            movieTitles: netflixTop10Cache.movieTitles,
+            tvTitles: netflixTop10Cache.tvTitles,
+            lastUpdated: Date.now(),
+          }
+        }).catch(() => {});
+      }
+
+      return res.json({
+        success: true,
+        message: `Đã đặt ${assetType === "backdrop" ? "Backdrop" : "Logo"} chính thành công cho phim ${targetMovie.name}`,
+        movie: targetMovie,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || "Lỗi khi cập nhật ảnh hero" });
+    }
+  });
 
   app.get("/api/top10/netflix-vn", async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
     const force = req.query.refresh === '1' || req.query.force === '1';
-    // Stale-while-revalidate pattern: Always return cache immediately!
-    if (force || Date.now() - netflixTop10Cache.lastUpdated > 4 * 60 * 60 * 1000) {
+    // If force or cache is empty, try reading directly from RTDB first
+    if (force || !netflixTop10Cache.movies.length) {
+      try {
+        const rtdbNetflix = await fetchFromRtdb("system_cache/netflix_top10");
+        if (rtdbNetflix?.data?.movies?.length) {
+          netflixTop10Cache = {
+            movies: rtdbNetflix.data.movies.slice(0, 10),
+            tvShows: (rtdbNetflix.data.tvShows || []).slice(0, 10),
+            movieTitles: rtdbNetflix.data.movieTitles || [],
+            tvTitles: rtdbNetflix.data.tvTitles || [],
+            lastUpdated: rtdbNetflix.data.lastUpdated || Date.now(),
+          };
+        }
+      } catch {}
       updateNetflixTop10Cache().catch(() => {});
     }
     return res.json({
@@ -4173,8 +4811,6 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // Vite middleware for development or fallback to production static files
-  const isProd = process.env.NODE_ENV === "production";
-  
   if (!isProd) {
     const vite = await createViteServer({
       server: { middlewareMode: true, hmr: false },
@@ -4182,16 +4818,41 @@ setTimeout(seedInitialCastIndex, 2000);
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    const candidatePaths = [
+      path.join(process.cwd(), "dist"),
+      path.resolve("dist"),
+      process.cwd(),
+    ];
+    let distPath = candidatePaths[0];
+    for (const p of candidatePaths) {
+      if (fs.existsSync(path.join(p, "index.html"))) {
+        distPath = p;
+        break;
+      }
+    }
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`🎬 Gấu Cinema HD Web server running on http://0.0.0.0:${PORT}`);
   });
+
+  // If running on a cloud port (e.g. 8080), also open port 3000 if available
+  if (PORT !== 3000) {
+    try {
+      const secondary = app.listen(3000, "0.0.0.0", () => {
+        console.log(`🎬 Gấu Cinema HD secondary listener on http://0.0.0.0:3000`);
+      });
+      secondary.on("error", (err: any) => {
+        console.log("Port 3000 secondary listener skipped:", err?.message);
+      });
+    } catch {
+      // Ignore
+    }
+  }
 }
 
 startServer().catch((err) => {

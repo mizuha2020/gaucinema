@@ -59,7 +59,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Sub-tab states for each major section
   const [overviewSubTab, setOverviewSubTab] = useState<'live' | 'users_stats' | 'watch_history'>('live');
-  const [apisSubTab, setApisSubTab] = useState<'api_status' | 'fallback_routing' | 'system_info'>('api_status');
+  const [apisSubTab, setApisSubTab] = useState<'api_status' | 'fallback_routing' | 'system_info' | 'hero_assets'>('api_status');
   const [accountsSubTab, setAccountsSubTab] = useState<'accounts_list' | 'roles_permissions' | 'security_audit'>('accounts_list');
   const [avatarsSubTab, setAvatarsSubTab] = useState<'avatar_gallery' | 'avatar_upload' | 'default_presets'>('avatar_gallery');
 
