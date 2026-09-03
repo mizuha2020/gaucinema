@@ -74,6 +74,7 @@ export const ChophimPlayer: React.FC<ChophimPlayerProps> = memo(({
   const [showServerMenu, setShowServerMenu] = useState(false);
   const [showEpisodes, setShowEpisodes] = useState(false);
   const [isPip, setIsPip] = useState(false);
+  const [useIframe, setUseIframe] = useState(false);
   // intro/recap/outro segments (single fetch per episode, no cache)
   const [segments, setSegments] = useState<SegmentsResponse | null>(null);
   const [activeSegment, setActiveSegment] = useState<'intro' | 'recap' | 'outro' | null>(null);
@@ -220,25 +221,61 @@ export const ChophimPlayer: React.FC<ChophimPlayerProps> = memo(({
 
   // hls setup - single instance only, no preview video
   useEffect(() => {
+    setUseIframe(false);
+    if (!currentEpisode.link_m3u8) {
+      if (currentEpisode.link_embed) {
+        setUseIframe(true);
+        setIsLoading(false);
+        return;
+      }
+      setErrorMsg('Tập phim này chưa có dữ liệu phát. Vui lòng chọn server hoặc tập khác.');
+      setIsLoading(false);
+      return;
+    }
+
     const video = videoRef.current;
-    if (!video || !currentEpisode.link_m3u8) return;
+    if (!video) return;
+
     setIsLoading(true);
     setErrorMsg(null);
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+
     const rawCandidates = getMirrorUrls(currentEpisode.link_m3u8);
-    const candidates = rawCandidates.map(getAdCleanUrl);
+    const candidates: string[] = [];
+    // 1. Try ad-cleaned proxied URLs first
+    rawCandidates.forEach((u) => {
+      if (u) {
+        const proxied = getAdCleanUrl(u);
+        if (proxied && !candidates.includes(proxied)) candidates.push(proxied);
+      }
+    });
+    // 2. Direct raw m3u8 URLs as fallbacks
+    rawCandidates.forEach((u) => {
+      if (u && !candidates.includes(u)) candidates.push(u);
+    });
+
     let candidateIndex = 0;
     const tryNext = (hls: Hls) => {
       candidateIndex++;
-      if (candidateIndex < candidates.length) { hls.loadSource(candidates[candidateIndex]); hls.startLoad(); return; }
+      if (candidateIndex < candidates.length) {
+        hls.loadSource(candidates[candidateIndex]);
+        hls.startLoad();
+        return;
+      }
+      if (currentEpisode.link_embed) {
+        setUseIframe(true);
+        setIsLoading(false);
+        return;
+      }
       const other = allServers.find(s => s.server_name !== currentServer.server_name);
       if (other) {
         const ep = other.server_data.find(e => e.slug === currentEpisode.slug) || other.server_data[0];
         if (ep) { onSelectEpisode(ep, other, video.currentTime || 0); return; }
       }
-      setErrorMsg('Không thể tải luồng phát. Thử đổi server.');
+      setErrorMsg('Không thể tải luồng phát HLS. Bạn có thể chọn server khác hoặc thử Player Embed.');
       setIsLoading(false);
     };
+
     if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
@@ -288,13 +325,26 @@ export const ChophimPlayer: React.FC<ChophimPlayerProps> = memo(({
       video.src = getAdCleanUrl(currentEpisode.link_m3u8);
       const onLoaded = () => { setIsLoading(false); if (initialTime > 5) video.currentTime = initialTime; video.play().catch(() => {}); };
       video.addEventListener('loadedmetadata', onLoaded, { once: true });
-      video.onerror = () => setErrorMsg('Không thể phát trên trình duyệt này');
+      video.onerror = () => {
+        if (currentEpisode.link_embed) {
+          setUseIframe(true);
+          setIsLoading(false);
+        } else {
+          setErrorMsg('Không thể phát trên trình duyệt này');
+          setIsLoading(false);
+        }
+      };
     } else {
-      setErrorMsg('Trình duyệt không hỗ trợ HLS');
-      setIsLoading(false);
+      if (currentEpisode.link_embed) {
+        setUseIframe(true);
+        setIsLoading(false);
+      } else {
+        setErrorMsg('Trình duyệt không hỗ trợ HLS');
+        setIsLoading(false);
+      }
     }
     return () => { if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } };
-  }, [currentEpisode.link_m3u8, allServers, currentServer, initialTime, onSelectEpisode]);
+  }, [currentEpisode.link_m3u8, currentEpisode.link_embed, allServers, currentServer, initialTime, onSelectEpisode]);
 
   // sync volume/mute without recreating hls
   useEffect(() => {
@@ -509,19 +559,29 @@ export const ChophimPlayer: React.FC<ChophimPlayerProps> = memo(({
       onClick={resetControlsTimer}
     >
       <div className="video-area relative flex-1 bg-black flex items-center justify-center overflow-hidden" onClick={handleVideoAreaClick}>
-        <video
-          ref={videoRef}
-          className="w-full h-full object-contain"
-          onTimeUpdate={handleTimeUpdate}
-          onDurationChange={() => setDuration(videoRef.current?.duration || 0)}
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
-          onWaiting={() => setIsLoading(true)}
-          onPlaying={() => setIsLoading(false)}
-          onEnded={() => { if (nextEpisode) onSelectEpisode(nextEpisode, currentServer); }}
-          playsInline
-          onClick={handleVideoClick}
-        />
+        {useIframe && currentEpisode.link_embed ? (
+          <iframe
+            src={currentEpisode.link_embed}
+            className="w-full h-full border-0 bg-black"
+            allowFullScreen
+            allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+            title={`${movie.name} - ${currentEpisode.name}`}
+          />
+        ) : (
+          <video
+            ref={videoRef}
+            className="w-full h-full object-contain"
+            onTimeUpdate={handleTimeUpdate}
+            onDurationChange={() => setDuration(videoRef.current?.duration || 0)}
+            onPlay={() => setIsPlaying(true)}
+            onPause={() => setIsPlaying(false)}
+            onWaiting={() => setIsLoading(true)}
+            onPlaying={() => setIsLoading(false)}
+            onEnded={() => { if (nextEpisode) onSelectEpisode(nextEpisode, currentServer); }}
+            playsInline
+            onClick={handleVideoClick}
+          />
+        )}
         {/* hidden preview video + canvas for hover thumbnail - chophim smooth */}
         <video ref={previewVideoRef} muted playsInline preload="metadata" crossOrigin="anonymous" className="hidden w-0 h-0 pointer-events-none" tabIndex={-1} />
         <canvas ref={previewCanvasRef} className="hidden w-0 h-0 pointer-events-none" />
@@ -531,9 +591,21 @@ export const ChophimPlayer: React.FC<ChophimPlayerProps> = memo(({
           </div>
         )}
         {errorMsg && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 p-6 text-center">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 p-6 text-center z-40">
             <p className="text-white font-medium">{errorMsg}</p>
-            <button onClick={onBack} className="mt-4 px-4 py-2 rounded-lg bg-white text-black text-sm font-medium">Thoát</button>
+            <div className="flex items-center gap-3 mt-4">
+              {currentEpisode.link_embed && (
+                <button
+                  onClick={() => { setUseIframe(true); setErrorMsg(null); }}
+                  className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold shadow-lg transition-all"
+                >
+                  Phát qua Embed Iframe
+                </button>
+              )}
+              <button onClick={onBack} className="px-4 py-2 rounded-lg bg-white/20 hover:bg-white/30 text-white text-sm font-medium transition-all">
+                Thoát
+              </button>
+            </div>
           </div>
         )}
 
@@ -559,12 +631,22 @@ export const ChophimPlayer: React.FC<ChophimPlayerProps> = memo(({
         )}
 
         {/* Minimal top bar like chophim */}
-        <div className={`absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-          <div className="flex items-center justify-between">
-            <h2 className="text-white text-sm font-medium truncate pr-4">{movie.name} - {currentEpisode.name}</h2>
-            <button onClick={(e) => { e.stopPropagation(); onBack(); }} style={{ width: '32px', height: '32px', minWidth: '32px', minHeight: '32px', maxWidth: '32px', maxHeight: '32px', borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: 'none', aspectRatio: '1 / 1', padding: 0, margin: 0, boxSizing: 'border-box', overflow: 'hidden' } as any} className="shrink-0 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center flex-none overflow-hidden border-0">
-              <X className="w-4 h-4 text-white shrink-0" style={{ display: 'block' } as any} />
-            </button>
+        <div className={`absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-300 z-30 ${showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-white text-sm font-medium truncate pr-2">{movie.name} - {currentEpisode.name}</h2>
+            <div className="flex items-center gap-2 shrink-0">
+              {currentEpisode.link_embed && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setUseIframe(!useIframe); }}
+                  className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white border border-white/15 transition-all"
+                >
+                  {useIframe ? "Dùng HLS Player" : "Dùng Embed"}
+                </button>
+              )}
+              <button onClick={(e) => { e.stopPropagation(); onBack(); }} style={{ width: '32px', height: '32px', minWidth: '32px', minHeight: '32px', maxWidth: '32px', maxHeight: '32px', borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: 'none', aspectRatio: '1 / 1', padding: 0, margin: 0, boxSizing: 'border-box', overflow: 'hidden' } as any} className="shrink-0 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center flex-none overflow-hidden border-0">
+                <X className="w-4 h-4 text-white shrink-0" style={{ display: 'block' } as any} />
+              </button>
+            </div>
           </div>
         </div>
 

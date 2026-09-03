@@ -1437,13 +1437,18 @@ setTimeout(seedInitialCastIndex, 2000);
     const fetchText = async (url: string): Promise<string> => {
       const controller = new AbortController();
       const t = setTimeout(() => controller.abort(), 12000);
+      let referer = "https://ophim1.com/";
+      try {
+        const u = new URL(url);
+        referer = `${u.origin}/`;
+      } catch {}
       try {
         const r = await fetch(url, {
           signal: controller.signal,
           headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept": "*/*",
-            "Referer": "https://ophim1.com/",
+            "Referer": referer,
           },
         });
         clearTimeout(t);

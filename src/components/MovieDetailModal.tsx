@@ -148,6 +148,11 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showTrailer, onClose]);
 
+  // Next episode + full schedule cho phim bộ chưa hoàn thành (giống chophim.app)
+  const [nextEpisode, setNextEpisode] = useState<{ episode_number: number; air_date: string; name?: string } | null>(null);
+  const [seasonEpisodes, setSeasonEpisodes] = useState<Array<{ episode_number: number; air_date: string | null; name?: string }>>([]);
+  const [showSchedule, setShowSchedule] = useState(false);
+
   // Scroll to top on mount or movie change
   useEffect(() => {
     if (containerRef.current) {
@@ -155,7 +160,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
     }
   }, [movie?.slug]);
 
-  // Fetch full details and episodes
+  // Fetch full details, episodes, related movies, and schedule (lịch chiếu)
   useEffect(() => {
     if (!movie) return;
 
@@ -163,6 +168,73 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
     setIsLoading(true);
     setError(null);
     setShowTrailer(false);
+    setNextEpisode(null);
+    setSeasonEpisodes([]);
+    setShowSchedule(false);
+
+    const fetchScheduleForMovie = async (movieData: Movie) => {
+      const isSeries = movieData.type === 'series' || movieData.type === 'tvshows' || (movieData as any)?.tmdb?.type === 'tv';
+      if (!isSeries) return { nextEp: null, seasonEps: [] };
+
+      const status = (movieData.status || '').toLowerCase();
+      const isCompleted = status === 'completed' || status === 'ended';
+      const epCur = movieData.episode_current || '';
+      const epTotal = movieData.episode_total || '';
+      if ((epTotal && epCur.includes(epTotal)) || isCompleted) {
+        return { nextEp: null, seasonEps: [] };
+      }
+
+      const tmdbId = (movieData as any)?.tmdb?.id ? String((movieData as any).tmdb.id).trim() : '';
+      const tmdbType = (movieData as any)?.tmdb?.type ? String((movieData as any).tmdb.type).trim() : '';
+      const tmdbSeason = (movieData as any)?.tmdb?.season ?? 1;
+
+      if (!tmdbId || !/^\d+$/.test(tmdbId)) {
+        return { nextEp: null, seasonEps: [] };
+      }
+      if (tmdbType && tmdbType !== 'tv' && movieData.type !== 'series' && movieData.type !== 'tvshows') {
+        return { nextEp: null, seasonEps: [] };
+      }
+
+      let nextEp: { episode_number: number; air_date: string; name?: string } | null = null;
+      let seasonEps: Array<{ episode_number: number; air_date: string | null; name?: string }> = [];
+
+      try {
+        const tvData: any = await tmdbFetch(`tv/${tmdbId}`, { language: 'vi-VN' });
+        const next = tvData?.next_episode_to_air;
+        if (next?.air_date && next?.episode_number) {
+          const air = new Date(next.air_date);
+          if (!isNaN(air.getTime())) {
+            nextEp = { episode_number: next.episode_number, air_date: next.air_date, name: next.name };
+          }
+        }
+        const seasonNum = Number(tmdbSeason) || 1;
+        const seasonData: any = await tmdbFetch(`tv/${tmdbId}/season/${seasonNum}`, { language: 'vi-VN' }).catch(() => null);
+        if (seasonData?.episodes?.length) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+
+          const rawEps = (seasonData.episodes as any[]).map((ep: any) => ({
+            episode_number: ep.episode_number,
+            air_date: ep.air_date || null,
+            name: ep.name || '',
+          }));
+
+          // Chỉ load các tập chưa chiếu (un-aired episodes)
+          seasonEps = rawEps.filter((ep: any) => {
+            if (nextEp?.episode_number) {
+              return ep.episode_number >= nextEp.episode_number;
+            }
+            if (ep.air_date) {
+              const d = new Date(ep.air_date);
+              return !isNaN(d.getTime()) && d >= today;
+            }
+            return true;
+          });
+        }
+      } catch {}
+
+      return { nextEp, seasonEps };
+    };
 
     const loadDetail = async () => {
       try {
@@ -172,16 +244,33 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
           setEpisodes(data.episodes || []);
           setSelectedServerIndex(0);
 
-          // Fetch related movies by category
+          const fetches: Promise<any>[] = [];
+
+          // 1. Fetch related movies by category
           if (data.movie.category && data.movie.category.length > 0) {
             const firstCat = data.movie.category[0].slug;
-            const relatedRes = await movieApi.getByGenre(firstCat, 1, 12);
-            if (isMounted) {
-              setRelatedMovies(
-                (relatedRes.items || []).filter((m) => m.slug !== movie.slug).slice(0, 8)
-              );
-            }
+            fetches.push(
+              movieApi.getByGenre(firstCat, 1, 12).then((relatedRes) => {
+                if (isMounted) {
+                  setRelatedMovies(
+                    (relatedRes.items || []).filter((m) => m.slug !== movie.slug).slice(0, 8)
+                  );
+                }
+              }).catch(() => {})
+            );
           }
+
+          // 2. Fetch schedule (lịch chiếu) WHILE loading screen is active
+          fetches.push(
+            fetchScheduleForMovie(data.movie).then(({ nextEp, seasonEps }) => {
+              if (isMounted) {
+                setNextEpisode(nextEp);
+                setSeasonEpisodes(seasonEps);
+              }
+            }).catch(() => {})
+          );
+
+          await Promise.allSettled(fetches);
         }
       } catch (err: any) {
         void 0;
@@ -271,51 +360,6 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
         : false
       : Boolean(isInMyList);
   const currentServer = episodes[selectedServerIndex];
-
-  // Next episode + full schedule cho phim bộ chưa hoàn thành (giống chophim.app)
-  const [nextEpisode, setNextEpisode] = useState<{ episode_number: number; air_date: string; name?: string } | null>(null);
-  const [seasonEpisodes, setSeasonEpisodes] = useState<Array<{ episode_number: number; air_date: string | null; name?: string }>>([]);
-  const [showSchedule, setShowSchedule] = useState(false);
-
-  useEffect(() => {
-    if (!currentData) { setNextEpisode(null); setSeasonEpisodes([]); setShowSchedule(false); return; }
-    const isSeries = currentData.type === 'series' || currentData.type === 'tvshows' || (currentData as any)?.tmdb?.type === 'tv';
-    if (!isSeries) { setNextEpisode(null); setSeasonEpisodes([]); return; }
-    const status = (currentData.status || '').toLowerCase();
-    const isCompleted = status === 'completed' || status === 'ended';
-    const epCur = currentData.episode_current || '';
-    const epTotal = currentData.episode_total || '';
-    if (epTotal && epCur.includes(epTotal)) { setNextEpisode(null); setSeasonEpisodes([]); return; }
-    if (isCompleted) { setNextEpisode(null); setSeasonEpisodes([]); return; }
-    const tmdbId = (currentData as any)?.tmdb?.id ? String((currentData as any).tmdb.id).trim() : '';
-    const tmdbType = (currentData as any)?.tmdb?.type ? String((currentData as any).tmdb.type).trim() : '';
-    const tmdbSeason = (currentData as any)?.tmdb?.season ?? 1;
-    if (!tmdbId || !/^\d+$/.test(tmdbId) || tmdbType !== 'tv') { setNextEpisode(null); setSeasonEpisodes([]); return; }
-    let cancelled = false;
-    tmdbFetch(`tv/${tmdbId}`, { language: 'vi-VN' }).then((data: any) => {
-      if (cancelled) return;
-      const next = data?.next_episode_to_air;
-      if (next?.air_date && next?.episode_number) {
-        const air = new Date(next.air_date);
-        if (!isNaN(air.getTime())) setNextEpisode({ episode_number: next.episode_number, air_date: next.air_date, name: next.name });
-        else setNextEpisode(null);
-      } else {
-        setNextEpisode(null);
-      }
-      // Fetch season để lấy lịch chiếu các tập khác cho dropdown
-      const seasonNum = Number(tmdbSeason) || 1;
-      return tmdbFetch(`tv/${tmdbId}/season/${seasonNum}`, { language: 'vi-VN' }).catch(() => null);
-    }).then((seasonData: any) => {
-      if (cancelled || !seasonData?.episodes?.length) return;
-      const eps = (seasonData.episodes as any[]).map((ep: any) => ({
-        episode_number: ep.episode_number,
-        air_date: ep.air_date || null,
-        name: ep.name || '',
-      }));
-      setSeasonEpisodes(eps);
-    }).catch(() => { if (!cancelled) { setNextEpisode(null); setSeasonEpisodes([]); } });
-    return () => { cancelled = true; };
-  }, [currentData?.slug, (currentData as any)?.tmdb?.id, (currentData as any)?.tmdb?.type, (currentData as any)?.tmdb?.season, currentData?.status, currentData?.episode_current, currentData?.episode_total, currentData?.type]);
 
   // Offline save state (only on native) - đặt sau currentData để tránh TS2448
   const isNativeApp = useMemo(() => {
