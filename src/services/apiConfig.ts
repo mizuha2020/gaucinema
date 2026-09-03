@@ -64,7 +64,9 @@ export const getApiBaseUrl = (): string => {
   // 2. ONLY for native mobile app (Capacitor Android APK), use absolute backend URL
   if (isNativeApp()) {
     const envUrl = (import.meta as any).env?.VITE_API_URL || (import.meta as any).env?.VITE_APP_URL;
-    if (envUrl && envUrl.trim() !== '') {
+    // Guard: ignore Vite placeholder values baked at build time (e.g. "MY_APP_URL")
+    // otherwise APK calls "MY_APP_URL/api/..." -> fetch fails, web still works via relative URL.
+    if (envUrl && typeof envUrl === 'string' && envUrl.trim().startsWith('http') && !envUrl.includes('MY_')) {
       return envUrl.trim().replace(/\/$/, '');
     }
     return CLOUD_BACKEND_URL;
@@ -90,6 +92,13 @@ export const getFullApiUrl = (path: string): string => {
   }
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   const base = getApiBaseUrl();
+  // Guard stale bundle where base is a placeholder (e.g. "MY_APP_URL")
+  if (base && !base.startsWith('http') && !base.startsWith('/')) {
+    if (isNativeApp()) {
+      return `${CLOUD_BACKEND_URL}${cleanPath}`;
+    }
+    return cleanPath;
+  }
   if (!base) {
     // Crucial safeguard for APK: Never return relative path if running in native app
     if (isNativeApp()) {

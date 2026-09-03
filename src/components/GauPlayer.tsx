@@ -138,16 +138,20 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     setSegments(null); setActiveSegment(null);
     // APK-safe: use backend proxy via getFullApiUrl so relative URL resolves to CLOUD_BACKEND_URL on native
     const url = getFullApiUrl(`/api/intro/segments?imdb_id=${encodeURIComponent(imdbId)}&season=${season}&episode=${epNum}`);
+    // APK-safe timeout: AbortSignal.timeout() missing on old Android WebView -> would throw sync and kill segments
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => { try { controller.abort(); } catch {} }, 6000);
     // cache:no-store -> server ETag could answer 304 with empty body (res.ok=false), killing segments
-    fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(6000) as any, cache: 'no-store' as RequestCache })
+    fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal as any, cache: 'no-store' as RequestCache })
       .then(async r => {
         if (r.status === 404) return { imdb_id: imdbId, season, episode: epNum, intro: null, recap: null, outro: null } as any;
         if (!r.ok) throw new Error(String(r.status));
         return r.json();
       })
       .then((data: SegmentsResponse) => { if (!cancelled) setSegments(normalizeSegments(data)); })
-      .catch(() => { if (!cancelled) setSegments(null); });
-    return () => { cancelled = true; };
+      .catch(() => { if (!cancelled) setSegments(null); })
+      .finally(() => window.clearTimeout(timeoutId));
+    return () => { cancelled = true; window.clearTimeout(timeoutId); try { controller.abort(); } catch {} };
   }, [(movie as any)?.imdb?.id, (movie as any)?.tmdb?.season, currentEpisode.slug, currentEpisode.name, currentServer]);
 
   const handleSkipSegment = useCallback((type: 'intro' | 'recap' | 'outro') => {
