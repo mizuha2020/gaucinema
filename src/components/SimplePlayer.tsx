@@ -50,6 +50,7 @@ interface SimplePlayerProps {
 }
 
 import { getMirrorUrls } from '../utils/mirrorUrls';
+import { loadCleanedM3u8Url, revokeBlobUrl } from '../utils/m3u8Cleaner';
 import { getFullApiUrl } from '../services/apiConfig';
 
 type IntroSegment = { start_sec: number; end_sec: number; start_ms: number; end_ms: number } | null;
@@ -803,6 +804,8 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     rawCandidates.forEach((u) => { if (u && !candidates.includes(u)) candidates.push(u); });
     rawCandidates.forEach((u) => { if (u) { const p = getAdCleanUrl(u); if (p && !candidates.includes(p)) candidates.push(p); } });
     let candidateIndex = 0;
+    let blobUrl: string | null = null;
+    let cancelled = false;
 
     const tryNext = (hls: Hls) => {
       candidateIndex++;
@@ -844,7 +847,21 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
       });
       hlsRef.current = hls;
 
-      hls.loadSource(candidates[0]);
+      // Client-side ad-clean first (browser IP works, cloud IP blocked)
+      (async () => {
+        try {
+          const cleaned = await loadCleanedM3u8Url(rawCandidates[0]);
+          if (cancelled) { if (cleaned) revokeBlobUrl(cleaned.blobUrl); return; }
+          if (cleaned) {
+            blobUrl = cleaned.blobUrl;
+            candidates.unshift(blobUrl);
+            candidateIndex = 0;
+            hls.loadSource(blobUrl);
+            return;
+          }
+        } catch { /* fall through */ }
+        if (!cancelled) hls.loadSource(candidates[0]);
+      })();
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
@@ -892,6 +909,8 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     }
 
     return () => {
+      cancelled = true;
+      revokeBlobUrl(blobUrl);
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;

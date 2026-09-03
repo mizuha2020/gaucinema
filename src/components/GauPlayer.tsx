@@ -3,6 +3,7 @@ import Hls from 'hls.js';
 import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Settings, PictureInPicture2, X, RotateCcw, RotateCw, SkipForward, List, Server } from 'lucide-react';
 import { EpisodeServer, Movie, MovieEpisode } from '../types';
 import { getMirrorUrls } from '../utils/mirrorUrls';
+import { loadCleanedM3u8Url, revokeBlobUrl } from '../utils/m3u8Cleaner';
 import { getFullApiUrl } from '../services/apiConfig';
 import { Capacitor } from '@capacitor/core';
 
@@ -236,12 +237,13 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
 
     const rawCandidates = getMirrorUrls(currentEpisode.link_m3u8);
     const candidates: string[] = [];
-    // 1. Direct raw m3u8 URLs first (upstream allows CORS *, client VN IP works;
-    // AI Studio / Cloud server IP is blocked -> proxy returns 502/404)
+    // 1. Client-side ad-cleaned blob will be prepended async below (same rules
+    // as server proxy, but uses client IP so it isn't blocked like cloud IP).
+    // 2. Direct raw m3u8 URLs (upstream allows CORS *, client VN IP works)
     rawCandidates.forEach((u) => {
       if (u && !candidates.includes(u)) candidates.push(u);
     });
-    // 2. Ad-cleaned proxied URLs as fallbacks (for ad segments)
+    // 3. Server ad-cleaned proxy as last fallback (may 502/404 on cloud IP)
     rawCandidates.forEach((u) => {
       if (u) {
         const proxied = getAdCleanUrl(u);
@@ -250,6 +252,8 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     });
 
     let candidateIndex = 0;
+    let blobUrl: string | null = null;
+    let cancelled = false;
     const tryNext = (hls: Hls) => {
       candidateIndex++;
       if (candidateIndex < candidates.length) {
@@ -280,7 +284,21 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
         capLevelToPlayerSize: true,
       });
       hlsRef.current = hls;
-      hls.loadSource(candidates[0]);
+      // Client-side ad-clean first: fetch + strip ads in browser, then play blob
+      (async () => {
+        try {
+          const cleaned = await loadCleanedM3u8Url(rawCandidates[0]);
+          if (cancelled) { if (cleaned) revokeBlobUrl(cleaned.blobUrl); return; }
+          if (cleaned) {
+            blobUrl = cleaned.blobUrl;
+            candidates.unshift(blobUrl);
+            candidateIndex = 0;
+            hls.loadSource(blobUrl);
+            return;
+          }
+        } catch { /* fall through to direct */ }
+        if (!cancelled) hls.loadSource(candidates[0]);
+      })();
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
         setIsLoading(false);
@@ -324,7 +342,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
       setErrorMsg('Trình duyệt không hỗ trợ HLS');
       setIsLoading(false);
     }
-    return () => { if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } };
+    return () => { cancelled = true; revokeBlobUrl(blobUrl); if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } };
   }, [currentEpisode.link_m3u8, allServers, currentServer, initialTime, onSelectEpisode]);
 
   // sync volume/mute without recreating hls
