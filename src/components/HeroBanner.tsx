@@ -315,13 +315,10 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
         </motion.div>
       </AnimatePresence>
 
-      {/* Multi-tier Cinematic Gradients: Prevents color clashes and guarantees 100% text contrast */}
-      {/* 1. Left directional dark gradient (protects text & logo) */}
-      <div className="absolute inset-0 bg-gradient-to-r from-[#070b16] via-[#070b16]/80 via-40% to-transparent z-[5] pointer-events-none" />
-      {/* 2. Bottom-up dark gradient (seamless blend with page content) */}
-      <div className="absolute inset-0 bg-gradient-to-t from-[#070b16] via-[#070b16]/60 via-30% to-transparent z-[5] pointer-events-none" />
-      {/* 3. Top subtle shadow */}
-      <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-[#070b16]/70 to-transparent z-[5] pointer-events-none" />
+      {/* Light scrim for text readability - much lighter than before (was 80%/60%) */}
+      {/* Only covers text area (left + bottom), right/top stays fully clear */}
+      <div className="absolute inset-0 bg-gradient-to-r from-black/45 via-black/15 via-35% to-transparent z-[5] pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-t from-[#070b16]/70 via-[#070b16]/20 via-25% to-transparent z-[5] pointer-events-none" />
 
       {/* Content Container */}
       <div className="relative max-w-7xl mx-auto h-full px-4 sm:px-6 lg:px-8 flex flex-col justify-end pb-12 sm:pb-24 z-10">
@@ -368,20 +365,29 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
               />
             </div>
           ) : (
-            <h1 className="text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-black text-white tracking-tight leading-tight drop-shadow-[0_4px_20px_rgba(0,0,0,0.95)] line-clamp-2">
+            <h1
+              className="text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-black text-white tracking-tight leading-tight drop-shadow-[0_4px_20px_rgba(0,0,0,0.95)] line-clamp-2"
+              style={{ textShadow: '0 2px 12px rgba(0,0,0,0.9), 0 4px 32px rgba(0,0,0,0.7)' }}
+            >
               {currentMovie.name}
             </h1>
           )}
 
           {/* Origin Name */}
           {currentMovie.origin_name && (
-            <p className="text-xs sm:text-base text-slate-300/90 font-medium tracking-wide drop-shadow line-clamp-1">
+            <p
+              className="text-xs sm:text-base text-slate-300/90 font-medium tracking-wide drop-shadow line-clamp-1"
+              style={{ textShadow: '0 1px 8px rgba(0,0,0,0.9), 0 2px 16px rgba(0,0,0,0.6)' }}
+            >
               {currentMovie.origin_name}
             </p>
           )}
 
           {/* Description */}
-          <p className="text-xs sm:text-sm text-slate-200/95 leading-relaxed line-clamp-2 sm:line-clamp-3 max-w-xl drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+          <p
+            className="text-xs sm:text-sm text-slate-200/95 leading-relaxed line-clamp-2 sm:line-clamp-3 max-w-xl drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]"
+            style={{ textShadow: '0 1px 10px rgba(0,0,0,0.9), 0 2px 20px rgba(0,0,0,0.6)' }}
+          >
             {currentMovie.content
               ? currentMovie.content.replace(/<[^>]*>?/gm, '')
               : `Khám phá câu chuyện lôi cuốn trong siêu phẩm "${currentMovie.name}". Trải nghiệm trọn vẹn trên Gấu Cinema với chất lượng hình ảnh sắc nét, âm thanh sống động.`}

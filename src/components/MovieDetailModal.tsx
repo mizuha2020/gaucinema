@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { EpisodeServer, Movie, MovieEpisode, RoomListItem, RoomVisibility, Account, UserProfile } from '../types';
-import { movieApi, getImageUrl } from '../services/movieApi';
+import { movieApi, getImageUrl, getTmdbAssets } from '../services/movieApi';
 import {
   Play,
   Plus,
@@ -200,6 +200,43 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   }, [movie]);
 
   const currentData = fullMovieData || movie;
+
+  // --- Detail backdrop logic: ưu tiên TMDB backdrop nếu có tmdb, fallback thumb_url ---
+  const [tmdbBackdrop, setTmdbBackdrop] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!currentData) { setTmdbBackdrop(null); return; }
+    const primaryUrl = currentData.backdrops?.find((b) => b.primary)?.url || '';
+    const hasTmdbInline = primaryUrl.includes('image.tmdb.org') || (currentData.backdrop_url || '').includes('image.tmdb.org');
+    if (hasTmdbInline) { setTmdbBackdrop(null); return; }
+    const tmdbId = (currentData as any)?.tmdb?.id ? String((currentData as any).tmdb.id).trim() : '';
+    if (!tmdbId || !/^\d+$/.test(tmdbId)) { setTmdbBackdrop(null); return; }
+    let cancelled = false;
+    getTmdbAssets(tmdbId).then((assets) => {
+      if (!cancelled && assets.backdropUrl) setTmdbBackdrop(assets.backdropUrl);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [currentData?.slug, (currentData as any)?.tmdb?.id, currentData?.backdrop_url, currentData?.backdrops]);
+
+  const detailBackdropSrc = useMemo(() => {
+    if (!currentData) return '';
+    // Nếu có TMDB backdrop fetch được -> ưu tiên cao nhất (theo yêu cầu: có tmdb thì dùng backdrop tmdb)
+    if (tmdbBackdrop) return tmdbBackdrop;
+    // 1. Ưu tiên backdrops primary (đã là TMDB backdrop nếu có)
+    const primary = currentData.backdrops?.find((b) => b.primary)?.url;
+    if (primary) {
+      if (primary.includes('image.tmdb.org')) return primary.includes('/original') ? primary : primary.replace(/\/w\d+/, '/original');
+      // Nếu primary không phải TMDB nhưng có tmdbId thì đã fetch ở trên, còn lại dùng primary
+      return primary;
+    }
+    // 2. backdrop_url trực tiếp - chỉ dùng nếu là TMDB
+    if (currentData.backdrop_url && currentData.backdrop_url.includes('image.tmdb.org')) {
+      return currentData.backdrop_url.includes('/original') ? currentData.backdrop_url : currentData.backdrop_url.replace(/\/w\d+/, '/original');
+    }
+    // 3. Fallback thumb_url / poster_url theo yêu cầu (khi không có tmdb)
+    return getImageUrl(currentData.thumb_url || currentData.poster_url, (currentData as any).source);
+  }, [currentData, tmdbBackdrop]);
+
   const inList =
     typeof isInMyList === 'function'
       ? currentData
@@ -461,12 +498,17 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
         >
             <div className="relative w-full h-full min-h-[480px] sm:min-h-[520px] md:min-h-[580px] lg:min-h-[640px] flex flex-col justify-end pt-24 sm:pt-28 pb-8 sm:pb-12">
               <img
-                src={getImageUrl(currentData.poster_url || currentData.thumb_url)}
+                src={detailBackdropSrc}
                 alt={currentData.name}
                 className="absolute inset-0 w-full h-full object-cover object-top sm:object-center pointer-events-none"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).src =
-                    'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
+                  const fallback = getImageUrl(currentData.thumb_url || currentData.poster_url, (currentData as any).source);
+                  const img = e.target as HTMLImageElement;
+                  if (img.src !== fallback) {
+                    img.src = fallback;
+                    return;
+                  }
+                  img.src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
                 }}
               />
               {/* Multi-layered cinematic gradients */}
