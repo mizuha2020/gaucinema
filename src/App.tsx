@@ -37,6 +37,7 @@ import { OfflineSavedView } from "./components/OfflineSavedView";
 import { MangaAppWrapper } from "./apps/MangaAppWrapper";
 import { LiveTvAppWrapper } from "./apps/LiveTvAppWrapper";
 import { AppSwitcherLoading } from "./components/AppSwitcherLoading";
+import { ProfileSwitchLoader } from "./components/ProfileSwitchLoader";
 import { MobileBottomNav } from "./components/MobileBottomNav";
 import { NotificationTickerBanner } from "./components/NotificationTickerBanner";
 import { WatchTogetherRoom } from "./components/watch-together/WatchTogetherRoom";
@@ -219,6 +220,12 @@ export default function App() {
   const [activeProfile, setActiveProfile] = useState<UserProfile | null>(null);
   const [showProfileSelector, setShowProfileSelector] = useState<boolean>(true);
   const [isLoadingProfiles, setIsLoadingProfiles] = useState<boolean>(false);
+
+  // Quick Profile Switcher Loader state
+  const [profileSwitchSrc, setProfileSwitchSrc] = useState<UserProfile | null>(null);
+  const [profileSwitchTarget, setProfileSwitchTarget] = useState<UserProfile | null>(null);
+  const [isProfileSwitchLoaderOpen, setIsProfileSwitchLoaderOpen] = useState(false);
+  const [isProfileDataReady, setIsProfileDataReady] = useState(false);
 
   // App Navigation Tab
   const [activeTab, setActiveTab] = useState<NavTab>(() => {
@@ -884,11 +891,58 @@ export default function App() {
   };
 
   // Profile management handlers
-  const handleSelectProfile = (profile: UserProfile) => {
+  const handleSelectProfile = async (profile: UserProfile) => {
     if (!currentAccount) return;
+
+    try {
+      const [list, history] = await Promise.all([
+        firestoreStorage.getMyList(currentAccount.id, profile.id),
+        firestoreStorage.getHistory(currentAccount.id, profile.id),
+      ]);
+      setMyList(list);
+      setWatchHistory(history);
+    } catch (err) {
+      console.error(err);
+    }
+
     setActiveProfile(profile);
     firestoreStorage.setActiveProfileId(currentAccount.id, profile.id);
     setShowProfileSelector(false);
+  };
+
+  const handleQuickSwitchProfile = async (profile: UserProfile) => {
+    if (!currentAccount) return;
+
+    // Check if we are selecting a profile or switching
+    setProfileSwitchSrc(activeProfile); // activeProfile might be null (first login)
+    setProfileSwitchTarget(profile);
+    setIsProfileDataReady(false);
+    setIsProfileSwitchLoaderOpen(true);
+
+    try {
+      // Pre-fetch Profile B data in the background (real preparation/fetching!)
+      const [list, history] = await Promise.all([
+        firestoreStorage.getMyList(currentAccount.id, profile.id),
+        firestoreStorage.getHistory(currentAccount.id, profile.id),
+      ]);
+      setMyList(list);
+      setWatchHistory(history);
+      setIsProfileDataReady(true);
+    } catch (err) {
+      // Graceful fallback on error so the transition still succeeds
+      setIsProfileDataReady(true);
+    }
+  };
+
+  const handleProfileSwitchLoaderComplete = () => {
+    if (profileSwitchTarget && currentAccount) {
+      setActiveProfile(profileSwitchTarget);
+      firestoreStorage.setActiveProfileId(currentAccount.id, profileSwitchTarget.id);
+      setShowProfileSelector(false);
+    }
+    setIsProfileSwitchLoaderOpen(false);
+    setProfileSwitchSrc(null);
+    setProfileSwitchTarget(null);
   };
 
   const handleUpdateProfiles = async (updated: UserProfile[]) => {
@@ -1541,7 +1595,7 @@ export default function App() {
         currentAccount={currentAccount}
         activeProfile={activeProfile}
         profiles={profiles}
-        onSelectProfile={handleSelectProfile}
+        onSelectProfile={handleQuickSwitchProfile}
         onSwitchApp={handleSwitchApp}
         onSwitchProfileScreen={() => setShowProfileSelector(true)}
         onOpenAdminDashboard={
@@ -1556,7 +1610,7 @@ export default function App() {
         currentAccount={currentAccount}
         activeProfile={activeProfile}
         profiles={profiles}
-        onSelectProfile={handleSelectProfile}
+        onSelectProfile={handleQuickSwitchProfile}
         onSwitchApp={handleSwitchApp}
         onSwitchProfileScreen={() => setShowProfileSelector(true)}
         onOpenAdminDashboard={
@@ -1624,7 +1678,7 @@ export default function App() {
             currentAccount={currentAccount}
             activeProfile={activeProfile}
             profiles={profiles}
-            onSelectProfile={handleSelectProfile}
+            onSelectProfile={handleQuickSwitchProfile}
             onSwitchProfileScreen={openProfileSelector}
             onSelectMovie={(movie) => openDetailModal(movie)}
             onPlayMovie={handlePlayMovie}
@@ -1741,20 +1795,6 @@ export default function App() {
                               </span>
                             </h2>
                             <div className="flex items-center gap-2">
-                              {isCheckingFollow && (
-                                <span className="text-[11px] text-violet-300 animate-pulse">
-                                  Đang kiểm tra tập mới...
-                                </span>
-                              )}
-                              <button
-                                onClick={() => {
-                                  handleCheckFollowUpdates();
-                                  showToast("Đang kiểm tra tập mới...", "info");
-                                }}
-                                className="text-[11px] text-violet-300 hover:text-violet-200 border border-violet-800/60 bg-violet-950/40 px-2 py-1 rounded-full cursor-pointer"
-                              >
-                                Kiểm tra tập mới
-                              </button>
                               <button
                                 onClick={() => handleTabChange("history")}
                                 className="text-xs text-slate-400 hover:text-white cursor-pointer"
@@ -2550,7 +2590,7 @@ export default function App() {
             onTabChange={handleTabChange}
             activeProfile={activeProfile}
             profiles={profiles}
-            onSelectProfile={handleSelectProfile}
+            onSelectProfile={handleQuickSwitchProfile}
             onSwitchProfileScreen={openProfileSelector}
           />
         )}
@@ -2589,6 +2629,13 @@ export default function App() {
           onLoadingComplete={handleSwitchAppComplete}
         />
       )}
+      <ProfileSwitchLoader
+        isOpen={isProfileSwitchLoaderOpen}
+        profileA={profileSwitchSrc}
+        profileB={profileSwitchTarget}
+        isDataReady={isProfileDataReady}
+        onComplete={handleProfileSwitchLoaderComplete}
+      />
       {dialog && (
         <CustomDialog
           isOpen={dialog.isOpen}

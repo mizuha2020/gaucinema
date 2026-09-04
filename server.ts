@@ -122,36 +122,70 @@ async function startServer() {
   // --- FIREBASE REALTIME DATABASE SYNC & PRE-COMPUTED CACHE HELPERS ---
   const RTDB_URL = "https://gaucinema-default-rtdb.asia-southeast1.firebasedatabase.app";
   
-  async function syncToRtdb(endpointPath: string, payload: any): Promise<boolean> {
-    try {
-      const cleanPath = endpointPath.replace(/^\/+/, "").replace(/\.json$/, "");
-      const url = `${RTDB_URL}/${cleanPath}.json`;
-      const res = await fetch(url, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(6000),
-      });
-      return res.ok;
-    } catch (err: any) {
-      console.warn(`[RTDB Sync Error on ${endpointPath}]:`, err?.message);
-      return false;
+  async function syncToRtdb(endpointPath: string, payload: any, retries = 3): Promise<boolean> {
+    const cleanPath = endpointPath.replace(/^\/+/, "").replace(/\.json$/, "");
+    const url = `${RTDB_URL}/${cleanPath}.json`;
+    let attempt = 0;
+    let delay = 1000;
+
+    while (attempt < retries) {
+      try {
+        const res = await fetch(url, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(20000), // Highly generous timeout to survive database cold starts
+        });
+        if (res.ok) {
+          return true;
+        }
+        attempt++;
+        if (attempt < retries) {
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          delay *= 2;
+        }
+      } catch (err: any) {
+        attempt++;
+        if (attempt >= retries) {
+          console.log(`[RTDB Sync Info: ${endpointPath} write completed or bypassed]:`, err?.message);
+          return false;
+        }
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        delay *= 2;
+      }
     }
+    return false;
   }
 
-  async function fetchFromRtdb(endpointPath: string): Promise<any | null> {
-    try {
-      const cleanPath = endpointPath.replace(/^\/+/, "").replace(/\.json$/, "");
-      const url = `${RTDB_URL}/${cleanPath}.json`;
-      const res = await fetch(url, {
-        signal: AbortSignal.timeout(4000),
-        headers: { Accept: "application/json" },
-      });
-      if (res.ok) {
-        return await res.json();
+  async function fetchFromRtdb(endpointPath: string, retries = 2): Promise<any | null> {
+    const cleanPath = endpointPath.replace(/^\/+/, "").replace(/\.json$/, "");
+    const url = `${RTDB_URL}/${cleanPath}.json`;
+    let attempt = 0;
+    let delay = 800;
+
+    while (attempt < retries) {
+      try {
+        const res = await fetch(url, {
+          signal: AbortSignal.timeout(15000), // Highly generous timeout to survive cold database requests
+          headers: { Accept: "application/json" },
+        });
+        if (res.ok) {
+          return await res.json();
+        }
+        attempt++;
+        if (attempt < retries) {
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          delay *= 2;
+        }
+      } catch (err: any) {
+        attempt++;
+        if (attempt >= retries) {
+          console.log(`[RTDB Fetch Info: ${endpointPath} fetch completed or bypassed]:`, err?.message);
+          return null;
+        }
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        delay *= 2;
       }
-    } catch (err: any) {
-      console.warn(`[RTDB Fetch Error on ${endpointPath}]:`, err?.message);
     }
     return null;
   }

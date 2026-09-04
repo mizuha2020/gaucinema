@@ -686,7 +686,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
         )}
 
         {/* Minimal top bar like chophim */}
-        <div className={`absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-300 z-30 ${showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+        <div className={`absolute top-0 left-0 right-0 pt-[calc(env(safe-area-inset-top,0px)+16px)] pb-4 px-4 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-300 z-30 ${showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
           <div className="flex items-center justify-between gap-2">
             <h2 className="text-white text-sm font-medium truncate pr-2">{movie.name} - {currentEpisode.name}</h2>
             <div className="flex items-center gap-2 shrink-0">

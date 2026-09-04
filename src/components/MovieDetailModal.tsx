@@ -114,6 +114,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   const [showCreateRoomModal, setShowCreateRoomModal] = useState(false);
   const [joinTargetRoom, setJoinTargetRoom] = useState<RoomListItem | null>(null);
   const [selectedEpisodeForRoom, setSelectedEpisodeForRoom] = useState<{ ep: MovieEpisode; server: EpisodeServer } | null>(null);
+  const [isSynopsisExpanded, setIsSynopsisExpanded] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -630,18 +631,14 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
           damping: 30,
           mass: 1.0,
         }}
-        className="fixed inset-0 z-[60] bg-[#060a14] overflow-y-auto text-white flex flex-col selection:bg-blue-600 selection:text-white overscroll-contain will-change-transform"
+        className="fixed inset-0 z-[60] bg-[#060a14] overflow-y-auto overflow-x-hidden text-white flex flex-col selection:bg-blue-600 selection:text-white overscroll-contain will-change-transform"
         style={{ WebkitOverflowScrolling: 'touch', transformOrigin: 'center center' } as React.CSSProperties}
       >
-        {/* Top-Right Circular Close Button (Positioned safely below Mobile Status Bar / PWA Notch & Safe Area) */}
+        {/* Top-Right Circular Close Button */}
         <button
           id="detail-floating-close-btn"
           onClick={onClose}
-          style={{
-            top: 'max(52px, calc(env(safe-area-inset-top, 0px) + 16px))',
-            right: 'max(16px, calc(env(safe-area-inset-right, 0px) + 16px))',
-          }}
-          className="fixed z-50 flex items-center justify-center w-11 h-11 rounded-full bg-black/85 hover:bg-rose-600/95 text-white backdrop-blur-md border border-white/25 hover:border-rose-400 shadow-2xl transition-all hover:scale-110 active:scale-95 cursor-pointer group sm:!top-6 sm:!right-6"
+          className="absolute z-50 flex items-center justify-center w-10 h-10 rounded-full bg-black/60 hover:bg-rose-600/90 text-white backdrop-blur-md border border-white/20 hover:border-rose-400 shadow-xl transition-all hover:scale-105 active:scale-95 cursor-pointer group top-[calc(env(safe-area-inset-top,0px)+16px)] right-4 sm:top-6 sm:right-6"
           title="Đóng (Esc)"
           aria-label="Đóng chi tiết phim"
         >
@@ -719,70 +716,79 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
           )}
         </AnimatePresence>
 
-        {/* Full-bleed Hero Stage (Panoramic Backdrop) */}
+        {/* Desktop Full-bleed Hero Stage (Panoramic Backdrop) */}
         <section
           id="detail-hero-stage"
-          className="relative w-full min-h-[480px] sm:min-h-[520px] md:min-h-[580px] lg:min-h-[640px] bg-black select-none flex flex-col justify-end"
+          className="relative w-full min-h-[calc(env(safe-area-inset-top,0px)+440px)] sm:min-h-[520px] md:min-h-[580px] lg:min-h-[640px] bg-[#060a14] select-none flex flex-col justify-end pt-[env(safe-area-inset-top,24px)] sm:pt-0"
         >
-            <div className="relative w-full h-full min-h-[480px] sm:min-h-[520px] md:min-h-[580px] lg:min-h-[640px] flex flex-col justify-end pt-24 sm:pt-28 pb-8 sm:pb-12">
-              {/* Base layer: thumb_url làm placeholder mờ, luôn có để không trống khi chờ TMDB */}
-              <img
-                src={fallbackThumbSrc}
-                alt=""
-                aria-hidden
-                className="absolute inset-0 w-full h-full object-cover object-top sm:object-center pointer-events-none"
+          {/* Panoramic Backdrop layers span fully across the top background of the section */}
+          {/* Base layer: dùng detailBackdropSrc (TMDB / high quality backdrop) trực tiếp để luôn nét */}
+          <img
+            src={detailBackdropSrc}
+            alt=""
+            aria-hidden
+            referrerPolicy="no-referrer"
+            className="absolute top-0 left-0 w-full h-[calc(env(safe-area-inset-top,0px)+210px)] sm:h-full object-cover object-center pointer-events-none blur-none opacity-100"
+            onError={(e) => {
+              (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
+            }}
+          />
+          {/* Top layer: TMDB backdrop - chỉ hiện khi đã preload xong, fade mượt */}
+          <AnimatePresence>
+            {isShowingTmdb && (
+              <motion.img
+                key={detailBackdropSrc}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.6, ease: 'easeOut' }}
+                src={detailBackdropSrc}
+                alt={currentData.name}
+                referrerPolicy="no-referrer"
+                className="absolute top-0 left-0 w-full h-[calc(env(safe-area-inset-top,0px)+210px)] sm:h-full object-cover object-center pointer-events-none blur-none opacity-100"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
+                  const img = e.target as HTMLImageElement;
+                  img.style.display = 'none';
                 }}
               />
-              {/* Top layer: TMDB backdrop - chỉ hiện khi đã preload xong, fade mượt */}
-              <AnimatePresence>
-                {isShowingTmdb && (
-                  <motion.img
-                    key={detailBackdropSrc}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.6, ease: 'easeOut' }}
-                    src={detailBackdropSrc}
-                    alt={currentData.name}
-                    className="absolute inset-0 w-full h-full object-cover object-top sm:object-center pointer-events-none"
-                    onError={(e) => {
-                      const img = e.target as HTMLImageElement;
-                      img.style.display = 'none';
-                    }}
-                  />
-                )}
-              </AnimatePresence>
-              {/* Khi không có TMDB, dùng single img với detailBackdropSrc (chính là thumb) để giữ logic cũ */}
-              {!isShowingTmdb && detailBackdropSrc !== fallbackThumbSrc && (
-                <img
-                  src={detailBackdropSrc}
-                  alt={currentData.name}
-                  className="absolute inset-0 w-full h-full object-cover object-top sm:object-center pointer-events-none"
-                  onError={(e) => {
-                    const fallback = fallbackThumbSrc;
-                    const img = e.target as HTMLImageElement;
-                    if (img.src !== fallback) { img.src = fallback; return; }
-                    img.src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
-                  }}
-                />
-              )}
-              {/* Multi-layered cinematic gradients */}
-              <div className="absolute inset-0 bg-gradient-to-t from-[#060a14] via-[#060a14]/65 to-black/30 pointer-events-none" />
-              <div className="absolute inset-0 bg-gradient-to-r from-[#060a14]/95 via-[#060a14]/50 to-transparent pointer-events-none" />
+            )}
+          </AnimatePresence>
+          {/* Khi không có TMDB, dùng single img với detailBackdropSrc (chính là thumb) để giữ logic cũ */}
+          {!isShowingTmdb && detailBackdropSrc !== fallbackThumbSrc && (
+            <img
+              src={detailBackdropSrc}
+              alt={currentData.name}
+              referrerPolicy="no-referrer"
+              className="absolute top-0 left-0 w-full h-[calc(env(safe-area-inset-top,0px)+210px)] sm:h-full object-cover object-center pointer-events-none blur-none opacity-100"
+              onError={(e) => {
+                const fallback = fallbackThumbSrc;
+                const img = e.target as HTMLImageElement;
+                if (img.src !== fallback) { img.src = fallback; return; }
+                img.src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
+              }}
+            />
+          )}
+          {/* Mobile-specific cover photo gradient overlay */}
+          <div className="absolute top-0 left-0 w-full h-[calc(env(safe-area-inset-top,0px)+210px)] sm:hidden bg-gradient-to-t from-[#060a14] via-[#060a14]/20 to-transparent pointer-events-none z-[5]" />
 
+          {/* Multi-layered cinematic gradients */}
+          <div className="absolute inset-0 hidden sm:block bg-gradient-to-t from-[#060a14] via-[#060a14]/75 sm:via-[#060a14]/65 to-black/30 pointer-events-none" />
+          <div className="absolute inset-0 hidden sm:block bg-gradient-to-r from-[#060a14]/95 via-[#060a14]/50 to-transparent pointer-events-none" />
+
+          {/* Inner Content Area */}
+          <div className="relative w-full h-full min-h-[calc(env(safe-area-inset-top,0px)+440px)] sm:min-h-[520px] md:min-h-[580px] lg:min-h-[640px] flex flex-col justify-end pt-[calc(env(safe-area-inset-top,0px)+160px)] sm:pt-28 pb-4 sm:pb-12 z-10">
               {/* Hero Content - giống chophim.app: poster trái + info phải */}
               <div className="relative z-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
-                <div className="flex flex-row gap-5 sm:gap-7 lg:gap-8 items-end">
+                <div className="flex flex-row gap-4 sm:gap-7 lg:gap-8 items-end">
                   {/* Poster - chophim style */}
                   <div className="shrink-0 hidden sm:block">
                     <div className="w-[160px] sm:w-[180px] lg:w-[210px] aspect-[2/3] rounded-xl sm:rounded-2xl overflow-hidden shadow-[0_12px_40px_rgba(0,0,0,0.6)] border border-white/10 bg-slate-900">
                       <img
-                        src={getImageUrl(currentData.poster_url || currentData.thumb_url, (currentData as any).source)}
+                        src={currentData.poster_url ? getImageUrl(currentData.poster_url, (currentData as any).source) : getImageUrl(currentData.thumb_url, (currentData as any).source)}
                         alt={currentData.name}
                         className="w-full h-full object-cover"
                         loading="eager"
+                        referrerPolicy="no-referrer"
                         onError={(e) => {
                           (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400&auto=format&fit=crop&q=80';
                         }}
@@ -790,26 +796,24 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                     </div>
                   </div>
                   {/* Mobile poster small (inline) */}
-                  <div className="shrink-0 sm:hidden">
-                    <div className="w-[112px] aspect-[2/3] rounded-xl overflow-hidden shadow-xl border border-white/10 bg-slate-900">
+                  <div className="shrink-0 sm:hidden z-30">
+                    <div className="w-[105px] aspect-[2/3] rounded-xl overflow-hidden shadow-2xl border-4 border-[#060a14] bg-slate-900">
                       <img
-                        src={getImageUrl(currentData.poster_url || currentData.thumb_url, (currentData as any).source)}
+                        src={currentData.poster_url ? getImageUrl(currentData.poster_url, (currentData as any).source) : getImageUrl(currentData.thumb_url, (currentData as any).source)}
                         alt={currentData.name}
                         className="w-full h-full object-cover"
                         loading="eager"
+                        referrerPolicy="no-referrer"
                         onError={(e) => {
                           (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400&auto=format&fit=crop&q=80';
                         }}
                       />
                     </div>
                   </div>
-
-                  <div className="flex-1 min-w-0 space-y-3 sm:space-y-4 pb-1">
+ 
+                  <div className="flex-1 min-w-0 space-y-1.5 sm:space-y-4 pb-1">
                     {/* Badges - chophim: FHD Song Ngữ Tập 10 */}
                     <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                      <span className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-[10px] sm:text-xs font-black uppercase px-2.5 sm:px-3 py-1 rounded-full shadow-lg shadow-blue-600/30">
-                        Gấu Cinema HD
-                      </span>
                       {currentData.quality && (
                         <span className="bg-slate-900/90 text-sky-300 border border-blue-800/80 text-[10px] sm:text-xs font-semibold px-2 py-0.5 rounded-md">
                           {currentData.quality}
@@ -831,7 +835,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                         </span>
                       ) : null}
                     </div>
-
+ 
                     {/* Title & Origin Name */}
                     <div className="space-y-1">
                       <h1 className="text-xl sm:text-3xl md:text-4xl lg:text-5xl font-black text-white drop-shadow-2xl tracking-tight leading-tight line-clamp-2">
@@ -843,9 +847,9 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                         </p>
                       )}
                     </div>
-
+ 
                     {/* Meta line chophim: Trạng thái / Loại / Năm / Thời lượng */}
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] sm:text-xs text-slate-300">
+                    <div className="flex flex-wrap items-center gap-x-2 sm:gap-x-3 gap-y-0.5 sm:gap-y-1 text-[10px] sm:text-xs text-slate-200 sm:text-slate-300 font-medium sm:font-normal">
                       {currentData.episode_current && currentData.episode_total && (
                         <span className="flex items-center gap-1"><span className="text-slate-500">Trạng thái:</span> <span className="text-white font-semibold">{currentData.episode_current} / {currentData.episode_total}</span></span>
                       )}
@@ -865,9 +869,9 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                         <span className="flex items-center gap-1"><span className="text-slate-500">Quốc gia:</span> <span className="text-white">{currentData.country[0].name}</span></span>
                       )}
                     </div>
-
-                  {/* Primary Hero Actions (Chỉ có 1 nút Xem Trailer ở đây) */}
-                  <div className="flex flex-wrap items-center gap-3 pt-1 sm:pt-2">
+ 
+                  {/* Primary Hero Actions */}
+                  <div className="hidden sm:flex flex-wrap items-center gap-3 pt-1 sm:pt-2">
                     <button
                       id="hero-primary-play-btn"
                       onClick={handleStartPlay}
@@ -876,7 +880,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                       <Play className="w-4 h-4 sm:w-5 sm:h-5 fill-white" />
                       <span>Xem Phim Ngay</span>
                     </button>
-
+ 
                     {hasTrailer && (
                       <button
                         id="hero-open-trailer-btn"
@@ -887,7 +891,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                         <span>Xem Trailer</span>
                       </button>
                     )}
-
+ 
                     <button
                       id="hero-toggle-list-btn"
                       onClick={() => onToggleMyList(currentData)}
@@ -909,7 +913,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                         </>
                       )}
                     </button>
-
+ 
                     {/* Share / Copy Link Button next to Save */}
                     <button
                       id="hero-share-btn"
@@ -925,7 +929,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                         </span>
                       )}
                     </button>
-
+ 
                     {/* Watch Together Button */}
                     {currentAccount && activeProfile && episodes.length > 0 && (
                       <button
@@ -950,7 +954,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                         <span>Xem Chung</span>
                       </button>
                     )}
-
+ 
                     {/* Follow Button - Báo tập mới */}
                     {currentAccount && activeProfile && (
                       <button
@@ -979,7 +983,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                         )}
                       </button>
                     )}
-
+ 
                     {/* Offline Save Button - ONLY on Native App */}
                     {isNativeApp && currentAccount && activeProfile && (
                       <button
@@ -1014,9 +1018,327 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Mobile Actions (Visible on Mobile, hidden on sm) */}
+              <div className="sm:hidden mt-4 space-y-3 w-full">
+                {/* Primary "Xem Phim Ngay" Button */}
+                <button
+                  onClick={handleStartPlay}
+                  className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 via-sky-600 to-indigo-600 active:from-blue-500 active:to-indigo-500 text-white py-3 rounded-xl font-bold text-sm shadow-xl shadow-blue-600/35 cursor-pointer active:scale-[0.98] transition-all"
+                >
+                  <Play className="w-4 h-4 fill-white" />
+                  <span>Xem Phim Ngay</span>
+                </button>
+
+                {/* Grid of secondary actions */}
+                <div className="grid grid-cols-2 gap-2.5 w-full">
+                  {hasTrailer && (
+                    <button
+                      onClick={handleUserWatchTrailer}
+                      className="flex items-center justify-center gap-1.5 bg-slate-900 border border-slate-800 text-white py-2.5 rounded-xl font-bold text-xs cursor-pointer active:bg-slate-800 transition-all active:scale-95 duration-150"
+                    >
+                      <Video className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Xem Trailer</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => onToggleMyList(currentData)}
+                    className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs border cursor-pointer transition-all active:scale-95 duration-150 ${
+                      inList
+                        ? 'bg-emerald-600/15 border-emerald-500 text-emerald-300'
+                        : 'bg-slate-900 border-slate-800 text-slate-200 active:bg-slate-800'
+                    }`}
+                  >
+                    {inList ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Đã lưu</span>
+                      </>
+                    ) : (
+                      <>
+                        <Bookmark className="w-3.5 h-3.5 text-sky-400" />
+                        <span>Lưu phim</span>
+                      </>
+                    )}
+                  </button>
+
+                  {currentAccount && activeProfile && episodes.length > 0 && onCreateRoom && (
+                    <button
+                      onClick={() => {
+                        const ep = episodes[selectedServerIndex]?.server_data[0];
+                        const server = episodes[selectedServerIndex];
+                        if (ep && server) {
+                          setSelectedEpisodeForRoom({ ep, server });
+                          setShowCreateRoomModal(true);
+                        }
+                      }}
+                      disabled={!!userActiveRoomId}
+                      className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs border cursor-pointer transition-all active:scale-95 duration-150 ${
+                        userActiveRoomId
+                          ? 'bg-slate-800/40 border-slate-800/20 text-slate-600 cursor-not-allowed'
+                          : 'bg-emerald-600/10 border-emerald-500/40 text-emerald-400 hover:text-emerald-300'
+                      }`}
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      <span>Xem Chung</span>
+                    </button>
+                  )}
+
+                  {currentAccount && activeProfile && (
+                    <button
+                      onClick={handleToggleFollow}
+                      className={`relative flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs border cursor-pointer transition-all active:scale-95 duration-150 ${
+                        isFollowed
+                          ? 'bg-violet-600/15 border-violet-500 text-violet-300'
+                          : 'bg-slate-900 border-slate-800 text-slate-200 active:bg-slate-800'
+                      }`}
+                    >
+                      {isFollowed ? (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Đang theo dõi</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-3.5 h-3.5 text-violet-400" />
+                          <span>Theo dõi</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+
+                {/* "Chia sẻ" as a clean full-width button right below the grid */}
+                <button
+                  onClick={handleShareMovie}
+                  className="relative w-full flex items-center justify-center gap-1.5 py-2.5 bg-slate-900 border border-slate-800 text-slate-200 transition-all rounded-xl cursor-pointer active:bg-slate-800 font-bold text-xs active:scale-95 duration-150"
+                >
+                  <Share2 className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Chia sẻ</span>
+                  {isCopiedLink && (
+                    <span className="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap bg-blue-600 text-white text-[9px] font-bold px-2 py-0.5 rounded shadow-xl animate-in fade-in z-30">
+                      Copied!
+                    </span>
+                  )}
+                </button>
+              </div>
             </div>
             </div>
           </section>
+ 
+        {/* Mobile-Only Premium Hero Section (Disabled in favor of Unified responsive hero) */}
+        {false && (
+        <section
+          id="detail-hero-stage-mobile"
+          className="block sm:hidden relative w-full pt-16 pb-4 bg-[#060a14] overflow-hidden select-none"
+        >
+          {/* Blurred Gradient Backdrop Cover */}
+          <div className="absolute inset-0 z-0 pointer-events-none">
+            <img
+              src={detailBackdropSrc || fallbackThumbSrc || 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=800&auto=format&fit=crop&q=80'}
+              alt=""
+              className="w-full h-full object-cover scale-110 blur-[18px] opacity-65"
+              onError={(e) => {
+                (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=800&auto=format&fit=crop&q=80';
+              }}
+            />
+            <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-[#060a14]/65 to-[#060a14]" />
+          </div>
+ 
+          {/* Core Content Layout */}
+          <div className="relative z-10 px-4 pt-6 pb-2 space-y-4">
+            {/* Poster & Meta Info Side-by-Side */}
+            <div className="flex gap-4 items-start">
+              {/* Left Side: Rectangular Poster Thumbnail */}
+              <div className="w-[105px] shrink-0 aspect-[2/3] rounded-xl overflow-hidden shadow-[0_8px_24px_rgba(0,0,0,0.6)] border border-white/15 bg-slate-950 z-10">
+                <img
+                  src={getImageUrl(currentData.poster_url || currentData.thumb_url, (currentData as any).source)}
+                  alt={currentData.name}
+                  className="w-full h-full object-cover"
+                  loading="eager"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400&auto=format&fit=crop&q=80';
+                  }}
+                />
+              </div>
+ 
+              {/* Right Side: Title, Origin, Badges, and Metadata stacked */}
+              <div className="flex-1 min-w-0 space-y-2 pt-1">
+                <h1 className="text-base sm:text-lg font-black text-white leading-snug tracking-tight line-clamp-2">
+                  {currentData.name}
+                </h1>
+                {currentData.origin_name && (
+                  <p className="text-[11px] text-slate-300 font-medium line-clamp-1">
+                    {currentData.origin_name}
+                  </p>
+                )}
+
+                {/* Badges Row - Clean and Non-duplicating */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-[9px] font-black uppercase px-1.5 py-0.5 rounded shadow">
+                    {currentData.quality || 'FHD'}
+                  </span>
+                  {currentData.lang && (
+                    <span className="bg-slate-950/80 text-sky-400 border border-blue-900/40 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                      {currentData.lang}
+                    </span>
+                  )}
+                  {currentData.episode_current && (
+                    <span className="bg-amber-500/10 text-amber-300 border border-amber-500/20 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                      {currentData.episode_current}
+                    </span>
+                  )}
+                </div>
+
+                {/* Clean non-repeating Meta row */}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-200 font-semibold">
+                  {currentData.year && (
+                    <span>{currentData.year}</span>
+                  )}
+                  {currentData.time && (
+                    <>
+                      <span className="text-slate-500">•</span>
+                      <span>{currentData.time}</span>
+                    </>
+                  )}
+                  {currentData.country?.[0] && (
+                    <>
+                      <span className="text-slate-500">•</span>
+                      <span className="truncate max-w-[90px]">{currentData.country[0].name}</span>
+                    </>
+                  )}
+                </div>
+
+                {/* Star rating match match % */}
+                <div className="flex items-center gap-1.5 text-[10px] font-bold">
+                  <span className="text-emerald-400">98% Phù hợp</span>
+                  {(currentData as any)?.tmdb?.vote_average ? (
+                    <>
+                      <span className="text-slate-500">•</span>
+                      <span className="text-yellow-400 flex items-center gap-0.5">
+                        TMDb {(currentData as any).tmdb.vote_average.toFixed(1)}
+                      </span>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+ 
+            {/* CTA section for Mobile: Prominent Watch Now and Horizontal-Scrollable actions */}
+            <div className="space-y-3 pt-1">
+              {/* Primary Full Width button */}
+              <button
+                onClick={handleStartPlay}
+                className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 via-sky-600 to-indigo-600 active:from-blue-500 active:to-indigo-500 text-white py-3 rounded-xl font-bold text-sm shadow-xl shadow-blue-600/30 active:scale-[0.98] transition-all cursor-pointer"
+              >
+                <Play className="w-4 h-4 fill-white" />
+                <span>Xem Phim Ngay</span>
+              </button>
+ 
+              {/* Horizontal Scrollable Row for secondary actions */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 -mx-4 px-4 scrollbar-none snap-x snap-mandatory">
+                {/* Xem Trailer */}
+                {hasTrailer && (
+                  <button
+                    onClick={handleUserWatchTrailer}
+                    className="flex items-center gap-1.5 bg-slate-900 border border-slate-800/80 text-white px-4 py-2 rounded-xl font-bold text-xs shrink-0 cursor-pointer snap-start active:bg-slate-800"
+                  >
+                    <Video className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Xem Trailer</span>
+                  </button>
+                )}
+ 
+                {/* Lưu Phim */}
+                <button
+                  onClick={() => onToggleMyList(currentData)}
+                  className={`flex items-center gap-1.5 px-4 py-2 rounded-xl font-bold text-xs border shrink-0 cursor-pointer snap-start transition-all ${
+                    inList
+                      ? 'bg-emerald-600/15 border-emerald-500 text-emerald-300'
+                      : 'bg-slate-900 border-slate-800/80 text-slate-200 active:bg-slate-800'
+                  }`}
+                >
+                  {inList ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Đã lưu</span>
+                    </>
+                  ) : (
+                    <>
+                      <Bookmark className="w-3.5 h-3.5 text-sky-400" />
+                      <span>Lưu phim</span>
+                    </>
+                  )}
+                </button>
+ 
+                {/* Xem Chung */}
+                {currentAccount && activeProfile && episodes.length > 0 && (
+                  <button
+                    onClick={() => {
+                      const ep = episodes[selectedServerIndex]?.server_data[0];
+                      const server = episodes[selectedServerIndex];
+                      if (ep && server && onCreateRoom) {
+                        setSelectedEpisodeForRoom({ ep, server });
+                        setShowCreateRoomModal(true);
+                      }
+                    }}
+                    disabled={!!userActiveRoomId}
+                    className={`flex items-center gap-1.5 px-4 py-2 rounded-xl font-bold text-xs border shrink-0 cursor-pointer snap-start transition-all ${
+                      userActiveRoomId
+                        ? 'bg-slate-800/40 border-slate-800/20 text-slate-600 cursor-not-allowed'
+                        : 'bg-emerald-600/10 border-emerald-500/40 text-emerald-400 hover:text-emerald-300'
+                    }`}
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    <span>Xem Chung</span>
+                  </button>
+                )}
+ 
+                {/* Theo Dõi */}
+                {currentAccount && activeProfile && (
+                  <button
+                    onClick={handleToggleFollow}
+                    className={`relative flex items-center gap-1.5 px-4 py-2 rounded-xl font-bold text-xs border shrink-0 cursor-pointer snap-start transition-all ${
+                      isFollowed
+                        ? 'bg-violet-600/15 border-violet-500 text-violet-300'
+                        : 'bg-slate-900 border-slate-800/80 text-slate-200 active:bg-slate-800'
+                    }`}
+                  >
+                    {isFollowed ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Đang theo dõi</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-3.5 h-3.5 text-violet-400" />
+                        <span>Theo dõi</span>
+                      </>
+                    )}
+                    {hasNewEp && (
+                      <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                    )}
+                  </button>
+                )}
+ 
+                {/* Chia Sẻ */}
+                <button
+                  onClick={handleShareMovie}
+                  className="relative flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 border border-slate-800/80 text-slate-200 transition-all cursor-pointer snap-start active:bg-slate-800 shrink-0 font-bold text-xs"
+                >
+                  <Share2 className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Chia sẻ</span>
+                  {isCopiedLink && (
+                    <span className="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap bg-blue-600 text-white text-[9px] font-bold px-2 py-0.5 rounded shadow-xl animate-in fade-in z-30">
+                      Copied!
+                    </span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+        )}
 
         {/* Dedicated Centered Trailer Popup Modal */}
         <AnimatePresence>
@@ -1102,8 +1424,8 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
             {/* Left 2 Cols on tablet/desktop: Highlights & Synopsis */}
             <div className="md:col-span-2 space-y-6">
-              {/* Highlights Bar */}
-              <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 p-4 rounded-2xl bg-[#0c1427] border border-slate-800/80 text-xs sm:text-sm">
+              {/* Highlights Bar - Hidden on Mobile, Flex on Desktop */}
+              <div className="hidden sm:flex flex-wrap items-center gap-2.5 sm:gap-3 p-4 rounded-2xl bg-[#0c1427] border border-slate-800/80 text-xs sm:text-sm">
                 <span className="text-emerald-400 font-bold">98% Phù hợp</span>
                 <span className="text-slate-600">•</span>
                 <span className="text-slate-300 flex items-center gap-1.5">
@@ -1128,9 +1450,9 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                   </>
                 )}
               </div>
-
-              {/* Synopsis Section */}
-              <div className="p-5 sm:p-6 rounded-2xl bg-[#0c1427] border border-slate-800/80 space-y-3">
+ 
+              {/* Synopsis Section (Desktop & Tablet) */}
+              <div className="hidden sm:block p-5 sm:p-6 rounded-2xl bg-[#0c1427] border border-slate-800/80 space-y-3">
                 <h3 className="text-sm sm:text-base font-black text-white uppercase tracking-wider flex items-center gap-2">
                   <Info className="w-4 h-4 text-sky-400" />
                   <span>Nội dung phim</span>
@@ -1149,6 +1471,31 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                       bất kỳ quảng cáo phiền toái nào.
                     </p>
                   )}
+                </div>
+              </div>
+ 
+              {/* Synopsis Section (Mobile Only with "Xem thêm" expander toggle) */}
+              <div className="block sm:hidden p-4 rounded-xl bg-[#0c1427] border border-slate-800/60 space-y-2.5">
+                <h3 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2 pb-1 border-b border-slate-800/40">
+                  <Info className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Nội dung phim</span>
+                </h3>
+                <div className="relative text-xs text-slate-300 leading-relaxed pr-1">
+                  <div
+                    className={isSynopsisExpanded ? '' : 'line-clamp-4 overflow-hidden'}
+                    dangerouslySetInnerHTML={{
+                      __html: DOMPurify.sanitize(currentData.content || 'Trải nghiệm bộ phim hấp dẫn với độ phân giải cao và âm thanh sống động. Bạn có thể lựa chọn bất kỳ tập phim nào bên dưới để thưởng thức ngay lập tức mà không có bất kỳ quảng cáo phiền toái nào.'),
+                    }}
+                  />
+                  
+                  {/* Expand/Collapse Toggle Button */}
+                  <button
+                    onClick={() => setIsSynopsisExpanded(!isSynopsisExpanded)}
+                    className="mt-2 text-xs font-bold text-sky-400 active:text-sky-300 flex items-center gap-1 cursor-pointer focus:outline-none"
+                  >
+                    <span>{isSynopsisExpanded ? 'Thu gọn' : 'Xem thêm'}</span>
+                    <span>{isSynopsisExpanded ? '▲' : '▼'}</span>
+                  </button>
                 </div>
               </div>
             </div>

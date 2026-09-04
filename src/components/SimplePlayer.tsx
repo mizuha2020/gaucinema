@@ -1336,13 +1336,13 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
           />
           <button
             onClick={onBack}
-            className="absolute top-4 left-4 z-50 bg-black/60 text-white p-2 rounded-full hover:bg-black/80"
+            className="absolute top-[calc(env(safe-area-inset-top,0px)+16px)] left-4 z-50 bg-black/60 text-white p-2 rounded-full hover:bg-black/80"
           >
             <X className="w-6 h-6" />
           </button>
           <button
             onClick={() => setUseEmbed(false)}
-            className="absolute top-4 right-4 z-50 bg-blue-600 text-white px-3 py-1 rounded text-sm"
+            className="absolute top-[calc(env(safe-area-inset-top,0px)+16px)] right-4 z-50 bg-blue-600 text-white px-3 py-1 rounded text-sm"
           >
             Quay lại HLS
           </button>
