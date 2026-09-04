@@ -1,11 +1,16 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo, memo } from 'react';
 import Hls from 'hls.js';
-import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Settings, PictureInPicture2, X, RotateCcw, RotateCw, SkipForward, List, Server } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Settings, PictureInPicture2, X, RotateCcw, RotateCw, SkipForward, SkipBack, List, Server, Sun, ChevronDown, FastForward, Lock } from 'lucide-react';
 import { EpisodeServer, Movie, MovieEpisode } from '../types';
 import { getMirrorUrls } from '../utils/mirrorUrls';
 import { loadCleanedM3u8Url, revokeBlobUrl } from '../utils/m3u8Cleaner';
 import { getFullApiUrl } from '../services/apiConfig';
 import { Capacitor } from '@capacitor/core';
+import { enterNativePip, setNativeVideoPlaying, checkNativePipSupported, setImmersiveMode } from '../utils/nativeVideoPlayer';
+
+function isNativeAndroid(): boolean {
+  try { return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'; } catch { return false; }
+}
 
 type IntroSegment = { start_sec: number; end_sec: number; start_ms: number; end_ms: number; confidence?: number; submission_count?: number } | null;
 type SegmentsResponse = { imdb_id: string; season: number; episode: number; intro: IntroSegment; recap: IntroSegment; outro: IntroSegment };
@@ -77,8 +82,15 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [buffered, setBuffered] = useState(0);
-  const [volume, setVolume] = useState(1);
-  const [isMuted, setIsMuted] = useState(false);
+  const [volume, setVolume] = useState(() => {
+    try {
+      const v = parseFloat(localStorage.getItem('gau_volume') || '1');
+      return isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
+    } catch { return 1; }
+  });
+  const [isMuted, setIsMuted] = useState(() => {
+    try { return localStorage.getItem('gau_muted') === '1'; } catch { return false; }
+  });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
@@ -90,6 +102,46 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   const [showServerMenu, setShowServerMenu] = useState(false);
   const [showEpisodes, setShowEpisodes] = useState(false);
   const [isPip, setIsPip] = useState(false);
+  // ---- Mobile / tablet UX ----
+  const [isTouchDevice] = useState<boolean>(() => {
+    try {
+      if (typeof window === 'undefined') return false;
+      return ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || window.matchMedia?.('(pointer: coarse)').matches;
+    } catch { return false; }
+  });
+  const [seekFlash, setSeekFlash] = useState<'left' | 'right' | null>(null);
+  const [gestureToast, setGestureToast] = useState<{ text: string; sub?: string } | null>(null);
+  const [screenBrightness, setScreenBrightness] = useState(() => {
+    try {
+      const b = parseFloat(localStorage.getItem('gau_brightness') || '1');
+      return isFinite(b) ? Math.max(0.4, Math.min(1, b)) : 1;
+    } catch { return 1; }
+  });
+  const [isLocked, setIsLocked] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+  // Chế độ khung hình: false = Fit (contain, đủ hình), true = Fill (cover, lấp màn hình)
+  const [fillMode, setFillMode] = useState(false);
+  const pinchRef = useRef<{ startDist: number } | null>(null);
+  const saveProgressRef = useRef(onSaveProgress);
+  saveProgressRef.current = onSaveProgress;
+  const isLockedRef = useRef(false);
+  isLockedRef.current = isLocked;
+  const [speedBoost, setSpeedBoost] = useState(false);
+  const [pipSupported, setPipSupported] = useState(false);
+  const [nativeImmersive, setNativeImmersive] = useState(false);
+  const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
+  const singleTapTimer = useRef<number | null>(null);
+  // Tap này chỉ để tắt menu (đã xử lý ngay ở touchstart) -> touchend bỏ qua, khỏi toggle controls
+  const consumeTapRef = useRef(false);
+  const touchStartRef = useRef<{ x: number; y: number; mode: null | 'volume' | 'brightness' | 'ignore'; startVolume: number; startBrightness: number; moved: boolean; holdFired: boolean } | null>(null);
+  const gestureToastTimer = useRef<number | null>(null);
+  const seekFlashTimer = useRef<number | null>(null);
+  const holdTimer = useRef<number | null>(null);
+  const prevRateRef = useRef(1);
+  const showControlsRef = useRef(true);
+  showControlsRef.current = showControls;
+  const isTouchDeviceRef = useRef(false);
+  isTouchDeviceRef.current = isTouchDevice;
   // intro/recap/outro segments (single fetch per episode, no cache)
   const [segments, setSegments] = useState<SegmentsResponse | null>(null);
   const [activeSegment, setActiveSegment] = useState<'intro' | 'recap' | 'outro' | null>(null);
@@ -103,12 +155,10 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   const progressBarRef = useRef<HTMLDivElement>(null);
   const bufferedBarRef = useRef<HTMLDivElement>(null);
   const hoverTrackRef = useRef<HTMLDivElement>(null);
-  const progressInputRef = useRef<HTMLInputElement>(null);
   const hoverTooltipRef = useRef<HTMLDivElement>(null);
   const hoverTimeRef = useRef<HTMLDivElement>(null);
   const hideControlsTimer = useRef<number | null>(null);
-  const isDraggingRef = useRef(false);
-  // preview refs - chophim sprite style (hidden video + canvas)
+  const isDraggingRef = useRef(false);  // preview refs - chophim sprite style (hidden video + canvas)
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewHlsRef = useRef<Hls | null>(null);
@@ -116,10 +166,17 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   const [previewImg, setPreviewImg] = useState<string | null>(null);
   const [previewVisible, setPreviewVisible] = useState(false);
 
-  const nextEpisode = useMemo(() => {
-    const idx = currentServer.server_data.findIndex(e => e.slug === currentEpisode.slug);
-    return idx !== -1 && idx < currentServer.server_data.length - 1 ? currentServer.server_data[idx + 1] : null;
+  const episodeIndex = useMemo(() => {
+    return currentServer.server_data.findIndex(e => e.slug === currentEpisode.slug);
   }, [currentServer, currentEpisode]);
+  const prevEpisode = useMemo(() => {
+    return episodeIndex > 0 ? currentServer.server_data[episodeIndex - 1] : null;
+  }, [currentServer, episodeIndex]);
+  const nextEpisode = useMemo(() => {
+    return episodeIndex !== -1 && episodeIndex < currentServer.server_data.length - 1
+      ? currentServer.server_data[episodeIndex + 1]
+      : null;
+  }, [currentServer, episodeIndex]);
 
   // single fetch per episode: imdb from movie detail (movie.imdb.id), season/episode parsed locally
   useEffect(() => {
@@ -195,7 +252,45 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     if (hideControlsTimer.current) window.clearTimeout(hideControlsTimer.current);
     hideControlsTimer.current = window.setTimeout(() => {
       if (!showSettings && !showServerMenu && !showEpisodes && !isDraggingRef.current) setShowControls(false);
-    }, 3000);
+    }, 5000);
+  }, [showSettings, showServerMenu, showEpisodes]);
+
+  // Toggle hiện/ẩn controls cho mobile (không ép hiện lại như resetControlsTimer)
+  const toggleLock = useCallback(() => {
+    setIsLocked(prev => {
+      const next = !prev;
+      if (next) {
+        // Khóa: dọn menu + ẩn controls, giữ phát
+        setShowEpisodes(false);
+        setShowServerMenu(false);
+        setShowSettings(false);
+        if (hideControlsTimer.current) window.clearTimeout(hideControlsTimer.current);
+        setShowControls(false);
+      } else {
+        resetControlsTimer();
+      }
+      return next;
+    });
+  }, [resetControlsTimer]);
+
+  // Toggle hiện/ẩn controls cho mobile (không ép hiện lại như resetControlsTimer)
+  const toggleControls = useCallback(() => {
+    if (showControlsRef.current) {
+      if (hideControlsTimer.current) window.clearTimeout(hideControlsTimer.current);
+      setShowControls(false);
+    } else {
+      resetControlsTimer();
+    }
+  }, [resetControlsTimer]);
+
+  // Hẹn lại giờ tự ẩn NHƯNG không ép hiện (dùng cho gesture: swipe/double-tap
+  // không làm controls bật lên bất ngờ khi đang ẩn)
+  const pokeControlsTimer = useCallback(() => {
+    if (hideControlsTimer.current) window.clearTimeout(hideControlsTimer.current);
+    if (!showControlsRef.current) return;
+    hideControlsTimer.current = window.setTimeout(() => {
+      if (!showSettings && !showServerMenu && !showEpisodes && !isDraggingRef.current) setShowControls(false);
+    }, 5000);
   }, [showSettings, showServerMenu, showEpisodes]);
 
   const capturePreviewFrame = useCallback(() => {
@@ -404,7 +499,30 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
       setIsLoading(false);
     }
     return () => { cancelled = true; revokeBlobUrl(blobUrl); if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } };
-  }, [currentEpisode.link_m3u8, allServers, currentServer, initialTime, onSelectEpisode]);
+  }, [currentEpisode.link_m3u8, allServers, currentServer, initialTime, onSelectEpisode, retryKey]);
+
+  const handleRetry = useCallback(() => {
+    const v = videoRef.current;
+    // Thử phát tiếp từ chỗ đang xem dở
+    const resumeAt = v && isFinite(v.currentTime) ? v.currentTime : currentTime;
+    if (v) {
+      try { v.removeAttribute('src'); v.load(); } catch {}
+      if (resumeAt > 5) {
+        try { v.currentTime = resumeAt; } catch {}
+      }
+    }
+    setErrorMsg(null);
+    setIsLoading(true);
+    setRetryKey(k => k + 1);
+  }, [currentTime]);
+
+  // Server khác cùng tập (dùng cho nút Đổi server khi lỗi)
+  const altServerEp = useMemo(() => {
+    const other = allServers.find(s => s.server_name !== currentServer.server_name);
+    if (!other) return null;
+    const ep = other.server_data.find(e => e.slug === currentEpisode.slug) || other.server_data[0];
+    return ep ? { ep, server: other } : null;
+  }, [allServers, currentServer, currentEpisode]);
 
   // sync volume/mute without recreating hls
   useEffect(() => {
@@ -413,6 +531,31 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     v.volume = isMuted ? 0 : volume;
     v.muted = isMuted;
   }, [volume, isMuted]);
+
+  // Nhớ âm lượng + độ sáng vào máy
+  useEffect(() => {
+    try {
+      localStorage.setItem('gau_volume', String(volume));
+      localStorage.setItem('gau_muted', isMuted ? '1' : '0');
+      localStorage.setItem('gau_brightness', String(screenBrightness));
+    } catch {}
+  }, [volume, isMuted, screenBrightness]);
+
+  // Lưu tiến độ chắc ăn: pause + thoát player + app bị ẩn (không chỉ mỗi 30s)
+  const saveProgressNow = useCallback(() => {
+    const v = videoRef.current;
+    if (!v || !v.duration || !isFinite(v.duration)) return;
+    if (v.currentTime < 5) return;
+    saveProgressRef.current?.(v.currentTime, v.duration);
+  }, []);
+  useEffect(() => {
+    const onHidden = () => { if (document.visibilityState === 'hidden') saveProgressNow(); };
+    document.addEventListener('visibilitychange', onHidden);
+    return () => {
+      document.removeEventListener('visibilitychange', onHidden);
+      saveProgressNow();
+    };
+  }, [saveProgressNow]);
 
   // time update - segment detection (intro/recap/outro) + progress
   const handleTimeUpdate = useCallback(() => {
@@ -431,15 +574,14 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
       setActiveSegment(null);
     }
     if (v.buffered.length > 0) setBuffered(v.buffered.end(v.buffered.length - 1));
+    // Đang kéo timeline thì không đụng vào DOM scrub (tránh giật/lag do 2 luồng cùng set)
+    if (isDraggingRef.current) return;
     // update progress bar width directly via ref for performance (no re-render)
     if (progressBarRef.current && v.duration) {
       progressBarRef.current.style.width = `${(cur / v.duration) * 100}%`;
     }
     if (bufferedBarRef.current && v.duration) {
       bufferedBarRef.current.style.width = `${(v.buffered.length ? (v.buffered.end(v.buffered.length - 1) / v.duration) * 100 : 0)}%`;
-    }
-    if (progressInputRef.current && v.duration) {
-      progressInputRef.current.value = String((cur / v.duration) * 100);
     }
   // NOTE: segments must be in deps — otherwise this handler keeps the stale
   // initial null and the skip button never appears even with data loaded.
@@ -470,34 +612,271 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     if (videoRef.current) { videoRef.current.volume = v; videoRef.current.muted = v === 0; }
   };
   const toggleFullscreen = useCallback(async () => {
+    // APK Android: player vốn đã full màn hình -> nút này bật/tắt immersive
+    // (ẩn status bar + nav bar) để có khác biệt thật sự.
+    if (isNativeAndroid()) {
+      setNativeImmersive(prev => {
+        const next = !prev;
+        setImmersiveMode(next);
+        return next;
+      });
+      return;
+    }
     const c = containerRef.current;
     if (!c) return;
-    if (!document.fullscreenElement) await c.requestFullscreen?.();
-    else await document.exitFullscreen?.();
+    try {
+      if (!document.fullscreenElement) {
+        await c.requestFullscreen?.();
+        // Mobile web: auto-lock landscape cho trải nghiệm xem phim tốt hơn
+        try {
+          const orient = screen.orientation as any;
+          if (isTouchDeviceRef.current && orient?.lock) await orient.lock('landscape');
+        } catch {}
+      } else {
+        await document.exitFullscreen?.();
+        try { (screen.orientation as any)?.unlock?.(); } catch {}
+      }
+    } catch {}
   }, []);
-  const togglePip = useCallback(async () => {
-    const v = videoRef.current;
+  const handlePip = useCallback(async () => {
+    // APK: dùng native PiP (WebView không hỗ trợ requestPictureInPicture)
+    if (isNativeAndroid()) {
+      try { await enterNativePip(); } catch {}
+      return;
+    }
+    // Web / PWA: dùng browser PiP nếu được hỗ trợ (Chrome/Android + Safari/iOS)
+    const v = videoRef.current as any;
     if (!v) return;
     try {
       if (document.pictureInPictureElement) await document.exitPictureInPicture();
       else if (v.requestPictureInPicture) await v.requestPictureInPicture();
+      else if (typeof v.webkitSetPresentationMode === 'function') {
+        // Safari macOS/iOS
+        try {
+          if (v.webkitPresentationMode === 'picture-in-picture') v.webkitSetPresentationMode('inline');
+          else v.webkitSetPresentationMode('picture-in-picture');
+        } catch { v.webkitSetPresentationMode('picture-in-picture'); }
+      }
     } catch {}
   }, []);
 
+  const showGestureToast = useCallback((text: string, sub?: string) => {
+    if (gestureToastTimer.current) window.clearTimeout(gestureToastTimer.current);
+    setGestureToast({ text, sub });
+    gestureToastTimer.current = window.setTimeout(() => setGestureToast(null), 900);
+  }, []);
+
+  const flashSeek = useCallback((seconds: number) => {
+    if (seekFlashTimer.current) window.clearTimeout(seekFlashTimer.current);
+    setSeekFlash(seconds < 0 ? 'left' : 'right');
+    try { (navigator as any)?.vibrate?.(15); } catch {}
+    seekFlashTimer.current = window.setTimeout(() => setSeekFlash(null), 650);
+  }, []);
+
+  // Giữ màn hình để x2 tốc độ (kiểu YouTube), thả ra về như cũ.
+  // Khi giữ thì ẩn controls cho thoáng, thả ra thì hiện lại.
+  const activateSpeedBoost = useCallback(() => {
+    const v = videoRef.current;
+    if (!v || v.paused) return;
+    const s = touchStartRef.current;
+    if (s) s.holdFired = true;
+    prevRateRef.current = v.playbackRate || 1;
+    v.playbackRate = 2;
+    setPlaybackRate(2);
+    setSpeedBoost(true);
+    if (hideControlsTimer.current) window.clearTimeout(hideControlsTimer.current);
+    setShowControls(false);
+    try { (navigator as any)?.vibrate?.(20); } catch {}
+  }, []);
+  const deactivateSpeedBoost = useCallback(() => {
+    const v = videoRef.current;
+    if (v) v.playbackRate = prevRateRef.current || 1;
+    setPlaybackRate(prevRateRef.current || 1);
+    setSpeedBoost(false);
+    resetControlsTimer();
+  }, [resetControlsTimer]);
+
   const handleVideoAreaClick = useCallback(() => {
+    if (isLockedRef.current) return;
     if (showEpisodes || showServerMenu || showSettings) {
       setShowEpisodes(false);
       setShowServerMenu(false);
       setShowSettings(false);
       return;
     }
+    // Mobile/tablet: single tap chỉ hiện/ẩn controls (chuẩn YouTube/Netflix),
+    // không toggle play nhầm. Desktop giữ click-to-play.
+    if (isTouchDeviceRef.current) {
+      toggleControls();
+      return;
+    }
     togglePlay();
-  }, [showEpisodes, showServerMenu, showSettings, togglePlay]);
+  }, [showEpisodes, showServerMenu, showSettings, togglePlay, toggleControls]);
 
   const handleVideoClick = useCallback((e: React.MouseEvent) => {
+    // Bỏ qua ghost-click sau touch trên mobile (touch handlers đã xử lý)
+    if (isTouchDeviceRef.current) { e.stopPropagation(); return; }
     e.stopPropagation();
     handleVideoAreaClick();
   }, [handleVideoAreaClick]);
+
+  // ---- Mobile gestures: double-tap seek + giữ để x2 + swipe dọc volume/brightness ----
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    const t = e.touches[0];
+    const v = videoRef.current;
+    // Đang khóa màn hình: mọi chạm lên video đều bỏ qua (nút mở khóa tự chặn riêng)
+    if (isLockedRef.current) {
+      touchStartRef.current = { x: t.clientX, y: t.clientY, mode: 'ignore', startVolume: 0, startBrightness: 1, moved: true, holdFired: false };
+      return;
+    }
+    // Menu đang mở: tắt NGAY ở touchstart (không chờ click ~300ms hay single-tap 280ms),
+    // tap này coi như đã tiêu thụ, touchend sẽ bỏ qua.
+    if (showEpisodes || showServerMenu || showSettings) {
+      setShowEpisodes(false);
+      setShowServerMenu(false);
+      setShowSettings(false);
+      lastTapRef.current = null;
+      if (singleTapTimer.current) { window.clearTimeout(singleTapTimer.current); singleTapTimer.current = null; }
+      consumeTapRef.current = true;
+      touchStartRef.current = { x: t.clientX, y: t.clientY, mode: 'ignore', startVolume: 0, startBrightness: 1, moved: true, holdFired: false };
+      pokeControlsTimer();
+      return;
+    }
+    // Chụm 2 ngón: đổi tỉ lệ khung hình Fit (contain) <-> Fill (cover)
+    if (e.touches.length === 2) {
+      const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      if (d > 0) pinchRef.current = { startDist: d };
+      if (holdTimer.current) { window.clearTimeout(holdTimer.current); holdTimer.current = null; }
+      touchStartRef.current = { x: t.clientX, y: t.clientY, mode: 'ignore', startVolume: 0, startBrightness: 1, moved: true, holdFired: false };
+      return;
+    }
+    touchStartRef.current = {
+      x: t.clientX, y: t.clientY, mode: null,
+      startVolume: v ? (v.muted ? 0 : v.volume) : volume,
+      startBrightness: screenBrightness,
+      moved: false, holdFired: false,
+    };
+    // Chỉ dừng hẹn giờ tự ẩn, KHÔNG ép hiện controls ở đây (để tap-toggle sau đó chính xác).
+    // Ép hiện ở touchstart là bug làm tap-hiện chớp tắt sau 280ms.
+    if (hideControlsTimer.current) { window.clearTimeout(hideControlsTimer.current); hideControlsTimer.current = null; }
+    // Giữ yên >450ms khi đang phát -> x2 tốc độ
+    if (holdTimer.current) window.clearTimeout(holdTimer.current);
+    if (v && !v.paused && e.touches.length === 1) {
+      holdTimer.current = window.setTimeout(() => { activateSpeedBoost(); }, 450);
+    }
+  }, [volume, screenBrightness, activateSpeedBoost, showEpisodes, showServerMenu, showSettings, pokeControlsTimer]);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    // Đang chụm: tách ra (OUT) -> Fill lấp màn hình, khép vào (IN) -> Fit đủ hình.
+    // Đổi mốc sau mỗi lần chuyển để chụm 1 hơi vẫn đảo qua lại được.
+    const pinch = pinchRef.current;
+    if (pinch && e.touches.length >= 2) {
+      const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      if (d > 0) {
+        const ratio = d / pinch.startDist;
+        if (ratio > 1.2) {
+          setFillMode(prev => {
+            if (!prev) showGestureToast('Lấp đầy màn hình', 'Chụm vào để thu lại');
+            return true;
+          });
+          pinch.startDist = d;
+        } else if (ratio < 0.85) {
+          setFillMode(prev => {
+            if (prev) showGestureToast('Vừa màn hình', 'Tách ra để lấp đầy');
+            return false;
+          });
+          pinch.startDist = d;
+        }
+      }
+      return;
+    }
+    const s = touchStartRef.current;
+    const v = videoRef.current;
+    if (!s || !v) return;
+    const t = e.touches[0];
+    const dx = t.clientX - s.x;
+    const dy = t.clientY - s.y;
+    if (!s.mode) {
+      if (Math.abs(dx) < 14 && Math.abs(dy) < 14) return;
+      // Chỉ swipe DỌC: phải = volume, trái = brightness. Ngang thì bỏ qua.
+      if (Math.abs(dx) > Math.abs(dy) * 1.2) { s.mode = 'ignore'; s.moved = true; }
+      else s.mode = s.x > window.innerWidth / 2 ? 'volume' : 'brightness';
+      // Đã di chuyển -> hủy giữ-x2
+      if (holdTimer.current) { window.clearTimeout(holdTimer.current); holdTimer.current = null; }
+    }
+    if (s.mode === 'ignore') return;
+    s.moved = true;
+    if (s.mode === 'volume') {
+      const dv = -dy / 220;
+      const nv = Math.max(0, Math.min(1, s.startVolume + dv));
+      setVolume(nv);
+      setIsMuted(nv === 0);
+      if (v) { v.volume = nv; v.muted = nv === 0; }
+      showGestureToast(`Âm lượng ${Math.round(nv * 100)}%`);
+    } else if (s.mode === 'brightness') {
+      const db = -dy / 220;
+      const nb = Math.max(0.4, Math.min(1, s.startBrightness + db));
+      setScreenBrightness(nb);
+      showGestureToast(`Độ sáng ${Math.round(nb * 100)}%`);
+    }
+  }, [showGestureToast]);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (holdTimer.current) { window.clearTimeout(holdTimer.current); holdTimer.current = null; }
+    // Kết thúc chụm: không tính là tap
+    if (pinchRef.current) {
+      if (e.touches.length < 2) pinchRef.current = null;
+      touchStartRef.current = null;
+      pokeControlsTimer();
+      return;
+    }
+    // Đang giữ x2 -> thả ra về tốc độ cũ, không xử lý tap
+    if (speedBoost) { deactivateSpeedBoost(); touchStartRef.current = null; return; }
+    // Tap vừa dùng để tắt menu ở touchstart -> bỏ qua, không toggle gì thêm
+    if (consumeTapRef.current) { consumeTapRef.current = false; touchStartRef.current = null; return; }
+    const s = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!s) return;
+    // Nếu đã swipe thì không xử lý tap (hẹn lại giờ ẩn, không ép hiện)
+    if (s.moved) { pokeControlsTimer(); return; }
+    const now = Date.now();
+    const last = lastTapRef.current;
+    const changed = e.changedTouches[0];
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const xRatio = (changed.clientX - rect.left) / Math.max(1, rect.width);
+
+    // Double-tap trong 300ms
+    if (last && now - last.time < 300) {
+      if (singleTapTimer.current) { window.clearTimeout(singleTapTimer.current); singleTapTimer.current = null; }
+      lastTapRef.current = null;
+      e.preventDefault();
+      if (showEpisodes || showServerMenu || showSettings) {
+        setShowEpisodes(false); setShowServerMenu(false); setShowSettings(false);
+        return;
+      }
+      if (xRatio < 0.35) { skip(-10); flashSeek(-10); }
+      else if (xRatio > 0.65) { skip(10); flashSeek(10); }
+      else togglePlay();
+      pokeControlsTimer();
+      return;
+    }
+    // Single tap: delay 280ms để chờ double-tap
+    lastTapRef.current = { time: now, x: changed.clientX, y: changed.clientY };
+    if (singleTapTimer.current) window.clearTimeout(singleTapTimer.current);
+    singleTapTimer.current = window.setTimeout(() => {
+      singleTapTimer.current = null;
+      handleVideoAreaClick();
+    }, 280);
+  }, [showEpisodes, showServerMenu, showSettings, skip, flashSeek, togglePlay, pokeControlsTimer, handleVideoAreaClick, speedBoost, deactivateSpeedBoost]);
+
+  // Touch bị hủy giữa chừng (cuộc gọi đến, gesture hệ thống...): dọn state, hẹn lại giờ ẩn
+  const handleTouchCancel = useCallback(() => {
+    if (holdTimer.current) { window.clearTimeout(holdTimer.current); holdTimer.current = null; }
+    pinchRef.current = null;
+    if (speedBoost) deactivateSpeedBoost();
+    else pokeControlsTimer();
+    touchStartRef.current = null;
+  }, [speedBoost, deactivateSpeedBoost, pokeControlsTimer]);
 
   // click outside to close menus (episodes / server / settings) - use click so video handler runs first
   useEffect(() => {
@@ -519,75 +898,144 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
 
   // fullscreen + pip listeners
   useEffect(() => {
-    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
+    const onFs = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
     document.addEventListener('fullscreenchange', onFs);
     const v = videoRef.current;
     const onEnter = () => setIsPip(true);
     const onLeave = () => setIsPip(false);
     v?.addEventListener('enterpictureinpicture', onEnter);
     v?.addEventListener('leavepictureinpicture', onLeave);
+    const onNativePip = (ev: any) => {
+      try { setIsPip(!!ev?.detail?.isPip); } catch {}
+    };
+    window.addEventListener('native-pip-change' as any, onNativePip as any);
     return () => {
       document.removeEventListener('fullscreenchange', onFs);
       v?.removeEventListener('enterpictureinpicture', onEnter);
       v?.removeEventListener('leavepictureinpicture', onLeave);
+      window.removeEventListener('native-pip-change' as any, onNativePip as any);
     };
   }, []);
 
-  // hover preview logic - chophim style: no second video, just time tooltip + track
-  const getPctFromEvent = (e: React.MouseEvent | MouseEvent): number => {
-    const track = (e.currentTarget as HTMLElement).closest('.group\\/scrub') || (e.currentTarget as HTMLElement);
-    // fallback: find scrub container
-    const container = document.querySelector('.group\\/scrub') as HTMLElement;
-    const rect = (container || e.currentTarget as HTMLElement).getBoundingClientRect();
-    const x = Math.max(0, Math.min(rect.width, (e as React.MouseEvent).clientX - rect.left));
-    return rect.width ? (x / rect.width) : 0;
+  // PiP hỗ trợ ở đâu thì hiện nút ở đó:
+  // - APK Android: native PiP qua plugin (WebView không có requestPictureInPicture)
+  // - Web / PWA: browser PiP (Chrome Android hỗ trợ, iOS Safari 14.2+ hỗ trợ)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (isNativeAndroid()) {
+        const ok = await checkNativePipSupported();
+        if (!cancelled) setPipSupported(ok);
+      } else {
+        try {
+          const v = document.createElement('video') as any;
+          const stdOk = (document as any).pictureInPictureEnabled && typeof v.requestPictureInPicture === 'function';
+          const safariOk = typeof v.webkitSetPresentationMode === 'function';
+          if (!cancelled) setPipSupported(!!(stdOk || safariOk));
+        } catch { if (!cancelled) setPipSupported(false); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // APK: mở player là ẩn status bar luôn (immersive), thoát player thì hiện lại
+  useEffect(() => {
+    if (!isNativeAndroid()) return;
+    setImmersiveMode(true);
+    setNativeImmersive(true);
+    return () => { setImmersiveMode(false); };
+  }, []);
+
+  // Mở player là hẹn giờ tự ẩn controls (kẻo hiện mãi nếu không chạm gì)
+  useEffect(() => {
+    resetControlsTimer();
+  }, [resetControlsTimer]);
+
+  // APK: đồng bộ trạng thái phát để bấm Home tự vào PiP (native auto-enter)
+  useEffect(() => {
+    if (!isNativeAndroid()) return;
+    setNativeVideoPlaying(isPlaying);
+  }, [isPlaying]);
+
+  // ---- Timeline scrub: 1 bộ pointer events cho cả chuột + touch ----
+  // Kéo là thấy preview (dùng chung preview video ẩn), thả ra mới seek thật.
+  const scrubWasPlayingRef = useRef(false);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const pctFromClientX = (clientX: number, el: HTMLElement): number => {
+    const rect = el.getBoundingClientRect();
+    if (!rect.width) return 0;
+    return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
   };
-  const handleProgressMouseMove = useCallback((e: React.MouseEvent) => {
-    const video = videoRef.current;
-    if (!video || !duration) return;
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const hoverTime = pct * duration;
-    // tooltip position
+  const renderScrubPreview = useCallback((pct: number, showHoverTrack: boolean) => {
+    if (!duration) return;
+    const t = pct * duration;
+    const trackEl = document.querySelector('.group\\/scrub') as HTMLElement | null;
+    const w = trackEl?.getBoundingClientRect().width || 1;
     if (hoverTooltipRef.current) {
       const tip = hoverTooltipRef.current;
       tip.style.opacity = '1';
       const tipW = tip.offsetWidth || 160;
-      const r = Math.min(1 - tipW / 2 / rect.width, Math.max(tipW / 2 / rect.width, pct));
+      const r = Math.min(1 - tipW / 2 / w, Math.max(tipW / 2 / w, pct));
       tip.style.left = `${r * 100}%`;
     }
-    if (hoverTimeRef.current) hoverTimeRef.current.innerText = formatTime(hoverTime);
-    if (hoverTrackRef.current) hoverTrackRef.current.style.width = `${pct * 100}%`;
+    if (hoverTimeRef.current) hoverTimeRef.current.innerText = formatTime(t);
+    if (hoverTrackRef.current) hoverTrackRef.current.style.width = showHoverTrack ? `${pct * 100}%` : '0%';
+    if (progressBarRef.current) progressBarRef.current.style.width = `${pct * 100}%`;
     setPreviewVisible(true);
-    seekPreviewTo(hoverTime);
+    seekPreviewTo(t);
   }, [duration, seekPreviewTo]);
-  const handleProgressMouseLeave = useCallback(() => {
+  const hideScrubPreview = useCallback(() => {
     if (hoverTooltipRef.current) hoverTooltipRef.current.style.opacity = '0';
     if (hoverTrackRef.current) hoverTrackRef.current.style.width = '0%';
     setPreviewVisible(false);
   }, []);
-  const handleProgressClick = useCallback((e: React.MouseEvent) => {
+  const handleScrubPointerDown = useCallback((e: React.PointerEvent) => {
     e.stopPropagation();
     const v = videoRef.current;
     if (!v || !duration) return;
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    v.currentTime = pct * duration;
-  }, [duration]);
-  const handleSeekMouseDown = useCallback(() => { isDraggingRef.current = true; const v = videoRef.current; if (v && !v.paused) v.pause(); }, []);
-  const handleSeekMouseUp = useCallback((e: React.MouseEvent<HTMLInputElement>) => {
+    isDraggingRef.current = true;
+    scrubWasPlayingRef.current = !v.paused;
+    if (!v.paused) v.pause();
+    setIsScrubbing(true);
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
+    renderScrubPreview(pctFromClientX(e.clientX, e.currentTarget as HTMLElement), e.pointerType === 'mouse');
+  }, [duration, renderScrubPreview]);
+  const handleScrubPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!duration) return;
+    if (isDraggingRef.current) {
+      renderScrubPreview(pctFromClientX(e.clientX, e.currentTarget as HTMLElement), e.pointerType === 'mouse');
+    } else if (e.pointerType === 'mouse' && !isTouchDeviceRef.current) {
+      // Hover desktop: preview như cũ
+      renderScrubPreview(pctFromClientX(e.clientX, e.currentTarget as HTMLElement), true);
+    }
+  }, [duration, renderScrubPreview]);
+  const handleScrubPointerUp = useCallback((e: React.PointerEvent) => {
+    e.stopPropagation();
+    const v = videoRef.current;
     isDraggingRef.current = false;
+    setIsScrubbing(false);
+    if (!v || !duration) { hideScrubPreview(); return; }
+    const pct = pctFromClientX(e.clientX, e.currentTarget as HTMLElement);
+    v.currentTime = pct * duration;
+    setCurrentTime(pct * duration);
+    // Trả lại trạng thái phát như trước khi chạm (đang phát thì phát tiếp, pause thì giữ pause)
+    if (scrubWasPlayingRef.current) v.play().catch(() => {});
+    hideScrubPreview();
+    resetControlsTimer();
+  }, [duration, hideScrubPreview, resetControlsTimer]);
+  const handleScrubPointerLeave = useCallback(() => {
+    if (!isDraggingRef.current) hideScrubPreview();
+  }, [hideScrubPreview]);
+  const handleScrubKeyDown = useCallback((e: React.KeyboardEvent) => {
     const v = videoRef.current;
     if (!v || !duration) return;
-    const pct = parseFloat((e.target as HTMLInputElement).value) / 100;
-    v.currentTime = pct * duration;
-    if (v.paused) v.play().catch(() => {});
-    resetControlsTimer();
+    if (e.key === 'ArrowLeft') { e.preventDefault(); v.currentTime = Math.max(0, v.currentTime - 5); resetControlsTimer(); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 5); resetControlsTimer(); }
+    else if (e.key === 'Home') { e.preventDefault(); v.currentTime = 0; resetControlsTimer(); }
+    else if (e.key === 'End') { e.preventDefault(); v.currentTime = Math.max(0, (v.duration || 0) - 1); resetControlsTimer(); }
   }, [duration, resetControlsTimer]);
-  const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const pct = parseFloat(e.target.value);
-    if (progressBarRef.current) progressBarRef.current.style.width = `${pct}%`;
-  };
 
   // save progress every 30s
   useEffect(() => {
@@ -610,28 +1058,48 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
       if (e.key.toLowerCase() === 's' && activeSegment) { e.preventDefault(); handleSkipSegment(activeSegment); }
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      if (singleTapTimer.current) window.clearTimeout(singleTapTimer.current);
+      if (gestureToastTimer.current) window.clearTimeout(gestureToastTimer.current);
+      if (seekFlashTimer.current) window.clearTimeout(seekFlashTimer.current);
+      if (holdTimer.current) window.clearTimeout(holdTimer.current);
+    };
   }, [togglePlay, skip, toggleFullscreen, toggleMute, activeSegment, handleSkipSegment]);
 
   return (
     <div
       ref={containerRef}
       className="fixed inset-0 z-[70] bg-black flex flex-col select-none"
-      onMouseMove={resetControlsTimer}
-      onClick={resetControlsTimer}
+      onMouseMove={isTouchDevice ? undefined : resetControlsTimer}
+      onClick={isTouchDevice ? undefined : resetControlsTimer}
+      onContextMenu={e => e.preventDefault()}
+      style={{ touchAction: 'manipulation' }}
     >
-      <div className="video-area relative flex-1 bg-black flex items-center justify-center overflow-hidden" onClick={handleVideoAreaClick}>
+      <div
+        className="video-area relative flex-1 bg-black flex items-center justify-center overflow-hidden"
+        onClick={() => { if (!isTouchDeviceRef.current) handleVideoAreaClick(); }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchCancel}
+        onContextMenu={e => e.preventDefault()}
+        style={{ touchAction: 'none', WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' }}
+      >
         <video
             ref={videoRef}
-            className="w-full h-full object-contain"
+            className={`w-full h-full ${fillMode ? 'object-cover' : 'object-contain'}`}
+            style={{ filter: screenBrightness < 1 ? `brightness(${screenBrightness})` : undefined, WebkitTouchCallout: 'none' }}
+            onContextMenu={e => e.preventDefault()}
             onTimeUpdate={handleTimeUpdate}
             onDurationChange={() => setDuration(videoRef.current?.duration || 0)}
             onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
+            onPause={() => { setIsPlaying(false); saveProgressNow(); }}
             onWaiting={() => setIsLoading(true)}
             onPlaying={() => setIsLoading(false)}
             onEnded={() => { if (nextEpisode) onSelectEpisode(nextEpisode, currentServer); }}
             playsInline
+            disablePictureInPicture={false}
             onClick={handleVideoClick}
           />
         {/* hidden preview video + canvas for hover thumbnail - chophim smooth */}
@@ -639,23 +1107,88 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
         <canvas ref={previewCanvasRef} className="hidden w-0 h-0 pointer-events-none" />
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none">
-            <div className="w-10 h-10 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            <div className="w-12 h-12 sm:w-10 sm:h-10 border-[3px] border-white/30 border-t-white rounded-full animate-spin" />
           </div>
         )}
+        {/* Double-tap seek flash zones (mobile) - không dùng key để tránh trùng key với toast */}
+        {seekFlash === 'left' && (
+          <div className="absolute left-0 top-0 bottom-0 w-1/3 flex items-center justify-center bg-gradient-to-r from-black/50 to-transparent pointer-events-none animate-pulse">
+            <div className="flex flex-col items-center gap-1 text-white bg-black/60 rounded-full w-20 h-20 justify-center">
+              <RotateCcw className="w-6 h-6" />
+              <span className="text-xs font-bold tabular-nums">-10s</span>
+            </div>
+          </div>
+        )}
+        {seekFlash === 'right' && (
+          <div className="absolute right-0 top-0 bottom-0 w-1/3 flex items-center justify-center bg-gradient-to-l from-black/50 to-transparent pointer-events-none animate-pulse">
+            <div className="flex flex-col items-center gap-1 text-white bg-black/60 rounded-full w-20 h-20 justify-center">
+              <RotateCw className="w-6 h-6" />
+              <span className="text-xs font-bold tabular-nums">+10s</span>
+            </div>
+          </div>
+        )}
+        {/* Giữ màn hình x2 indicator */}
+        {speedBoost && (
+          <div className="absolute top-[calc(env(safe-area-inset-top,0px)+64px)] left-1/2 -translate-x-1/2 pointer-events-none z-30">
+            <div className="flex items-center gap-1.5 bg-black/70 backdrop-blur rounded-full px-4 py-2">
+              <FastForward className="w-4 h-4 text-white" fill="white" />
+              <span className="text-white text-sm font-bold tabular-nums">2x</span>
+            </div>
+          </div>
+        )}
+        {/* Đang khóa màn hình: nút mở khóa nổi, mọi chạm khác đều bỏ qua */}
+        {isLocked && (
+          <div className="absolute inset-y-0 right-3 sm:right-4 flex items-center z-30 pointer-events-none">
+            <button
+              onClick={(e) => { e.stopPropagation(); toggleLock(); }}
+              onTouchStart={e => e.stopPropagation()}
+              onTouchMove={e => e.stopPropagation()}
+              onTouchEnd={e => e.stopPropagation()}
+              aria-label="Mở khóa màn hình"
+              className="rounded-full bg-black/60 backdrop-blur border border-white/20 flex items-center justify-center pointer-events-auto active:bg-black/80 transition w-12 h-12"
+              style={{ touchAction: 'manipulation' }}
+            >
+              <Lock className="w-5 h-5 text-white" />
+            </button>
+          </div>
+        )}
+        {/* Gesture toast: volume / brightness */}
+        {gestureToast && !speedBoost && (
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-30">
+            <div className="flex flex-col items-center gap-0.5 bg-black/70 backdrop-blur rounded-2xl px-5 py-3 min-w-[120px]">
+              <span className="text-white text-lg font-bold tabular-nums">{gestureToast.text}</span>
+              {gestureToast.sub && <span className="text-white/70 text-xs">{gestureToast.sub}</span>}
+            </div>
+          </div>
+        )}
+        {/* Mobile hint lần đầu */}
         {errorMsg && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 p-6 text-center z-40">
             <p className="text-white font-medium">{errorMsg}</p>
-            <div className="flex items-center gap-3 mt-4">
-              <button onClick={onBack} className="px-4 py-2 rounded-lg bg-white/20 hover:bg-white/30 text-white text-sm font-medium transition-all">
+            <div className="flex flex-wrap items-center justify-center gap-2.5 mt-5">
+              <button onClick={handleRetry} className="px-5 py-2.5 rounded-xl bg-blue-500 active:bg-blue-600 text-white text-sm font-bold transition-all min-h-[44px]" style={{ touchAction: 'manipulation' }}>
+                Thử lại
+              </button>
+              {altServerEp && (
+                <button onClick={() => onSelectEpisode(altServerEp.ep, altServerEp.server, videoRef.current?.currentTime)} className="px-5 py-2.5 rounded-xl bg-white/15 active:bg-white/25 text-white text-sm font-medium transition-all min-h-[44px]" style={{ touchAction: 'manipulation' }}>
+                  Đổi server ({altServerEp.server.server_name})
+                </button>
+              )}
+              <button onClick={onBack} className="px-5 py-2.5 rounded-xl bg-white/10 active:bg-white/20 text-white/80 text-sm font-medium transition-all min-h-[44px]" style={{ touchAction: 'manipulation' }}>
                 Thoát
               </button>
             </div>
           </div>
         )}
 
-        {/* Skip intro/recap/outro - always visible when in segment, APK-safe (fixed position, no dependency on showControls) */}
-        {activeSegment && (
-          <div className="absolute bottom-20 right-4 sm:bottom-24 sm:right-6 z-30 pointer-events-auto">
+        {/* Skip intro/recap/outro - ẩn khi khóa màn hình */}
+        {!isLocked && activeSegment && (
+          <div
+            className="absolute bottom-40 sm:bottom-24 right-4 sm:right-6 z-30 pointer-events-auto"
+            onTouchStart={e => { e.stopPropagation(); resetControlsTimer(); }}
+            onTouchMove={e => e.stopPropagation()}
+            onTouchEnd={e => e.stopPropagation()}
+          >
             {activeSegment === 'intro' && (
               <button onClick={(e) => { e.stopPropagation(); handleSkipSegment('intro'); }} className="cursor-pointer flex items-center gap-2 bg-white text-black px-4 py-2.5 rounded-lg text-sm font-bold shadow-2xl hover:bg-white/90 active:scale-95 transition-all border border-black/10">
                 <SkipForward className="w-4 h-4" /> Bỏ qua phần giới thiệu
@@ -686,152 +1219,270 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
         )}
 
         {/* Minimal top bar like chophim */}
-        <div className={`absolute top-0 left-0 right-0 pt-[calc(env(safe-area-inset-top,0px)+16px)] pb-4 px-4 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-300 z-30 ${showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+        <div
+          className={`absolute top-0 left-0 right-0 pt-[calc(env(safe-area-inset-top,0px)+12px)] sm:pt-[calc(env(safe-area-inset-top,0px)+16px)] pb-6 px-3 sm:px-4 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-300 z-30 ${showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+          onTouchStart={e => { e.stopPropagation(); resetControlsTimer(); }}
+          onTouchMove={e => e.stopPropagation()}
+          onTouchEnd={e => e.stopPropagation()}
+        >
           <div className="flex items-center justify-between gap-2">
-            <h2 className="text-white text-sm font-medium truncate pr-2">{movie.name} - {currentEpisode.name}</h2>
+            <h2 className="pr-2 leading-snug min-w-0 flex-1">
+              <span className="block text-white text-[15px] sm:text-base font-semibold truncate">{movie.name}</span>
+              <span className="block text-white/70 text-xs sm:text-[13px] font-medium truncate mt-0.5">{currentEpisode.name}</span>
+            </h2>
             <div className="flex items-center gap-2 shrink-0">
-              <button onClick={(e) => { e.stopPropagation(); onBack(); }} style={{ width: '32px', height: '32px', minWidth: '32px', minHeight: '32px', maxWidth: '32px', maxHeight: '32px', borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: 'none', aspectRatio: '1 / 1', padding: 0, margin: 0, boxSizing: 'border-box', overflow: 'hidden' } as any} className="shrink-0 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center flex-none overflow-hidden border-0">
-                <X className="w-4 h-4 text-white shrink-0" style={{ display: 'block' } as any} />
+              <button onClick={(e) => { e.stopPropagation(); onBack(); }} aria-label="Thoát" className="shrink-0 rounded-full bg-white/10 active:bg-white/30 hover:bg-white/20 flex items-center justify-center border-0 w-11 h-11 sm:w-8 sm:h-8" style={{ touchAction: 'manipulation' }}>
+                <X className="w-5 h-5 sm:w-4 sm:h-4 text-white shrink-0" />
               </button>
             </div>
           </div>
+          {/* Mobile: time + server nhanh */}
+          <div className="sm:hidden mt-1 flex items-center gap-2 text-[11px] text-white/60 tabular-nums">
+            <span>{formatTime(currentTime)} / {formatTime(duration)}</span>
+            <span className="w-1 h-1 rounded-full bg-white/30" />
+            <span className="truncate">{currentServer.server_name}</span>
+          </div>
         </div>
 
-        {/* Center play button when paused */}
-        {!isPlaying && !isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <button onClick={(e) => { e.stopPropagation(); togglePlay(); }} style={{ width: 64, height: 64, borderRadius: 9999 }} className="shrink-0 rounded-full bg-white/15 backdrop-blur flex items-center justify-center pointer-events-auto hover:bg-white/25 transition flex-none aspect-square overflow-hidden">
-              <Play className="w-7 h-7 text-white ml-1 shrink-0" fill="white" />
-            </button>
-          </div>
+        {/* Center controls kiểu Netflix trên mobile: -10s | play/pause | +10s khi controls hiện.
+            Desktop giữ nút play to khi pause (không đổi). */}
+        {isTouchDevice ? (
+          !isLocked && showControls && !isLoading && !errorMsg && (
+            <div
+              className="absolute inset-0 flex items-center justify-center gap-14 sm:gap-12 pointer-events-none z-20"
+              onTouchStart={e => e.stopPropagation()}
+              onTouchMove={e => e.stopPropagation()}
+              onTouchEnd={e => e.stopPropagation()}
+              onClick={e => e.stopPropagation()}
+            >
+              <button
+                onClick={(e) => { e.stopPropagation(); skip(-10); flashSeek(-10); resetControlsTimer(); }}
+                aria-label="Tua lại 10 giây"
+                className="relative rounded-full bg-black/50 backdrop-blur flex items-center justify-center pointer-events-auto active:bg-black/70 transition w-16 h-16"
+                style={{ touchAction: 'manipulation' }}
+              >
+                <RotateCcw className="w-10 h-10 text-white shrink-0" strokeWidth={1.5} />
+                <span className="absolute inset-0 flex items-center justify-center text-[11px] font-bold text-white tabular-nums">10</span>
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); togglePlay(); resetControlsTimer(); }}
+                aria-label={isPlaying ? 'Tạm dừng' : 'Phát'}
+                className="rounded-full bg-white/20 backdrop-blur flex items-center justify-center pointer-events-auto active:bg-white/40 transition w-20 h-20"
+                style={{ touchAction: 'manipulation' }}
+              >
+                {isPlaying
+                  ? <Pause className="w-9 h-9 text-white shrink-0" fill="white" />
+                  : <Play className="w-9 h-9 text-white ml-1 shrink-0" fill="white" />}
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); skip(10); flashSeek(10); resetControlsTimer(); }}
+                aria-label="Tua tới 10 giây"
+                className="relative rounded-full bg-black/50 backdrop-blur flex items-center justify-center pointer-events-auto active:bg-black/70 transition w-16 h-16"
+                style={{ touchAction: 'manipulation' }}
+              >
+                <RotateCw className="w-10 h-10 text-white shrink-0" strokeWidth={1.5} />
+                <span className="absolute inset-0 flex items-center justify-center text-[11px] font-bold text-white tabular-nums">10</span>
+              </button>
+            </div>
+          )
+        ) : (
+          !isPlaying && !isLoading && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <button onClick={(e) => { e.stopPropagation(); togglePlay(); }} aria-label={isPlaying ? 'Tạm dừng' : 'Phát'} className="rounded-full bg-white/15 backdrop-blur flex items-center justify-center pointer-events-auto active:bg-white/35 hover:bg-white/25 transition w-16 h-16" style={{ touchAction: 'manipulation' }}>
+                <Play className="w-7 h-7 text-white ml-1 shrink-0" fill="white" />
+              </button>
+            </div>
+          )
         )}
 
-        {/* Bottom controls - chophim style */}
+        {/* Bottom controls - mobile-first: touch lớn + safe-area.
+            Chặn touch bubbling lên video-area để gesture (swipe/tap/giữ-x2)
+            không đánh nhau với kéo timeline -> hết lag. */}
         <div
-          className={`absolute bottom-0 left-0 right-0 pt-10 pb-3 px-3 sm:px-6 bg-gradient-to-t from-black/90 via-black/40 to-transparent transition-all duration-300 ${showControls ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0 pointer-events-none'}`}
+          className={`absolute bottom-0 left-0 right-0 pt-10 px-3 sm:px-6 bg-gradient-to-t from-black/90 via-black/40 to-transparent transition-all duration-300 ${showControls ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0 pointer-events-none'}`}
+          style={{ paddingBottom: 'max(14px, env(safe-area-inset-bottom, 0px))', paddingLeft: 'max(12px, env(safe-area-inset-left, 0px))', paddingRight: 'max(12px, env(safe-area-inset-right, 0px))' }}
           onClick={e => e.stopPropagation()}
+          onTouchStart={e => { e.stopPropagation(); resetControlsTimer(); }}
+          onTouchMove={e => e.stopPropagation()}
+          onTouchEnd={e => e.stopPropagation()}
         >
-          <div className="max-w-screen-2xl mx-auto flex flex-col gap-2">
-            {/* Timeline - chophim n4 */}
+          <div className="max-w-screen-2xl mx-auto flex flex-col gap-1.5 sm:gap-2">
+            {/* Timeline - pointer scrub + preview cả touch lẫn chuột */}
             <div className="flex items-center gap-2 w-full">
               <span className="hidden sm:block shrink-0 text-[11px] font-medium text-white/80 tabular-nums">{formatTime(currentTime)}</span>
               <div
-                className="flex-1 group/scrub relative flex flex-col justify-center h-7 cursor-pointer"
-                onMouseMove={handleProgressMouseMove}
-                onMouseLeave={handleProgressMouseLeave}
-                onClick={handleProgressClick}
+                className="flex-1 group/scrub relative flex flex-col justify-center h-11 sm:h-8 cursor-pointer outline-none"
+                style={{ touchAction: 'none' }}
+                role="slider"
+                tabIndex={0}
+                aria-label="Thanh tiến trình phim"
+                aria-valuemin={0}
+                aria-valuemax={Math.round(duration || 0)}
+                aria-valuenow={Math.round(currentTime)}
+                aria-valuetext={`${formatTime(currentTime)} / ${formatTime(duration)}`}
+                onPointerDown={handleScrubPointerDown}
+                onPointerMove={handleScrubPointerMove}
+                onPointerUp={handleScrubPointerUp}
+                onPointerCancel={handleScrubPointerLeave}
+                onPointerLeave={handleScrubPointerLeave}
+                onKeyDown={handleScrubKeyDown}
               >
-                {/* Hover tooltip - chophim style with preview image */}
-                <div ref={hoverTooltipRef} className="absolute bottom-full left-1/2 -translate-x-1/2 opacity-0 transition-opacity duration-150 pointer-events-none mb-1 w-40">
-                  <div className="relative h-[90px] w-40 overflow-hidden rounded-xl bg-black shadow-xl ring-2 ring-white">
+                {/* Tooltip preview - hiện khi hover (desktop) lẫn khi kéo (touch) */}
+                <div ref={hoverTooltipRef} className="absolute bottom-full left-1/2 -translate-x-1/2 opacity-0 transition-opacity duration-150 pointer-events-none mb-2 w-44 sm:w-40 z-10">
+                  <div className="relative h-[100px] sm:h-[90px] w-44 sm:w-40 overflow-hidden rounded-xl bg-black shadow-2xl ring-2 ring-white/90">
                     {previewVisible && previewImg ? (
-                      <img src={previewImg} alt="" className="w-full h-full object-cover" />
+                      <img src={previewImg} alt="" className="w-full h-full object-cover" draggable={false} />
                     ) : (
                       <div className="w-full h-full bg-gradient-to-br from-gray-900 to-black" />
                     )}
                   </div>
-                  <div ref={hoverTimeRef} className="mx-auto mt-2 w-fit rounded-md bg-black/90 px-2 py-1 text-xs font-medium text-white shadow-lg tabular-nums">00:00</div>
+                  <div ref={hoverTimeRef} className="mx-auto mt-2 w-fit rounded-md bg-black/90 px-2.5 py-1 text-[13px] sm:text-xs font-semibold text-white shadow-lg tabular-nums">00:00</div>
                 </div>
-                {/* Track */}
-                <div className="relative w-full h-[5px] rounded-sm bg-white/15 group-hover/scrub:h-[6px] transition-all">
-                  <div ref={bufferedBarRef} className="absolute left-0 top-0 h-full rounded-sm bg-white/25 pointer-events-none" style={{ width: `${duration ? (buffered / duration) * 100 : 0}%` }} />
-                  <div ref={hoverTrackRef} className="absolute left-0 top-0 h-full rounded-sm bg-white/30 pointer-events-none" style={{ width: '0%' }} />
-                  <div ref={progressBarRef} className="absolute left-0 top-0 h-full rounded-sm bg-blue-500 pointer-events-none after:absolute after:right-0 after:top-1/2 after:w-2.5 after:h-2.5 after:bg-white after:rounded-full after:-translate-y-1/2 after:translate-x-1/2 group-hover/scrub:after:w-3 group-hover/scrub:after:h-3 after:transition-all" style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }} />
+                {/* Track - dày 8px mobile / 5px desktop */}
+                <div className={`relative w-full rounded-full bg-white/15 transition-all ${isScrubbing ? 'h-[10px]' : 'h-2 sm:h-[5px] group-hover/scrub:h-[7px]'}`}>
+                  <div ref={bufferedBarRef} className="absolute left-0 top-0 h-full rounded-full bg-white/25 pointer-events-none" style={{ width: `${duration ? (buffered / duration) * 100 : 0}%` }} />
+                  <div ref={hoverTrackRef} className="absolute left-0 top-0 h-full rounded-full bg-white/30 pointer-events-none" style={{ width: '0%' }} />
+                  <div
+                    ref={progressBarRef}
+                    className={`absolute left-0 top-0 h-full rounded-full pointer-events-none after:absolute after:right-0 after:top-1/2 after:bg-white after:rounded-full after:-translate-y-1/2 after:translate-x-1/2 after:shadow-[0_0_8px_rgba(0,0,0,0.6)] after:ring-4 after:ring-blue-500/25 after:transition-all ${isScrubbing ? 'bg-blue-400 after:w-5 after:h-5' : 'bg-blue-500 after:w-4 after:h-4 sm:after:w-2.5 sm:after:h-2.5'}`}
+                    style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
+                  />
                 </div>
-                <input
-                  ref={progressInputRef}
-                  type="range"
-                  min={0}
-                  max={100}
-                  step={0.1}
-                  defaultValue={0}
-                  onMouseDown={handleSeekMouseDown}
-                  onTouchStart={handleSeekMouseDown}
-                  onChange={handleSeekChange}
-                  onMouseUp={handleSeekMouseUp as any}
-                  onTouchEnd={handleSeekMouseUp as any}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                />
               </div>
               <span className="hidden sm:block shrink-0 text-[11px] font-medium text-white/80 tabular-nums">{formatTime(duration)}</span>
             </div>
 
-            {/* Controls row */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1">
-                <button onClick={() => skip(-10)} style={{ width: 32, height: 32, minWidth: 32, minHeight: 32, borderRadius: 9999 }} className="shrink-0 rounded-full hover:bg-white/10 flex items-center justify-center text-white flex-none aspect-square overflow-hidden"><RotateCcw className="w-4 h-4 shrink-0" /></button>
-                <button onClick={togglePlay} style={{ width: 36, height: 36, minWidth: 36, minHeight: 36, borderRadius: 9999 }} className="shrink-0 rounded-full bg-white text-black flex items-center justify-center hover:bg-white/90 aspect-square overflow-hidden flex-none">
-                  {isPlaying ? <Pause className="w-4 h-4 shrink-0" /> : <Play className="w-4 h-4 ml-0.5 shrink-0" />}
-                </button>
-                <button onClick={() => skip(10)} style={{ width: 32, height: 32, minWidth: 32, minHeight: 32, borderRadius: 9999 }} className="shrink-0 rounded-full hover:bg-white/10 flex items-center justify-center text-white flex-none aspect-square overflow-hidden"><RotateCw className="w-4 h-4 shrink-0" /></button>
-                <div className="hidden sm:flex items-center gap-2 ml-2">
-                  <button onClick={toggleMute} style={{ width: 32, height: 32, minWidth: 32, minHeight: 32, borderRadius: 9999 }} className="shrink-0 rounded-full hover:bg-white/10 flex items-center justify-center text-white flex-none aspect-square overflow-hidden">{isMuted || volume===0 ? <VolumeX className="w-4 h-4 shrink-0" /> : <Volume2 className="w-4 h-4 shrink-0" />}</button>
-                  <input type="range" min={0} max={1} step={0.05} value={isMuted ? 0 : volume} onChange={handleVolume} className="w-20 accent-white h-1" />
-                  <span className="text-[11px] text-white/70 tabular-nums">{formatTime(currentTime)} / {formatTime(duration)}</span>
-                </div>
+            {/* Controls row: trái = tập trước/tiếp + vị trí tập, phải = list/server/cài đặt/pip/fullscreen */}
+            <div className="flex items-center justify-between gap-1">
+              <div className="flex items-center gap-0.5 sm:gap-1">
+                {currentServer.server_data.length > 1 && (
+                  <>
+                    <button
+                      onClick={() => { if (prevEpisode) { onSelectEpisode(prevEpisode, currentServer); resetControlsTimer(); } }}
+                      disabled={!prevEpisode}
+                      aria-label="Tập trước"
+                      title="Tập trước"
+                      className="rounded-full active:bg-white/20 hover:bg-white/10 flex items-center justify-center text-white w-11 h-11 sm:w-8 sm:h-8 disabled:opacity-30 disabled:active:bg-transparent"
+                      style={{ touchAction: 'manipulation' }}
+                    >
+                      <SkipBack className="w-5 h-5 sm:w-4 sm:h-4 shrink-0" fill="currentColor" />
+                    </button>
+                    <button
+                      onClick={() => { if (nextEpisode) { onSelectEpisode(nextEpisode, currentServer); resetControlsTimer(); } }}
+                      disabled={!nextEpisode}
+                      aria-label="Tập tiếp theo"
+                      title="Tập tiếp theo"
+                      className="rounded-full active:bg-white/20 hover:bg-white/10 flex items-center justify-center text-white w-11 h-11 sm:w-8 sm:h-8 disabled:opacity-30 disabled:active:bg-transparent"
+                      style={{ touchAction: 'manipulation' }}
+                    >
+                      <SkipForward className="w-5 h-5 sm:w-4 sm:h-4 shrink-0" fill="currentColor" />
+                    </button>
+                    <span className="ml-1 text-[11px] sm:text-xs text-white/60 font-medium tabular-nums whitespace-nowrap">
+                      {episodeIndex >= 0 ? episodeIndex + 1 : '–'} / {currentServer.server_data.length} tập
+                    </span>
+                  </>
+                )}
               </div>
-              <div className="flex items-center gap-1">
-                {/* Episode list - always visible if >1 ep */}
+              <div className="flex items-center gap-0.5 sm:gap-1">
+                {/* Episode list - bottom-sheet trên mobile, popup trên desktop */}
                 {currentServer.server_data.length > 1 && (
                   <div className="relative">
-                    <button onClick={() => { setShowEpisodes(!showEpisodes); setShowServerMenu(false); setShowSettings(false); }} style={{ width: 32, height: 32, minWidth: 32, minHeight: 32, borderRadius: 9999 }} className="player-menu-btn shrink-0 rounded-full hover:bg-white/10 flex items-center justify-center text-white flex-none aspect-square overflow-hidden" title="Danh sách tập"><List className="w-4 h-4 shrink-0" /></button>
+                    <button onClick={() => { setShowEpisodes(!showEpisodes); setShowServerMenu(false); setShowSettings(false); }} aria-label="Danh sách tập" className="player-menu-btn rounded-full sm:rounded-lg bg-transparent active:bg-white/20 hover:bg-white/10 border border-transparent hover:border-white/10 text-white flex items-center justify-center sm:justify-start gap-1.5 transition-colors w-11 h-11 sm:w-auto sm:h-8 sm:px-2.5" style={{ touchAction: 'manipulation' }} title="Danh sách tập"><List className="w-5 h-5 sm:w-3.5 sm:h-3.5 shrink-0" /> <span className="hidden sm:inline text-xs truncate">Danh sách tập</span></button>
                     {showEpisodes && (
-                      <div className="player-menu-panel absolute right-0 bottom-10 bg-[#1c1c1e] border border-white/10 rounded-xl p-3 w-72 max-h-64 overflow-auto shadow-2xl">
-                        <p className="text-[11px] font-bold text-white/50 uppercase mb-2">Danh sách tập ({currentServer.server_data.length})</p>
-                        <div className="grid grid-cols-4 gap-1.5">
-                          {currentServer.server_data.map(ep => (
-                            <button key={ep.slug} onClick={() => { onSelectEpisode(ep, currentServer); setShowEpisodes(false); }} className={`text-xs py-2 rounded-lg font-medium ${ep.slug===currentEpisode.slug ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 hover:bg-white/15'}`}>{ep.name.replace(/^Tập\s*/i,'').trim().padStart(2,'0')}</button>
-                          ))}
+                      <>
+                        {/* Backdrop mobile */}
+                        <div className="sm:hidden fixed inset-0 z-40 bg-black/60" onClick={() => setShowEpisodes(false)} onTouchEnd={() => setShowEpisodes(false)} />
+                        <div className="player-menu-panel z-50 bg-[#1c1c1e] border border-white/10 shadow-2xl fixed inset-x-0 bottom-0 rounded-t-2xl p-4 pb-[max(20px,env(safe-area-inset-bottom,0px))] max-h-[70vh] overflow-auto sm:absolute sm:inset-x-auto sm:right-0 sm:bottom-10 sm:rounded-xl sm:p-3 sm:w-72 sm:max-h-64 sm:pb-3">
+                          <div className="sm:hidden w-10 h-1 rounded-full bg-white/20 mx-auto mb-3" />
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-[11px] font-bold text-white/50 uppercase">Danh sách tập ({currentServer.server_data.length})</p>
+                            <button onClick={() => setShowEpisodes(false)} className="sm:hidden w-8 h-8 rounded-full bg-white/10 flex items-center justify-center" aria-label="Đóng"><ChevronDown className="w-4 h-4 text-white" /></button>
+                          </div>
+                          <div className="grid grid-cols-5 sm:grid-cols-4 gap-2 sm:gap-1.5">
+                            {currentServer.server_data.map(ep => (
+                              <button key={ep.slug} onClick={() => { onSelectEpisode(ep, currentServer); setShowEpisodes(false); }} className={`text-sm sm:text-xs py-3 sm:py-2 rounded-xl sm:rounded-lg font-medium active:scale-95 transition ${ep.slug===currentEpisode.slug ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 active:bg-white/20'}`}>{ep.name.replace(/^Tập\s*/i,'').trim().padStart(2,'0')}</button>
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      </>
                     )}
                   </div>
                 )}
-                {/* Server vietsub/lt/tm */}
+                {/* Server */}
                 <div className="relative">
-                  <button onClick={() => { setShowServerMenu(!showServerMenu); setShowSettings(false); setShowEpisodes(false); }} className="player-menu-btn px-2.5 py-1.5 rounded-lg bg-transparent hover:bg-white/10 border border-transparent hover:border-white/10 text-xs text-white flex items-center gap-1 transition-colors"><Server className="w-3 h-3" /> {currentServer.server_name}</button>
+                  <button onClick={() => { setShowServerMenu(!showServerMenu); setShowSettings(false); setShowEpisodes(false); }} aria-label="Âm thanh & Phụ đề" title="Âm thanh & Phụ đề" className="player-menu-btn rounded-full sm:rounded-lg bg-transparent active:bg-white/20 hover:bg-white/10 border border-transparent hover:border-white/10 text-white flex items-center justify-center sm:justify-start gap-1.5 transition-colors w-11 h-11 sm:w-auto sm:h-8 sm:px-2.5" style={{ touchAction: 'manipulation' }}><Server className="w-5 h-5 sm:w-3 sm:h-3 shrink-0" /> <span className="hidden sm:inline text-xs truncate">Âm thanh & Phụ đề</span></button>
                   {showServerMenu && (
-                    <div className="player-menu-panel absolute right-0 bottom-10 bg-[#1c1c1e] border border-white/10 rounded-xl p-2 w-48 max-h-60 overflow-auto shadow-2xl">
-                      {allServers.map(s => (
-                        <button key={s.server_name} onClick={() => { const ep = s.server_data.find(e => e.slug === currentEpisode.slug) || s.server_data[0]; if (ep) onSelectEpisode(ep, s, videoRef.current?.currentTime); setShowServerMenu(false); }} className={`w-full text-left px-3 py-2 rounded-lg text-xs ${s.server_name===currentServer.server_name ? 'bg-blue-500 text-white' : 'text-white/80 hover:bg-white/10'}`}>{s.server_name}</button>
-                      ))}
-                      {allServers.length===0 && <span className="text-xs text-white/40 px-3">Không có server khác</span>}
-                    </div>
+                    <>
+                      <div className="sm:hidden fixed inset-0 z-40 bg-black/60" onClick={() => setShowServerMenu(false)} onTouchEnd={() => setShowServerMenu(false)} />
+                      <div className="player-menu-panel z-50 bg-[#1c1c1e] border border-white/10 shadow-2xl fixed inset-x-0 bottom-0 rounded-t-2xl p-4 pb-[max(20px,env(safe-area-inset-bottom,0px))] max-h-[60vh] overflow-auto sm:absolute sm:inset-x-auto sm:right-0 sm:bottom-10 sm:rounded-xl sm:p-2 sm:w-48 sm:max-h-60 sm:pb-2">
+                        <div className="sm:hidden w-10 h-1 rounded-full bg-white/20 mx-auto mb-3" />
+                        <p className="text-[11px] font-bold text-white/50 uppercase mb-2 px-1">Âm thanh & Phụ đề</p>
+                        {allServers.map(s => (
+                          <button key={s.server_name} onClick={() => { const ep = s.server_data.find(e => e.slug === currentEpisode.slug) || s.server_data[0]; if (ep) onSelectEpisode(ep, s, videoRef.current?.currentTime); setShowServerMenu(false); }} className={`w-full text-left px-3 py-3 sm:py-2 rounded-xl sm:rounded-lg text-sm sm:text-xs mb-1 active:scale-[0.98] transition ${s.server_name===currentServer.server_name ? 'bg-blue-500 text-white' : 'text-white/80 bg-white/5 sm:bg-transparent active:bg-white/15'}`}>{s.server_name}</button>
+                        ))}
+                        {allServers.length===0 && <span className="text-xs text-white/40 px-3">Không có server khác</span>}
+                      </div>
+                    </>
                   )}
                 </div>
                 <div className="relative">
-                  <button onClick={() => { setShowSettings(!showSettings); setShowServerMenu(false); setShowEpisodes(false); }} style={{ width: 32, height: 32, minWidth: 32, minHeight: 32, borderRadius: 9999 }} className="player-menu-btn shrink-0 rounded-full hover:bg-white/10 flex items-center justify-center text-white flex-none aspect-square overflow-hidden"><Settings className="w-4 h-4 shrink-0" /></button>
+                  <button onClick={() => { setShowSettings(!showSettings); setShowServerMenu(false); setShowEpisodes(false); }} aria-label="Cài đặt" className="player-menu-btn rounded-full active:bg-white/20 hover:bg-white/10 flex items-center justify-center text-white w-11 h-11 sm:w-8 sm:h-8" style={{ touchAction: 'manipulation' }}><Settings className="w-5 h-5 sm:w-4 sm:h-4 shrink-0" /></button>
                   {showSettings && (
-                    <div className="player-menu-panel absolute right-0 bottom-10 bg-[#1c1c1e] border border-white/10 rounded-xl p-3 w-56 shadow-2xl">
+                    <>
+                      <div className="sm:hidden fixed inset-0 z-40 bg-black/60" onClick={() => setShowSettings(false)} onTouchEnd={() => setShowSettings(false)} />
+                      <div className="player-menu-panel z-50 bg-[#1c1c1e] border border-white/10 shadow-2xl fixed inset-x-0 bottom-0 rounded-t-2xl p-4 pb-[max(20px,env(safe-area-inset-bottom,0px))] max-h-[75vh] overflow-auto sm:absolute sm:inset-x-auto sm:right-0 sm:bottom-10 sm:rounded-xl sm:p-3 sm:w-56 sm:max-h-none sm:pb-3">
+                        <div className="sm:hidden w-10 h-1 rounded-full bg-white/20 mx-auto mb-3" />
+                        <div className="flex items-center justify-between mb-3 sm:mb-0">
+                          <p className="sm:hidden text-sm font-bold text-white">Cài đặt phát lại</p>
+                          <button onClick={() => setShowSettings(false)} className="sm:hidden w-8 h-8 rounded-full bg-white/10 flex items-center justify-center" aria-label="Đóng"><ChevronDown className="w-4 h-4 text-white" /></button>
+                        </div>
+                        {/* Mobile: volume + brightness nhanh */}
+                        <div className="sm:hidden mb-4 grid grid-cols-2 gap-2">
+                          <div className="bg-white/5 rounded-xl p-3">
+                            <p className="text-[11px] font-bold text-white/50 uppercase mb-2 flex items-center gap-1"><Volume2 className="w-3 h-3" /> Âm lượng</p>
+                            <input type="range" min={0} max={1} step={0.05} value={isMuted ? 0 : volume} onChange={handleVolume} className="w-full accent-blue-500 h-8" />
+                            <p className="text-xs text-white/70 tabular-nums mt-1">{Math.round((isMuted ? 0 : volume) * 100)}%</p>
+                          </div>
+                          <div className="bg-white/5 rounded-xl p-3">
+                            <p className="text-[11px] font-bold text-white/50 uppercase mb-2 flex items-center gap-1"><Sun className="w-3 h-3" /> Độ sáng</p>
+                            <input type="range" min={0.4} max={1} step={0.05} value={screenBrightness} onChange={(e) => setScreenBrightness(parseFloat(e.target.value))} className="w-full accent-blue-500 h-8" />
+                            <p className="text-xs text-white/70 tabular-nums mt-1">{Math.round(screenBrightness * 100)}%</p>
+                          </div>
+                        </div>
                       <div className="mb-3">
                         <p className="text-[11px] font-bold text-white/50 uppercase mb-2">Tốc độ</p>
-                        <div className="grid grid-cols-4 gap-1">
+                        <div className="grid grid-cols-5 sm:grid-cols-4 gap-1.5 sm:gap-1">
                           {[0.5,1,1.25,1.5,2].map(v => (
-                            <button key={v} onClick={() => { if(videoRef.current) videoRef.current.playbackRate=v; setPlaybackRate(v); }} className={`px-2 py-1.5 rounded-lg text-xs font-medium ${playbackRate===v ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 hover:bg-white/15'}`}>{v}x</button>
+                            <button key={v} onClick={() => { if(videoRef.current) videoRef.current.playbackRate=v; setPlaybackRate(v); }} className={`px-2 py-2.5 sm:py-1.5 rounded-xl sm:rounded-lg text-sm sm:text-xs font-medium active:scale-95 transition ${playbackRate===v ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 active:bg-white/20'}`}>{v}x</button>
                           ))}
                         </div>
                       </div>
                       <div className="mb-3">
                         <p className="text-[11px] font-bold text-white/50 uppercase mb-2">Tự động chuyển tập</p>
-                        <div className="grid grid-cols-2 gap-1">
-                          <button onClick={() => { if (!autoNextEnabled) toggleAutoNext(); }} className={`px-2 py-1.5 rounded-lg text-xs font-medium ${autoNextEnabled ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 hover:bg-white/15'}`}>Bật</button>
-                          <button onClick={() => { if (autoNextEnabled) toggleAutoNext(); }} className={`px-2 py-1.5 rounded-lg text-xs font-medium ${!autoNextEnabled ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 hover:bg-white/15'}`}>Tắt</button>
+                        <div className="grid grid-cols-2 gap-1.5 sm:gap-1">
+                          <button onClick={() => { if (!autoNextEnabled) toggleAutoNext(); }} className={`px-2 py-2.5 sm:py-1.5 rounded-xl sm:rounded-lg text-sm sm:text-xs font-medium ${autoNextEnabled ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 active:bg-white/20'}`}>Bật</button>
+                          <button onClick={() => { if (autoNextEnabled) toggleAutoNext(); }} className={`px-2 py-2.5 sm:py-1.5 rounded-xl sm:rounded-lg text-sm sm:text-xs font-medium ${!autoNextEnabled ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 active:bg-white/20'}`}>Tắt</button>
                         </div>
                       </div>
                       <div>
                         <p className="text-[11px] font-bold text-white/50 uppercase mb-2">Chất lượng</p>
-                        <div className="flex flex-col gap-1 max-h-32 overflow-auto">
-                          <button onClick={() => { if(hlsRef.current) hlsRef.current.currentLevel=-1; setCurrentQuality(-1); }} className={`px-3 py-1.5 rounded-lg text-xs text-left ${currentQuality===-1 ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 hover:bg-white/15'}`}>Tự động</button>
+                        <div className="flex flex-col gap-1.5 sm:gap-1 max-h-40 sm:max-h-32 overflow-auto">
+                          <button onClick={() => { if(hlsRef.current) hlsRef.current.currentLevel=-1; setCurrentQuality(-1); }} className={`px-3 py-2.5 sm:py-1.5 rounded-xl sm:rounded-lg text-sm sm:text-xs text-left ${currentQuality===-1 ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 active:bg-white/20'}`}>Tự động</button>
                           {qualityLevels.map(lvl => (
-                            <button key={lvl.level} onClick={() => { if(hlsRef.current) hlsRef.current.currentLevel=lvl.level; setCurrentQuality(lvl.level); }} className={`px-3 py-1.5 rounded-lg text-xs text-left ${currentQuality===lvl.level ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 hover:bg-white/15'}`}>{lvl.height ? `${lvl.height}p` : `${Math.round((lvl.bitrate||0)/1000)}kbps`}</button>
+                            <button key={lvl.level} onClick={() => { if(hlsRef.current) hlsRef.current.currentLevel=lvl.level; setCurrentQuality(lvl.level); }} className={`px-3 py-2.5 sm:py-1.5 rounded-xl sm:rounded-lg text-sm sm:text-xs text-left ${currentQuality===lvl.level ? 'bg-blue-500 text-white' : 'bg-white/10 text-white/80 active:bg-white/20'}`}>{lvl.height ? `${lvl.height}p` : `${Math.round((lvl.bitrate||0)/1000)}kbps`}</button>
                           ))}
                         </div>
                       </div>
-                    </div>
+                      </div>
+                    </>
                   )}
                 </div>
-                <button onClick={togglePip} style={{ width: 32, height: 32, minWidth: 32, minHeight: 32, borderRadius: 9999 }} className={`shrink-0 rounded-full hover:bg-white/10 flex items-center justify-center flex-none aspect-square overflow-hidden ${isPip ? 'text-blue-400' : 'text-white'}`}><PictureInPicture2 className="w-4 h-4 shrink-0" /></button>
-                <button onClick={toggleFullscreen} style={{ width: 32, height: 32, minWidth: 32, minHeight: 32, borderRadius: 9999 }} className="shrink-0 rounded-full hover:bg-white/10 flex items-center justify-center text-white flex-none aspect-square overflow-hidden">{isFullscreen ? <Minimize className="w-4 h-4 shrink-0" /> : <Maximize className="w-4 h-4 shrink-0" />}</button>
+                {/* PiP: chỉ hiện khi nền tảng hỗ trợ (web/PWA có browser PiP, APK có native PiP) */}
+                {pipSupported && (
+                  <button onClick={handlePip} aria-label="Picture in picture" className={`rounded-full active:bg-white/20 hover:bg-white/10 flex items-center justify-center w-11 h-11 sm:w-8 sm:h-8 ${isPip ? 'text-blue-400' : 'text-white'}`} style={{ touchAction: 'manipulation' }}><PictureInPicture2 className="w-5 h-5 sm:w-4 sm:h-4 shrink-0" /></button>
+                )}
+                <button onClick={toggleLock} aria-label="Khóa màn hình" title="Khóa màn hình" className="rounded-full active:bg-white/20 hover:bg-white/10 flex items-center justify-center text-white w-11 h-11 sm:w-8 sm:h-8" style={{ touchAction: 'manipulation' }}><Lock className="w-5 h-5 sm:w-4 sm:h-4 shrink-0" /></button>
+                <button onClick={toggleFullscreen} aria-label="Toàn màn hình" className={`rounded-full active:bg-white/20 hover:bg-white/10 flex items-center justify-center w-11 h-11 sm:w-8 sm:h-8 ${isNativeAndroid() && nativeImmersive ? 'text-blue-400' : 'text-white'}`} style={{ touchAction: 'manipulation' }}>{(isFullscreen || (isNativeAndroid() && nativeImmersive)) ? <Minimize className="w-5 h-5 sm:w-4 sm:h-4 shrink-0" /> : <Maximize className="w-5 h-5 sm:w-4 sm:h-4 shrink-0" />}</button>
               </div>
             </div>
           </div>

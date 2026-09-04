@@ -12,6 +12,7 @@ export interface NativeVideoPlayerPlugin {
   }): Promise<void>;
   enterPip(): Promise<void>;
   setVideoPlaying(options: { playing: boolean }): Promise<void>;
+  setImmersive(options: { enabled: boolean }): Promise<void>;
   isPipSupported(): Promise<{ supported: boolean }>;
   isNativeSupported(): Promise<{ supported: boolean }>;
 }
@@ -51,6 +52,17 @@ export async function checkNativePipSupported(): Promise<boolean> {
     }
   }
   return false;
+}
+
+/** Ẩn/hiện status bar + navigation bar (immersive) trên APK Android */
+export async function setImmersiveMode(enabled: boolean): Promise<void> {
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+    try {
+      await NativeVideoPlayer.setImmersive({ enabled });
+    } catch (err) {
+      void 0;
+    }
+  }
 }
 
 export async function playInNativeExoPlayer(options: {

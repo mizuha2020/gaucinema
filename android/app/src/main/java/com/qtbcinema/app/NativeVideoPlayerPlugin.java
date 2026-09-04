@@ -104,8 +104,55 @@ public class NativeVideoPlayerPlugin extends Plugin {
     }
 
     @PluginMethod
-    public void isPipSupported(PluginCall call) {
-        JSObject ret = new JSObject();
+    public void setImmersive(PluginCall call) {
+        boolean enabled = call.getBoolean("enabled", true);
+        try {
+            if (getActivity() != null) {
+                getActivity().runOnUiThread(() -> {
+                    android.view.Window window = getActivity().getWindow();
+                    android.view.View decor = window.getDecorView();
+                    if (enabled) {
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                            window.setDecorFitsSystemWindows(false);
+                            if (window.getInsetsController() != null) {
+                                window.getInsetsController().hide(
+                                    android.view.WindowInsets.Type.statusBars()
+                                        | android.view.WindowInsets.Type.navigationBars());
+                                window.getInsetsController().setSystemBarsBehavior(
+                                    android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                            }
+                        } else {
+                            int flags = android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                                | android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                                | android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                                | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                                | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                                | android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
+                            decor.setSystemUiVisibility(flags);
+                        }
+                    } else {
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                            window.setDecorFitsSystemWindows(true);
+                            if (window.getInsetsController() != null) {
+                                window.getInsetsController().show(
+                                    android.view.WindowInsets.Type.statusBars()
+                                        | android.view.WindowInsets.Type.navigationBars());
+                            }
+                        } else {
+                            decor.setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_VISIBLE);
+                        }
+                    }
+                });
+            }
+            call.resolve();
+        } catch (Exception e) {
+            e.printStackTrace();
+            call.reject("Loi immersive: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void isPipSupported(PluginCall call) {        JSObject ret = new JSObject();
         boolean supported = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O;
         ret.put("supported", supported);
         call.resolve(ret);
