@@ -236,7 +236,7 @@ export default function App() {
   const [isProfileSwitchLoaderOpen, setIsProfileSwitchLoaderOpen] = useState(false);
   const [isProfileDataReady, setIsProfileDataReady] = useState(false);
 
-  // App Navigation Tab (URL-first: deep-link /phim-bo... mở đúng tab ngay, không flash)
+  // App Navigation Tab (URL-first: deep-link /series... mở đúng tab ngay, không flash)
   const [activeTab, setActiveTab] = useState<NavTab>(() => {
     try {
       const r = parseLocation(window.location.pathname, window.location.search);
@@ -311,7 +311,7 @@ export default function App() {
     }
   }, [activeTab]);
 
-  // Filter/search state (URL-first: /loc?tu-khoa=... mở đúng bộ lọc ngay)
+  // Filter/search state (URL-first: /browse?q=... mở đúng bộ lọc ngay)
   const readInitialFilter = (key: "keyword" | "genre" | "country"): string => {
     try {
       const r = parseLocation(window.location.pathname, window.location.search);
@@ -1610,7 +1610,7 @@ export default function App() {
     ],
   );
 
-  // Search Submit Handler (URL-first: /loc?tu-khoa=... chia sẻ được)
+  // Search Submit Handler (URL-first: /browse?q=... chia sẻ được)
   const handleSearchSubmit = (keyword: string) => {
     setSearchKeyword(keyword);
     setFilterCountry("");

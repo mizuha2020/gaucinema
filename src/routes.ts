@@ -6,19 +6,19 @@ import type { NavTab } from './types';
  */
 export const TAB_PATHS: Record<NavTab, string> = {
   home: '/',
-  series: '/phim-bo',
-  single: '/phim-le',
-  cinema: '/phim-chieu-rap',
-  anime: '/hoat-hinh',
+  series: '/series',
+  single: '/movies',
+  cinema: '/theater',
+  anime: '/anime',
   'tv-shows': '/tv-shows',
-  manga: '/truyen-tranh',
-  filter: '/loc',
-  'my-list': '/danh-sach-cua-toi',
-  history: '/lich-su-xem',
-  offline: '/phim-da-luu',
-  'tv-live': '/truyen-hinh-truc-tiep',
+  manga: '/comics',
+  filter: '/browse',
+  'my-list': '/my-list',
+  history: '/history',
+  offline: '/downloads',
+  'tv-live': '/live-tv',
   youtube: '/youtube',
-  'xem-chung': '/xem-chung',
+  'xem-chung': '/watch-together',
 };
 
 const PATH_TABS: Record<string, NavTab> = Object.fromEntries(
@@ -43,9 +43,9 @@ function readFilterQuery(search: string): FilterQuery {
   try {
     const sp = new URLSearchParams(search);
     return {
-      keyword: (sp.get('tu-khoa') || '').trim(),
-      genre: (sp.get('the-loai') || '').trim(),
-      country: (sp.get('quoc-gia') || '').trim(),
+      keyword: (sp.get('q') || '').trim(),
+      genre: (sp.get('genre') || '').trim(),
+      country: (sp.get('country') || '').trim(),
     };
   } catch {
     return { ...EMPTY_FILTER };
@@ -54,9 +54,9 @@ function readFilterQuery(search: string): FilterQuery {
 
 function writeFilterQuery(f: FilterQuery): string {
   const sp = new URLSearchParams();
-  if (f.keyword) sp.set('tu-khoa', f.keyword);
-  if (f.genre) sp.set('the-loai', f.genre);
-  if (f.country) sp.set('quoc-gia', f.country);
+  if (f.keyword) sp.set('q', f.keyword);
+  if (f.genre) sp.set('genre', f.genre);
+  if (f.country) sp.set('country', f.country);
   const s = sp.toString();
   return s ? `?${s}` : '';
 }
@@ -82,10 +82,10 @@ export function parseLocation(pathname: string, search: string): ParsedRoute {
       return s;
     }
   });
-  if (segs[0] === 'phim' && segs[1]) {
+  if (segs[0] === 'movie' && segs[1]) {
     return { kind: 'detail', slug: segs[1] };
   }
-  if (segs[0] === 'xem' && segs[1]) {
+  if (segs[0] === 'watch' && segs[1]) {
     return {
       kind: 'player',
       slug: segs[1],
@@ -103,14 +103,14 @@ export function buildTabUrl(tab: NavTab, filter?: FilterQuery): string {
   return base;
 }
 
-/** URL chi tiết phim: /phim/:slug */
+/** URL chi tiết phim: /movie/:slug (slug giữ nguyên từ phimapi) */
 export function buildPhimUrl(slug: string): string {
-  return `/phim/${encodeURIComponent(slug)}`;
+  return `/movie/${encodeURIComponent(slug)}`;
 }
 
-/** URL xem phim: /xem/:slug/:tap?/:server? */
+/** URL xem phim: /watch/:slug/:tap?/:server? */
 export function buildXemUrl(slug: string, episodeSlug?: string, serverName?: string): string {
-  let url = `/xem/${encodeURIComponent(slug)}`;
+  let url = `/watch/${encodeURIComponent(slug)}`;
   if (episodeSlug) url += `/${encodeURIComponent(episodeSlug)}`;
   if (episodeSlug && serverName) url += `/${encodeURIComponent(serverName)}`;
   return url;
