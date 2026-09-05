@@ -195,6 +195,9 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewHlsRef = useRef<Hls | null>(null);
   const previewSeekTimer = useRef<number | null>(null);
+  // Cache frame preview theo bucket 2s: hover lại chỗ cũ hiện ngay, khỏi seek lại
+  const previewFrameCache = useRef(new Map<number, string>());
+  const lastPreviewTarget = useRef(-1);
   const [previewImg, setPreviewImg] = useState<string | null>(null);
   const [previewVisible, setPreviewVisible] = useState(false);
 
@@ -339,15 +342,36 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
       (ctx as any).imageSmoothingEnabled = true;
       (ctx as any).imageSmoothingQuality = 'high';
       ctx.drawImage(pv, 0, 0, cw, ch);
-      setPreviewImg(cv.toDataURL('image/jpeg', 0.85));
+      const url = cv.toDataURL('image/jpeg', 0.7);
+      // Lưu cache theo bucket 2s để hover lại hiện ngay
+      try {
+        const bucket = Math.floor((pv.currentTime || 0) / 2);
+        if (previewFrameCache.current.size > 120) previewFrameCache.current.clear();
+        previewFrameCache.current.set(bucket, url);
+      } catch {}
+      setPreviewImg(url);
     } catch { setPreviewImg(null); }
   }, []);
   const seekPreviewTo = useCallback((time: number) => {
     const pv = previewVideoRef.current;
     if (!pv || !duration) return;
     const clamped = Math.max(0, Math.min(duration - 0.5, time));
+    // Đã có frame trong cache -> hiện ngay, khỏi seek (nhanh + đỡ tải mạng)
+    const bucket = Math.floor(clamped / 2);
+    const cached = previewFrameCache.current.get(bucket);
+    if (cached) {
+      if (previewSeekTimer.current) window.clearTimeout(previewSeekTimer.current);
+      lastPreviewTarget.current = clamped;
+      setPreviewImg(cached);
+      return;
+    }
+    // Lệch quá nhỏ so với lần seek trước -> bỏ qua, tránh spam fragment
+    if (Math.abs(clamped - lastPreviewTarget.current) < 1) return;
+    lastPreviewTarget.current = clamped;
     if (previewSeekTimer.current) window.clearTimeout(previewSeekTimer.current);
-    previewSeekTimer.current = window.setTimeout(() => { try { pv.currentTime = clamped; } catch {} }, 60);
+    previewSeekTimer.current = window.setTimeout(() => {
+      try { pv.currentTime = clamped; } catch {}
+    }, 180);
   }, [duration]);
 
   // preview hls setup: MUST use the same client-cleaned playlist as main player,
@@ -358,7 +382,11 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     if (previewHlsRef.current) { previewHlsRef.current.destroy(); previewHlsRef.current = null; }
     const directRaw = getMirrorUrls(currentEpisode.link_m3u8)[0];
     if (!directRaw) return;
-    let previewBlob: string | null = null;
+    // Đổi tập: xóa cache frame cũ để khỏi hiện nhầm ảnh tập trước
+    previewFrameCache.current.clear();
+    lastPreviewTarget.current = -1;
+    setPreviewImg(null);
+    let previewBlobs: string[] = [];
     let cancelled = false;
     pv.muted = true;
     pv.preload = 'metadata';
@@ -378,7 +406,8 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
           manifestLoadingTimeOut: 8000,
           levelLoadingTimeOut: 8000,
           fragLoadingTimeOut: 15000,
-          startLevel: 2,
+          // Preview luôn dùng quality THẤP NHẤT: nhẹ băng thông, không tranh với player chính khi tua
+          startLevel: 0,
           capLevelToPlayerSize: false,
         });
         previewHlsRef.current = hls;
@@ -387,7 +416,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           try {
             const levels = (hls as any).levels || [];
-            if (levels.length > 2) hls.currentLevel = Math.min(2, levels.length - 1);
+            if (levels.length > 1) hls.currentLevel = 0;
           } catch {}
         });
       } else if (pv.canPlayType('application/vnd.apple.mpegurl')) {
@@ -396,15 +425,15 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     };
     // Same cleaner as main player so preview frames align with cleaned timeline
     loadCleanedM3u8Url(directRaw).then((cleaned) => {
-      if (cancelled) { if (cleaned) revokeBlobUrl(cleaned.blobUrl); return; }
-      if (cleaned) { previewBlob = cleaned.blobUrl; attachPreview(previewBlob); }
+      if (cancelled) { if (cleaned) revokeBlobUrl([cleaned.blobUrl, ...(cleaned.extraBlobs || [])]); return; }
+      if (cleaned) { previewBlobs = [cleaned.blobUrl, ...(cleaned.extraBlobs || [])]; attachPreview(cleaned.blobUrl); }
       else attachPreview(directRaw);
     }).catch(() => { if (!cancelled) attachPreview(directRaw); });
     return () => {
       cancelled = true;
       pv.removeEventListener('seeked', onSeeked);
       if (previewHlsRef.current) { previewHlsRef.current.destroy(); previewHlsRef.current = null; }
-      revokeBlobUrl(previewBlob);
+      revokeBlobUrl(previewBlobs);
     };
   }, [currentEpisode.link_m3u8, capturePreviewFrame]);
 
@@ -441,6 +470,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
 
     let candidateIndex = 0;
     let blobUrl: string | null = null;
+    let extraBlobs: string[] = [];
     let cancelled = false;
     const tryNext = (hls: Hls) => {
       candidateIndex++;
@@ -476,9 +506,10 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
       (async () => {
         try {
           const cleaned = await loadCleanedM3u8Url(rawCandidates[0]);
-          if (cancelled) { if (cleaned) revokeBlobUrl(cleaned.blobUrl); return; }
+          if (cancelled) { if (cleaned) revokeBlobUrl([cleaned.blobUrl, ...(cleaned.extraBlobs || [])]); return; }
           if (cleaned) {
             blobUrl = cleaned.blobUrl;
+            extraBlobs = [cleaned.blobUrl, ...(cleaned.extraBlobs || [])];
             candidates.unshift(blobUrl);
             candidateIndex = 0;
             hls.loadSource(blobUrl);
@@ -530,7 +561,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
       setErrorMsg('Trình duyệt không hỗ trợ HLS');
       setIsLoading(false);
     }
-    return () => { cancelled = true; revokeBlobUrl(blobUrl); if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } };
+    return () => { cancelled = true; revokeBlobUrl([blobUrl, ...extraBlobs]); if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } };
   }, [currentEpisode.link_m3u8, allServers, currentServer, initialTime, onSelectEpisode, retryKey]);
 
   const handleRetry = useCallback(() => {
@@ -1036,7 +1067,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     if (!rect.width) return 0;
     return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
   };
-  const renderScrubPreview = useCallback((pct: number, showHoverTrack: boolean) => {
+  const renderScrubPreview = useCallback((pct: number, opts: { hoverTrack: boolean; moveProgress: boolean }) => {
     if (!duration) return;
     const t = pct * duration;
     const trackEl = document.querySelector('.group\\/scrub') as HTMLElement | null;
@@ -1049,16 +1080,25 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
       tip.style.left = `${r * 100}%`;
     }
     if (hoverTimeRef.current) hoverTimeRef.current.innerText = formatTime(t);
-    if (hoverTrackRef.current) hoverTrackRef.current.style.width = showHoverTrack ? `${pct * 100}%` : '0%';
-    if (progressBarRef.current) progressBarRef.current.style.width = `${pct * 100}%`;
+    if (hoverTrackRef.current) hoverTrackRef.current.style.width = opts.hoverTrack ? `${pct * 100}%` : '0%';
+    // Desktop hover CHỈ hiện tooltip + vệt trắng, KHÔNG đẩy thanh tiến trình thật (đẩy là hành vi mobile khi kéo).
+    if (opts.moveProgress && progressBarRef.current) progressBarRef.current.style.width = `${pct * 100}%`;
     setPreviewVisible(true);
     seekPreviewTo(t);
   }, [duration, seekPreviewTo]);
-  const hideScrubPreview = useCallback(() => {
+  const restoreProgressBar = useCallback(() => {
+    // Trả thanh tiến trình về vị trí phát thật (đọc từ video để khỏi kẹt khung khi đang pause)
+    const v = videoRef.current;
+    const d = (v?.duration && isFinite(v.duration) ? v.duration : 0) || duration;
+    const t = v?.currentTime || 0;
+    if (progressBarRef.current) progressBarRef.current.style.width = d ? `${(t / d) * 100}%` : '0%';
+  }, [duration]);
+  const hideScrubPreview = useCallback((restoreProgress = false) => {
     if (hoverTooltipRef.current) hoverTooltipRef.current.style.opacity = '0';
     if (hoverTrackRef.current) hoverTrackRef.current.style.width = '0%';
     setPreviewVisible(false);
-  }, []);
+    if (restoreProgress) restoreProgressBar();
+  }, [restoreProgressBar]);
   const handleScrubPointerDown = useCallback((e: React.PointerEvent) => {
     e.stopPropagation();
     const v = videoRef.current;
@@ -1068,15 +1108,15 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     if (!v.paused) v.pause();
     setIsScrubbing(true);
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
-    renderScrubPreview(pctFromClientX(e.clientX, e.currentTarget as HTMLElement), e.pointerType === 'mouse');
+    renderScrubPreview(pctFromClientX(e.clientX, e.currentTarget as HTMLElement), { hoverTrack: e.pointerType === 'mouse', moveProgress: true });
   }, [duration, renderScrubPreview]);
   const handleScrubPointerMove = useCallback((e: React.PointerEvent) => {
     if (!duration) return;
     if (isDraggingRef.current) {
-      renderScrubPreview(pctFromClientX(e.clientX, e.currentTarget as HTMLElement), e.pointerType === 'mouse');
+      renderScrubPreview(pctFromClientX(e.clientX, e.currentTarget as HTMLElement), { hoverTrack: e.pointerType === 'mouse', moveProgress: true });
     } else if (e.pointerType === 'mouse' && !isTouchDeviceRef.current) {
-      // Hover desktop: preview như cũ
-      renderScrubPreview(pctFromClientX(e.clientX, e.currentTarget as HTMLElement), true);
+      // Hover desktop: chỉ tooltip + vệt trắng, thanh tiến trình đứng yên
+      renderScrubPreview(pctFromClientX(e.clientX, e.currentTarget as HTMLElement), { hoverTrack: true, moveProgress: false });
     }
   }, [duration, renderScrubPreview]);
   const handleScrubPointerUp = useCallback((e: React.PointerEvent) => {
@@ -1088,14 +1128,26 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     const pct = pctFromClientX(e.clientX, e.currentTarget as HTMLElement);
     v.currentTime = pct * duration;
     setCurrentTime(pct * duration);
+    if (progressBarRef.current) progressBarRef.current.style.width = `${pct * 100}%`;
     // Trả lại trạng thái phát như trước khi chạm (đang phát thì phát tiếp, pause thì giữ pause)
     if (scrubWasPlayingRef.current) v.play().catch(() => {});
     hideScrubPreview();
     resetControlsTimer();
   }, [duration, hideScrubPreview, resetControlsTimer]);
   const handleScrubPointerLeave = useCallback(() => {
-    if (!isDraggingRef.current) hideScrubPreview();
+    // Rời chuột khi không kéo: ẩn preview + trả thanh về vị trí phát thật (kẻo kẹt khi pause)
+    if (!isDraggingRef.current) hideScrubPreview(true);
   }, [hideScrubPreview]);
+  // Touch bị ngắt giữa chừng (cuộc gọi đến, vuốt hệ thống): kết thúc kéo, trả thanh + phát tiếp nếu trước đó đang phát
+  const handleScrubPointerCancel = useCallback(() => {
+    if (!isDraggingRef.current) { hideScrubPreview(true); return; }
+    isDraggingRef.current = false;
+    setIsScrubbing(false);
+    restoreProgressBar();
+    const v = videoRef.current;
+    if (v && scrubWasPlayingRef.current) v.play().catch(() => {});
+    hideScrubPreview();
+  }, [hideScrubPreview, restoreProgressBar]);
   const handleScrubKeyDown = useCallback((e: React.KeyboardEvent) => {
     const v = videoRef.current;
     if (!v || !duration) return;
@@ -1171,7 +1223,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
             onClick={handleVideoClick}
           />
         {/* hidden preview video + canvas for hover thumbnail - chophim smooth */}
-        <video ref={previewVideoRef} muted playsInline preload="metadata" crossOrigin="anonymous" className="hidden w-0 h-0 pointer-events-none" tabIndex={-1} />
+        <video ref={previewVideoRef} muted playsInline preload="metadata" crossOrigin="anonymous" className="pointer-events-none absolute left-0 top-0 h-[2px] w-[2px] opacity-0" tabIndex={-1} aria-hidden />
         <canvas ref={previewCanvasRef} className="hidden w-0 h-0 pointer-events-none" />
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none">
@@ -1312,8 +1364,8 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
           </div>
         </div>
 
-        {/* Center controls kiểu Netflix trên mobile: -10s | play/pause | +10s khi controls hiện.
-            Desktop giữ nút play to khi pause (không đổi). */}
+        {/* Center controls kiểu Netflix CHỈ trên mobile: -10s | play/pause | +10s khi controls hiện.
+            Desktop không dùng nút giữa màn hình (play + tua đã có ở hàng bottom). */}
         {isTouchDevice ? (
           !isLocked && showControls && !isLoading && !errorMsg && (
             <div
@@ -1353,15 +1405,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
               </button>
             </div>
           )
-        ) : (
-          !isPlaying && !isLoading && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <button onClick={(e) => { e.stopPropagation(); togglePlay(); }} aria-label={isPlaying ? 'Tạm dừng' : 'Phát'} className="rounded-full bg-black/50 backdrop-blur flex items-center justify-center pointer-events-auto active:bg-black/70 hover:bg-black/60 transition w-16 h-16" style={{ touchAction: 'manipulation' }}>
-                <Play className="w-7 h-7 text-white ml-1 shrink-0" fill="white" />
-              </button>
-            </div>
-          )
-        )}
+        ) : null}
 
         {/* Bottom controls - mobile-first: touch lớn + safe-area.
             Chặn touch bubbling lên video-area để gesture (swipe/tap/giữ-x2)
@@ -1391,7 +1435,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
                 onPointerDown={handleScrubPointerDown}
                 onPointerMove={handleScrubPointerMove}
                 onPointerUp={handleScrubPointerUp}
-                onPointerCancel={handleScrubPointerLeave}
+                onPointerCancel={handleScrubPointerCancel}
                 onPointerLeave={handleScrubPointerLeave}
                 onKeyDown={handleScrubKeyDown}
               >
@@ -1420,9 +1464,67 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
               <span className="hidden sm:block shrink-0 text-[11px] font-medium text-white/80 tabular-nums">{formatTime(duration)}</span>
             </div>
 
-            {/* Controls row: trái = tập trước/tiếp + vị trí tập, phải = list/server/cài đặt/pip/fullscreen */}
+            {/* Controls row: trái = play/volume (desktop) + tập trước/tiếp, phải = list/server/cài đặt/pip/fullscreen */}
             <div className="flex items-center justify-between gap-1">
               <div className="flex items-center gap-0.5 sm:gap-1">
+                {/* Desktop: nút play/pause tròn trắng kiểu YouTube/Netflix web */}
+                <button
+                  onClick={() => { togglePlay(); resetControlsTimer(); }}
+                  aria-label={isPlaying ? 'Tạm dừng' : 'Phát'}
+                  title={isPlaying ? 'Tạm dừng (Space)' : 'Phát (Space)'}
+                  className="hidden sm:flex rounded-full bg-white text-black items-center justify-center hover:bg-white/90 active:scale-95 transition w-9 h-9 shrink-0"
+                >
+                  {isPlaying
+                    ? <Pause className="w-4 h-4 shrink-0" fill="currentColor" />
+                    : <Play className="w-4 h-4 ml-0.5 shrink-0" fill="currentColor" />}
+                </button>
+                {/* Desktop: tua -10s cạnh play */}
+                <button
+                  onClick={() => { skip(-10); resetControlsTimer(); }}
+                  aria-label="Tua lại 10 giây"
+                  title="Tua lại 10 giây (←)"
+                  className="hidden sm:flex rounded-full hover:bg-white/10 active:scale-95 items-center justify-center text-white w-9 h-9 shrink-0 transition"
+                >
+                  <span className="relative flex items-center justify-center">
+                    <RotateCcw className="w-5 h-5 shrink-0" strokeWidth={1.75} />
+                    <span className="absolute inset-0 flex items-center justify-center text-[8px] font-bold text-white tabular-nums pt-0.5">10</span>
+                  </span>
+                </button>
+                {/* Desktop: tua +10s cạnh play */}
+                <button
+                  onClick={() => { skip(10); resetControlsTimer(); }}
+                  aria-label="Tua tới 10 giây"
+                  title="Tua tới 10 giây (→)"
+                  className="hidden sm:flex rounded-full hover:bg-white/10 active:scale-95 items-center justify-center text-white w-9 h-9 shrink-0 transition"
+                >
+                  <span className="relative flex items-center justify-center">
+                    <RotateCw className="w-5 h-5 shrink-0" strokeWidth={1.75} />
+                    <span className="absolute inset-0 flex items-center justify-center text-[8px] font-bold text-white tabular-nums pt-0.5">10</span>
+                  </span>
+                </button>
+                {/* Desktop: volume mute + slider nở ra khi hover (gọn thanh control) */}
+                <div className="hidden sm:flex items-center gap-0.5 group/vol">
+                  <button
+                    onClick={() => { toggleMute(); resetControlsTimer(); }}
+                    aria-label={isMuted || volume === 0 ? 'Bật tiếng (M)' : 'Tắt tiếng (M)'}
+                    title={isMuted || volume === 0 ? 'Bật tiếng (M)' : 'Tắt tiếng (M)'}
+                    className="rounded-full hover:bg-white/10 flex items-center justify-center text-white w-8 h-8 shrink-0"
+                  >
+                    {isMuted || volume === 0
+                      ? <VolumeX className="w-4 h-4 shrink-0" />
+                      : <Volume2 className="w-4 h-4 shrink-0" />}
+                  </button>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={isMuted ? 0 : volume}
+                    onChange={handleVolume}
+                    aria-label="Âm lượng"
+                    className="w-0 opacity-0 group-hover/vol:w-20 group-hover/vol:opacity-100 focus-visible:w-20 focus-visible:opacity-100 transition-all accent-white h-1 cursor-pointer"
+                  />
+                </div>
                 {currentServer.server_data.length > 1 && (
                   <>
                     <button
@@ -1549,7 +1651,8 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
                 {pipSupported && (
                   <button onClick={handlePip} aria-label="Picture in picture" className={`rounded-full active:bg-white/20 hover:bg-white/10 flex items-center justify-center w-11 h-11 sm:w-8 sm:h-8 ${isPip ? 'text-blue-400' : 'text-white'}`} style={{ touchAction: 'manipulation' }}><PictureInPicture2 className="w-5 h-5 sm:w-4 sm:h-4 shrink-0" /></button>
                 )}
-                <button onClick={toggleLock} aria-label="Khóa màn hình" title="Khóa màn hình" className="rounded-full active:bg-white/20 hover:bg-white/10 flex items-center justify-center text-white w-11 h-11 sm:w-8 sm:h-8" style={{ touchAction: 'manipulation' }}><Lock className="w-5 h-5 sm:w-4 sm:h-4 shrink-0" /></button>
+                {/* Khóa màn hình: chỉ mobile (touch) mới cần, desktop ẩn */}
+                <button onClick={toggleLock} aria-label="Khóa màn hình" title="Khóa màn hình" className="sm:hidden rounded-full active:bg-white/20 hover:bg-white/10 flex items-center justify-center text-white w-11 h-11" style={{ touchAction: 'manipulation' }}><Lock className="w-5 h-5 shrink-0" /></button>
                 <button onClick={toggleFullscreen} aria-label="Toàn màn hình" className={`rounded-full active:bg-white/20 hover:bg-white/10 flex items-center justify-center w-11 h-11 sm:w-8 sm:h-8 ${isNativeAndroid() && nativeImmersive ? 'text-blue-400' : 'text-white'}`} style={{ touchAction: 'manipulation' }}>{(isFullscreen || (isNativeAndroid() && nativeImmersive)) ? <Minimize className="w-5 h-5 sm:w-4 sm:h-4 shrink-0" /> : <Maximize className="w-5 h-5 sm:w-4 sm:h-4 shrink-0" />}</button>
               </div>
             </div>

@@ -79,34 +79,60 @@ async function fetchText(url: string, timeoutMs = 12000): Promise<string> {
  * Fetch m3u8 from client IP, strip ad segments, return a blob: URL.
  * Returns null if fetch/clean fails (caller falls back to direct/proxy).
  */
-export async function loadCleanedM3u8Url(rawUrl: string): Promise<{ blobUrl: string; removed: number } | null> {
+export interface CleanedM3u8 {
+  blobUrl: string;
+  removed: number;
+  /** variant blob URLs khi master multivariant – caller revoke chung với blobUrl */
+  extraBlobs?: string[];
+}
+export async function loadCleanedM3u8Url(rawUrl: string): Promise<CleanedM3u8 | null> {
   if (!rawUrl || !rawUrl.startsWith('http')) return null;
   try {
-    let content = await fetchText(rawUrl);
+    const content = await fetchText(rawUrl);
     if (content.includes('#EXT-X-STREAM-INF')) {
+      // Master multivariant: GIỮ NGUYÊN cấu trúc để player ABR + tua mượt
+      // (gộp về 1 variant max-bitrate như trước khiến seek phải tải segment nặng -> lag).
+      // Clean từng variant rồi trỏ master sang blob tương ứng.
       const lines = content.split(/\r?\n/);
-      type Variant = { bw: number; uri: string };
-      const variants: Variant[] = [];
+      const variantUris: { lineIdx: number; uri: string }[] = [];
       for (let i = 0; i < lines.length; i++) {
         if (lines[i].includes('#EXT-X-STREAM-INF')) {
-          const m = lines[i].match(/BANDWIDTH=(\d+)/);
-          const bw = m ? parseInt(m[1], 10) : 0;
           const next = (lines[i + 1] || '').trim();
           if (next && !next.startsWith('#')) {
-            variants.push({ bw, uri: next.startsWith('http') ? next : resolveUrl(rawUrl, next) });
+            variantUris.push({ lineIdx: i + 1, uri: next.startsWith('http') ? next : resolveUrl(rawUrl, next) });
           }
         }
       }
-      if (variants.length > 0) {
-        variants.sort((a, b) => b.bw - a.bw);
-        const best = variants[0].uri;
-        content = await fetchText(best);
-        const { cleaned, removed } = cleanMediaPlaylist(content, best);
-        if (!cleaned.includes('#EXTM3U')) return null;
-        const blob = new Blob([cleaned], { type: 'application/vnd.apple.mpegurl' });
-        return { blobUrl: URL.createObjectURL(blob), removed };
+      if (variantUris.length === 0) return null;
+      const cleanedVariants = await Promise.all(
+        variantUris.slice(0, 8).map(async (v) => {
+          try {
+            const media = await fetchText(v.uri);
+            if (!media.includes('#EXTM3U')) return null;
+            const { cleaned, removed } = cleanMediaPlaylist(media, v.uri);
+            if (!cleaned.includes('#EXTM3U')) return null;
+            const blob = new Blob([cleaned], { type: 'application/vnd.apple.mpegurl' });
+            return { lineIdx: v.lineIdx, url: URL.createObjectURL(blob), removed };
+          } catch {
+            return null;
+          }
+        })
+      );
+      const ok = cleanedVariants.filter(Boolean) as { lineIdx: number; url: string; removed: number }[];
+      if (ok.length === 0) return null;
+      const extraBlobs: string[] = [];
+      let removed = 0;
+      for (const c of ok) {
+        lines[c.lineIdx] = c.url;
+        extraBlobs.push(c.url);
+        removed += c.removed;
       }
-      return null;
+      // Variant nào clean fail thì giữ URI gốc (absolute) để player vẫn đủ level
+      for (const v of variantUris) {
+        if (!ok.some((c) => c.lineIdx === v.lineIdx)) lines[v.lineIdx] = v.uri;
+      }
+      const master = new Blob([lines.join('\n')], { type: 'application/vnd.apple.mpegurl' });
+      return { blobUrl: URL.createObjectURL(master), removed, extraBlobs };
     }
     if (content.includes('#EXTM3U')) {
       const { cleaned, removed } = cleanMediaPlaylist(content, rawUrl);
@@ -119,8 +145,11 @@ export async function loadCleanedM3u8Url(rawUrl: string): Promise<{ blobUrl: str
   }
 }
 
-export function revokeBlobUrl(url: string | null) {
+export function revokeBlobUrl(url: string | string[] | null | undefined) {
   try {
-    if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+    const list = Array.isArray(url) ? url : [url];
+    for (const u of list) {
+      if (u && u.startsWith('blob:')) URL.revokeObjectURL(u);
+    }
   } catch { /* ignore */ }
 }
