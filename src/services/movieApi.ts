@@ -673,6 +673,49 @@ export function getClientNetflixCache(): any | null {
   return null;
 }
 
+function normHeroTitle(s: any): string {
+  return String(s || '').toLowerCase().trim().replace(/[“”"'`’.:;\-–—!?()[\]{}]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function stripHeroDiacritics(s: string): string {
+  try { return s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch { return s; }
+}
+// Chấm điểm khớp TMDB <-> phimapi, thà bỏ qua còn hơn gắn nhầm (vd Ám Ảnh/Obsession -> Bạch Dạ Ám Ảnh)
+// Ưu tiên 1: khớp tmdb.id chính xác (phimapi search đã trả kèm tmdb.id). Fallback: tên/năm/loại.
+function pickBestHeroMatch(foundItems: any[], opts: { title: string; originalTitle: string; year?: number; tmdbId?: string }): any | null {
+  if (!Array.isArray(foundItems) || foundItems.length === 0) return null;
+  const wantId = opts.tmdbId ? String(opts.tmdbId).trim() : '';
+  if (wantId) {
+    const byId = foundItems.find((c: any) => c && c.slug && String(c?.tmdb?.id ?? '').trim() === wantId);
+    if (byId) return byId;
+  }
+  const t = normHeroTitle(opts.title);
+  const ot = normHeroTitle(opts.originalTitle);
+  const tFlat = normHeroTitle(stripHeroDiacritics(opts.title));
+  const otFlat = normHeroTitle(stripHeroDiacritics(opts.originalTitle));
+  let best: any = null;
+  let bestScore = -Infinity;
+  for (const c of foundItems) {
+    if (!c || !c.slug) continue;
+    const cName = normHeroTitle(c.name);
+    const cOrigin = normHeroTitle(c.origin_name);
+    const cNameFlat = normHeroTitle(stripHeroDiacritics(c.name));
+    const cOriginFlat = normHeroTitle(stripHeroDiacritics(c.origin_name));
+    let score = 0;
+    if (cName && t && cName === t) score += 10;
+    else if (cNameFlat && tFlat && cNameFlat === tFlat) score += 8;
+    else if (t && cName && t.length >= 4 && (cName.includes(t) || t.includes(cName))) score += 2;
+    if (cOrigin && ot && cOrigin === ot) score += 8;
+    else if (cOriginFlat && otFlat && cOriginFlat === otFlat) score += 6;
+    else if (cOrigin && t && cOrigin === t) score += 4;
+    if (opts.year && Number(c.year) === Number(opts.year)) score += 3;
+    if (c.type === 'single') score += 4;
+    else if (c.type === 'series' || c.type === 'tvshows') score -= 2;
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  if (!best || bestScore < 10) return null;
+  return best;
+}
+
 export async function getTmdbHeroPopular(): Promise<Movie[]> {
   const nowTs = Date.now();
 
@@ -725,11 +768,17 @@ export async function getTmdbHeroPopular(): Promise<Movie[]> {
 
         try {
           const searchData = await safeFetchJson<{ data?: { items?: any[] }; items?: any[] }>(
-            `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery)}&limit=1`,
+            `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery)}&limit=10`,
             {},
             2500
           );
-          const found = searchData?.data?.items?.[0] || searchData?.items?.[0];
+          const foundItems = searchData?.data?.items || searchData?.items || [];
+          const found = pickBestHeroMatch(foundItems, {
+            title: item.title || '',
+            originalTitle: item.original_title || '',
+            year: item.release_date ? Number(String(item.release_date).slice(0, 4)) : undefined,
+            tmdbId: String(item.id),
+          });
           if (found && found.slug && !usedSlugs.has(found.slug)) {
             usedSlugs.add(found.slug);
             const tmdbBackdrop = item.backdrop_path ? `https://image.tmdb.org/t/p/original${item.backdrop_path}` : undefined;

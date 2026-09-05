@@ -173,7 +173,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
     setSeasonEpisodes([]);
     setShowSchedule(false);
 
-    const fetchScheduleForMovie = async (movieData: Movie) => {
+    const fetchScheduleForMovie = async (movieData: Movie, localServers?: EpisodeServer[]) => {
       const isSeries = movieData.type === 'series' || movieData.type === 'tvshows' || (movieData as any)?.tmdb?.type === 'tv';
       if (!isSeries) return { nextEp: null, seasonEps: [] };
 
@@ -196,6 +196,26 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
         return { nextEp: null, seasonEps: [] };
       }
 
+      // Tập đã có nguồn local (playable) -> không coi là "sắp chiếu" nữa
+      const localNums = new Set<number>();
+      try {
+        (localServers || []).forEach((srv) => {
+          (srv.server_data || []).forEach((ep: any) => {
+            const m = String(ep?.name ?? '').match(/\d+/);
+            if (m) {
+              const n = parseInt(m[0], 10);
+              if (!isNaN(n) && ep?.link_m3u8) localNums.add(n);
+            }
+          });
+        });
+      } catch {}
+
+      const startOfToday = () => {
+        const t = new Date();
+        t.setHours(0, 0, 0, 0);
+        return t;
+      };
+
       let nextEp: { episode_number: number; air_date: string; name?: string } | null = null;
       let seasonEps: Array<{ episode_number: number; air_date: string | null; name?: string }> = [];
 
@@ -204,15 +224,19 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
         const next = tvData?.next_episode_to_air;
         if (next?.air_date && next?.episode_number) {
           const air = new Date(next.air_date);
-          if (!isNaN(air.getTime())) {
-            nextEp = { episode_number: next.episode_number, air_date: next.air_date, name: next.name };
+          air.setHours(0, 0, 0, 0);
+          // Chỉ nhận next khi ngày chiếu còn ở tương lai/hôm nay (TMDB hay lag 1-2 ngày)
+          if (!isNaN(air.getTime()) && air >= startOfToday()) {
+            const n = Number(next.episode_number);
+            if (!localNums.has(n)) {
+              nextEp = { episode_number: n, air_date: next.air_date, name: next.name };
+            }
           }
         }
         const seasonNum = Number(tmdbSeason) || 1;
         const seasonData: any = await tmdbFetch(`tv/${tmdbId}/season/${seasonNum}`, { language: 'vi-VN' }).catch(() => null);
         if (seasonData?.episodes?.length) {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
+          const today = startOfToday();
 
           const rawEps = (seasonData.episodes as any[]).map((ep: any) => ({
             episode_number: ep.episode_number,
@@ -220,16 +244,40 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
             name: ep.name || '',
           }));
 
-          // Chỉ load các tập chưa chiếu (un-aired episodes)
+          // Chỉ giữ các tập thực sự chưa chiếu: air_date >= hôm nay, chưa có nguồn local.
+          // Tập quá khứ (như 04/09 khi hôm nay 05/09) bị loại -> lịch bắt đầu từ tập sắp chiếu thật (17).
           seasonEps = rawEps.filter((ep: any) => {
-            if (nextEp?.episode_number) {
-              return ep.episode_number >= nextEp.episode_number;
+            if (localNums.has(ep.episode_number)) return false;
+            if (!ep.air_date) {
+              // Chưa có lịch: chỉ giữ nếu >= next thật (tránh lôi lại tập cũ)
+              if (nextEp?.episode_number) return ep.episode_number >= nextEp.episode_number;
+              return true;
             }
-            if (ep.air_date) {
-              const d = new Date(ep.air_date);
-              return !isNaN(d.getTime()) && d >= today;
+            const d = new Date(ep.air_date);
+            if (isNaN(d.getTime())) return false;
+            d.setHours(0, 0, 0, 0);
+            return d >= today;
+          });
+          seasonEps.sort((a, b) => a.episode_number - b.episode_number);
+
+          // Nếu TMDB next đã quá hạn/bị loại (lag) -> lấy tập tương lai đầu tiên làm next thật
+          if (!nextEp && seasonEps.length > 0) {
+            const first = seasonEps.find((e) => e.air_date);
+            if (first?.air_date) {
+              nextEp = { episode_number: first.episode_number, air_date: first.air_date, name: first.name };
             }
-            return true;
+          }
+          // Chốt: next vẫn quá khứ (phòng thủ múi giờ) -> ẩn luôn
+          if (nextEp?.air_date) {
+            const nd = new Date(nextEp.air_date);
+            nd.setHours(0, 0, 0, 0);
+            if (isNaN(nd.getTime()) || nd < today) nextEp = null;
+          }
+          if (!nextEp) seasonEps = seasonEps.filter((e) => {
+            if (!e.air_date) return true;
+            const d = new Date(e.air_date);
+            d.setHours(0, 0, 0, 0);
+            return d >= today;
           });
         }
       } catch {}
@@ -263,7 +311,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
 
           // 2. Fetch schedule (lịch chiếu) WHILE loading screen is active
           fetches.push(
-            fetchScheduleForMovie(data.movie).then(({ nextEp, seasonEps }) => {
+            fetchScheduleForMovie(data.movie, data.episodes || []).then(({ nextEp, seasonEps }) => {
               if (isMounted) {
                 setNextEpisode(nextEp);
                 setSeasonEpisodes(seasonEps);
@@ -1498,6 +1546,192 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* Episode List — đưa lên lấp khoảng trống dưới Nội dung phim (cột trái) */}
+              <section id="detail-episodes-section" className="p-5 sm:p-6 rounded-2xl bg-[#0c1427] border border-blue-900/50 space-y-5">
+                <div className="flex flex-col gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-sky-400 shrink-0">
+                      <Tv className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="text-base sm:text-lg font-bold text-white">
+                        Danh Sách Tập Phim
+                      </h3>
+                      <p className="text-xs text-slate-400">
+                        Tổng cộng {allEpisodesForDisplay.length} tập • Hỗ trợ phát chuẩn Full HD
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Server Selector if multiple servers exist */}
+                  {episodes.length > 1 && (
+                    <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                      <span className="text-xs text-slate-400 shrink-0">Chọn Nguồn / Server:</span>
+                      {episodes.map((srv, idx) => (
+                        <button
+                          key={idx}
+                          id={`select-server-tab-${idx}`}
+                          onClick={() => setSelectedServerIndex(idx)}
+                          className={`text-xs px-3.5 py-1.5 rounded-xl font-medium transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                            selectedServerIndex === idx
+                              ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 font-bold border border-blue-400'
+                              : 'bg-slate-900 text-slate-300 hover:bg-slate-800 border border-slate-700'
+                          }`}
+                        >
+                          {srv.sourceLabel && (
+                            <span className="text-[10px] px-1 py-0.2 rounded bg-slate-950/80 text-sky-300 font-extrabold border border-blue-800/60">
+                              {srv.sourceLabel}
+                            </span>
+                          )}
+                          <span>{srv.server_name || `Server ${idx + 1}`}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Chophim-style next episode notification + dropdown lịch chiếu */}
+                {nextEpisode && (() => {
+                  const airDate = new Date(nextEpisode.air_date);
+                  const isValid = !isNaN(airDate.getTime());
+                  const formatted = isValid
+                    ? airDate.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })
+                    : nextEpisode.air_date;
+                  const today = new Date(); today.setHours(0,0,0,0);
+                  const air0 = new Date(airDate); air0.setHours(0,0,0,0);
+                  const diffDays = Math.round((air0.getTime() - today.getTime()) / 86400000);
+                  let countdown = '';
+                  if (diffDays === 0) countdown = ' • Hôm nay';
+                  else if (diffDays === 1) countdown = ' • Ngày mai';
+                  else if (diffDays > 1 && diffDays <= 7) countdown = ` • Còn ${diffDays} ngày nữa`;
+                  else if (diffDays < 0) countdown = ` • Đã qua ${Math.abs(diffDays)} ngày`;
+                  return (
+                    <div className="rounded-xl bg-gradient-to-r from-sky-500/10 via-blue-500/10 to-indigo-500/10 border border-sky-500/20 backdrop-blur-sm overflow-hidden">
+                      <div className="flex items-start gap-3 sm:gap-3.5 p-3.5 sm:p-4">
+                        <div className="shrink-0 w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-sky-500/15 border border-sky-500/20 flex items-center justify-center text-sky-400">
+                          <CalendarClock className="w-4 h-4 sm:w-5 sm:h-5" />
+                        </div>
+                        <div className="flex-1 min-w-0 space-y-0.5">
+                          <p className="text-xs sm:text-sm font-bold text-sky-200">
+                            Tập {nextEpisode.episode_number} dự kiến phát sóng
+                          </p>
+                          <p className="text-xs sm:text-sm text-slate-200">
+                            <span className="font-semibold text-white capitalize">{formatted}</span>
+                            <span className="text-sky-300 font-medium">{countdown}</span>
+                          </p>
+                        </div>
+                        {seasonEpisodes.length > 0 && (
+                          <button
+                            onClick={() => setShowSchedule(!showSchedule)}
+                            className="shrink-0 flex items-center gap-1.5 text-xs font-semibold text-sky-300 hover:text-white bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/20 px-3 py-1.5 rounded-full transition-colors cursor-pointer"
+                          >
+                            <span>Lịch chiếu</span>
+                            <motion.span animate={{ rotate: showSchedule ? 180 : 0 }} transition={{ duration: 0.2 }} className="text-[10px]">▼</motion.span>
+                          </button>
+                        )}
+                      </div>
+                      <AnimatePresence>
+                        {showSchedule && seasonEpisodes.length > 0 && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.25, ease: 'easeOut' }}
+                            className="border-t border-sky-500/15 bg-slate-900/30 overflow-hidden"
+                          >
+                            <div className="p-3 sm:p-4">
+                              <div className="grid grid-cols-1 xl:grid-cols-2 gap-1.5 max-h-64 overflow-y-auto pr-1">
+                                {seasonEpisodes.map((ep) => {
+                                  const epAir = ep.air_date ? new Date(ep.air_date) : null;
+                                  const isFuture = epAir ? epAir.getTime() > Date.now() : false;
+                                  const fmt = epAir && !isNaN(epAir.getTime())
+                                    ? epAir.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                                    : 'Chưa có lịch';
+                                  return (
+                                    <div key={ep.episode_number} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs border ${ep.episode_number === nextEpisode.episode_number ? 'bg-sky-500/15 border-sky-500/30 text-sky-200' : isFuture ? 'bg-slate-800/50 border-slate-700/50 text-slate-400' : 'bg-slate-800/80 border-slate-700/60 text-slate-200'}`}>
+                                      <span className="font-semibold">Tập {ep.episode_number}</span>
+                                      <span className="text-[11px]">{fmt}</span>
+                                      {isFuture && <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded">soon</span>}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  );
+                })()}
+
+                {/* Episode Search for long series */}
+                {allEpisodesForDisplay.length > 15 && (
+                  <div className="max-w-xs">
+                    <input
+                      type="text"
+                      placeholder="Tìm nhanh tập (vd: 1, 10, tập cuối...)"
+                      value={episodeSearch}
+                      onChange={(e) => setEpisodeSearch(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                )}
+
+                {/* Episode Grid */}
+                {isLoading ? (
+                  <div className="p-12 text-center text-slate-400 text-sm animate-pulse">
+                    Đang nạp danh sách tập phim...
+                  </div>
+                ) : filteredEpisodes.length > 0 ? (
+                  <div className="grid grid-cols-3 sm:grid-cols-4 xl:grid-cols-5 gap-2.5 sm:gap-3 max-h-96 overflow-y-auto overflow-x-hidden p-1 -m-1 pr-2 scrollbar-thin">
+                    {filteredEpisodes.map((ep, idx) => {
+                      const isSoon = (ep as any).isSoon;
+                      if (isSoon) {
+                        return (
+                          <div
+                            key={ep.slug || idx}
+                            id={`detail-ep-btn-${ep.slug}`}
+                            className="flex flex-col items-center justify-center p-2.5 sm:p-3 bg-slate-800/40 border border-slate-700/40 rounded-xl text-center opacity-60 cursor-not-allowed select-none"
+                          >
+                            <span className="text-xs sm:text-sm font-bold text-slate-400 line-clamp-1">
+                              {ep.name.startsWith('Tập') ? ep.name : `Tập ${ep.name}`}
+                            </span>
+                            <span className="text-[10px] bg-amber-500/15 text-amber-300 border border-amber-500/20 px-1.5 py-0.5 rounded-full mt-1 font-semibold">soon</span>
+                          </div>
+                        );
+                      }
+                      return (
+                        <button
+                          key={ep.slug || idx}
+                          id={`detail-ep-btn-${ep.slug}`}
+                          onClick={() => {
+                            if (onPlayEpisode) {
+                              onPlayEpisode(currentData, ep, currentServer);
+                            } else if (onPlayMovie) {
+                              onPlayMovie(currentData);
+                            }
+                          }}
+                          className="group flex flex-col items-center justify-center p-2.5 sm:p-3 bg-slate-900 hover:bg-blue-600 border border-slate-800 hover:border-blue-500 rounded-xl transition-colors duration-200 text-center cursor-pointer shadow-sm hover:shadow-md will-change-transform"
+                        >
+                          <span className="text-xs sm:text-sm font-bold text-white group-hover:text-white line-clamp-1">
+                            {ep.name.startsWith('Tập') ? ep.name : `Tập ${ep.name}`}
+                          </span>
+                          <span className="text-[10px] text-sky-400 group-hover:text-sky-100 flex items-center gap-1 mt-1 font-semibold">
+                            <Play className="w-2.5 h-2.5 fill-current" /> Phát HD
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-8 bg-slate-900/50 rounded-xl text-center text-slate-400 text-sm border border-slate-800">
+                    {episodeSearch
+                      ? 'Không tìm thấy tập phim phù hợp.'
+                      : 'Phim đang cập nhật tập mới, bạn có thể nhấn "Xem Phim Ngay" để phát nguồn chính.'}
+                  </div>
+                )}
+              </section>
             </div>
 
             {/* Right Column: Cast, Directors, Meta Card */}
@@ -1650,8 +1884,9 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
             </div>
           </div>
 
-          {/* Episode List Section */}
-          <section id="detail-episodes-section" className="p-5 sm:p-8 rounded-2xl bg-[#0c1427] border border-blue-900/50 space-y-6">
+          {/* Episode List Section - đã chuyển lên cột trái, ẩn bản full-width cũ */}
+          {false && (
+          <section id="detail-episodes-section-hidden" className="p-5 sm:p-8 rounded-2xl bg-[#0c1427] border border-blue-900/50 space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-sky-400">
@@ -1704,11 +1939,12 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
               const today = new Date(); today.setHours(0,0,0,0);
               const air0 = new Date(airDate); air0.setHours(0,0,0,0);
               const diffDays = Math.round((air0.getTime() - today.getTime()) / 86400000);
+              // Ẩn banner nếu ngày chiếu đã qua (TMDB lag) – tránh "dự kiến + đã qua N ngày"
+              if (diffDays < 0) return null;
               let countdown = '';
               if (diffDays === 0) countdown = ' • Hôm nay';
               else if (diffDays === 1) countdown = ' • Ngày mai';
               else if (diffDays > 1 && diffDays <= 7) countdown = ` • Còn ${diffDays} ngày nữa`;
-              else if (diffDays < 0) countdown = ` • Đã qua ${Math.abs(diffDays)} ngày`;
               return (
                 <div className="rounded-xl bg-gradient-to-r from-sky-500/10 via-blue-500/10 to-indigo-500/10 border border-sky-500/20 backdrop-blur-sm overflow-hidden">
                   <div className="flex items-start gap-3 sm:gap-3.5 p-3.5 sm:p-4">
@@ -1835,6 +2071,7 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
               </div>
             )}
           </section>
+          )}
 
           {/* Related Movies Section */}
           {relatedMovies.length > 0 && (

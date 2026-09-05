@@ -637,6 +637,52 @@ async function startServer() {
   const tmdbHeroCache = new LRUCache<string, { data: any; timestamp: number }>(10);
   let isHeroRefreshing = false;
 
+  // Chuẩn hóa tên để so khớp TMDB <-> phimapi (tránh gắn nhầm như Ám Ảnh/Obsession -> Bạch Dạ Ám Ảnh)
+  function normHeroTitle(s: any): string {
+    return String(s || "").toLowerCase().trim().replace(/[“”"'`’.:;\-–—!?()[\]{}]/g, " ").replace(/\s+/g, " ").trim();
+  }
+  function stripHeroDiacritics(s: string): string {
+    try { return s.normalize("NFD").replace(/[\u0300-\u036f]/g, ""); } catch { return s; }
+  }
+  // Chọn kết quả phimapi khớp nhất với TMDB; trả null nếu không đủ tin cậy (thà bỏ qua còn hơn gắn nhầm)
+  // Ưu tiên 1: khớp tmdb.id chính xác (phimapi search đã trả kèm tmdb.id) — vd 1339713 -> Ám Ảnh/Obsession, không lấy nhầm Bạch Dạ 292435.
+  // Fallback: chấm điểm tên/năm/loại khi thiếu tmdb.id.
+  function pickBestPhimapiMatch(foundItems: any[], opts: { title: string; originalTitle: string; year?: number; tmdbId?: string }): any | null {
+    if (!Array.isArray(foundItems) || foundItems.length === 0) return null;
+    const wantId = opts.tmdbId ? String(opts.tmdbId).trim() : '';
+    if (wantId) {
+      const byId = foundItems.find((c: any) => c && c.slug && String(c?.tmdb?.id ?? '').trim() === wantId);
+      if (byId) return byId;
+    }
+    const t = normHeroTitle(opts.title);
+    const ot = normHeroTitle(opts.originalTitle);
+    const tFlat = normHeroTitle(stripHeroDiacritics(opts.title));
+    const otFlat = normHeroTitle(stripHeroDiacritics(opts.originalTitle));
+    let best: any = null;
+    let bestScore = -Infinity;
+    for (const c of foundItems) {
+      if (!c || !c.slug) continue;
+      const cName = normHeroTitle(c.name);
+      const cOrigin = normHeroTitle(c.origin_name);
+      const cNameFlat = normHeroTitle(stripHeroDiacritics(c.name));
+      const cOriginFlat = normHeroTitle(stripHeroDiacritics(c.origin_name));
+      let score = 0;
+      if (cName && t && cName === t) score += 10;
+      else if (cNameFlat && tFlat && cNameFlat === tFlat) score += 8;
+      else if (t && cName && t.length >= 4 && (cName.includes(t) || t.includes(cName))) score += 2;
+      if (cOrigin && ot && cOrigin === ot) score += 8;
+      else if (cOriginFlat && otFlat && cOriginFlat === otFlat) score += 6;
+      else if (cOrigin && t && cOrigin === t) score += 4;
+      if (opts.year && Number(c.year) === Number(opts.year)) score += 3;
+      // discover/movie là phim lẻ -> ưu tiên single, phạt series (case Ám Ảnh movie vs Bạch Dạ series)
+      if (c.type === "single") score += 4;
+      else if (c.type === "series" || c.type === "tvshows") score -= 2;
+      if (score > bestScore) { bestScore = score; best = c; }
+    }
+    if (!best || bestScore < 10) return null;
+    return best;
+  }
+
   async function refreshHeroPopular(force = false): Promise<any> {
     const cacheKey = "hero:discover:vi-VN:VN:popularity.desc:v3";
     const bearer = process.env.TMDB_BEARER_TOKEN || process.env.TMDB_READ_TOKEN || "";
@@ -686,11 +732,14 @@ async function startServer() {
           const searchQuery = title.replace(/\s*\(.*?\)/, "").replace(/:\s*.*$/, "").trim();
           if (!searchQuery) return null;
           try {
-            const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery)}&limit=3`;
+            const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery)}&limit=10`;
             const searchRes = await fetchWithTimeout(searchUrl, 3000).catch(() => null);
             const foundItems = searchRes?.data?.items || searchRes?.items || [];
             if (!foundItems || foundItems.length === 0) return null;
-            const matchedItem = foundItems[0];
+            // Không lấy [0] mù quáng (phimapi sort theo modified -> dễ gắn nhầm, vd "Ám Ảnh" trả Bạch Dạ trước Obsession).
+            // Khớp tmdb.id trước, fallback chấm điểm tên/năm/loại để chọn đúng phim.
+            const tmdbYear = it.release_date ? Number(String(it.release_date).slice(0, 4)) : undefined;
+            const matchedItem = pickBestPhimapiMatch(foundItems, { title, originalTitle: it.original_title || "", year: tmdbYear, tmdbId: String(it.id) });
             if (!matchedItem?.slug) return null;
 
             const tmdbId = String(it.id);
@@ -862,11 +911,13 @@ async function startServer() {
     }
 
     try {
-      // First try real-time RTDB for instant accurate data
-      const rtdbData = await fetchFromRtdb("system_cache/hero_banner");
-      if (rtdbData && rtdbData.items && rtdbData.items.length >= 8) {
-        tmdbHeroCache.set(cacheKey, { data: rtdbData, timestamp: Date.now() });
-        return res.json(rtdbData);
+      // Chỉ dùng RTDB shortcut khi KHÔNG force; khi force (?refresh=1) phải recompute để đẩy item gắn nhầm ra
+      if (!force) {
+        const rtdbData = await fetchFromRtdb("system_cache/hero_banner");
+        if (rtdbData && rtdbData.items && rtdbData.items.length >= 8) {
+          tmdbHeroCache.set(cacheKey, { data: rtdbData, timestamp: Date.now() });
+          return res.json(rtdbData);
+        }
       }
 
       const payload = await refreshHeroPopular(force);
@@ -1869,11 +1920,22 @@ setTimeout(seedInitialCastIndex, 2000);
           try {
             const lowerTitle = title.toLowerCase().trim();
             const searchQuery = titleSearchAlias[lowerTitle] || title.replace(/\s*\(.*?\)/, "").replace(/:\s*.*$/, "").trim();
-            const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery || title)}&limit=4`;
+            const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery || title)}&limit=10`;
             const searchRes = await fetchWithTimeout(searchUrl, 3500).catch(() => null);
             const foundItems = searchRes?.data?.items || searchRes?.items || [];
             if (foundItems.length > 0) {
-              const matchedItem = foundItems[0];
+              // Ưu tiên khớp tên/origin chính xác thay vì [0] mù quáng (phimapi sort theo modified).
+              // Path này không có tmdbId (title scrape từ Tudum) nên dùng scoring + sanity chứa query.
+              let matchedItem = pickBestPhimapiMatch(foundItems, { title, originalTitle: title });
+              if (!matchedItem) {
+                const q = normHeroTitle(searchQuery || title);
+                const c0 = foundItems[0];
+                const n0 = normHeroTitle(c0?.name);
+                const o0 = normHeroTitle(c0?.origin_name);
+                if (c0?.slug && q.length >= 4 && (n0.includes(q) || q.includes(n0) || o0.includes(q) || q.includes(o0))) {
+                  matchedItem = c0;
+                }
+              }
               if (matchedItem && matchedItem.slug) {
                 return {
                   slug: matchedItem.slug,
