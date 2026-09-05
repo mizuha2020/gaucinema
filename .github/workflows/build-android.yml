@@ -40,6 +40,7 @@ jobs:
         run: |
           npx cap sync android
           node scripts/prepare-assets.cjs
+          node scripts/slim-android-audio.cjs
 
       - name: Verify Gradle wrapper jar
         run: |

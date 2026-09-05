@@ -4,6 +4,15 @@ import { motion } from 'motion/react';
 import { MangaChapter, MangaItem, getProxyImageUrl, fetchImageAsBase64Native } from '../../services/mangaApi';
 import { mangaApi } from '../../services/mangaApi';
 import { getFullApiUrl, isNativeApp } from '../../services/apiConfig';
+import {
+  isBgmDownloadSupported,
+  getBgmStreamUrl,
+  getBgmDownloadInfo,
+  isBgmDownloaded,
+  downloadBgmTrack,
+  deleteBgmDownload,
+  resolveBgmPlayUrl,
+} from '../../services/mangaBgmDownloadService';
 import { systemApiService } from '../../services/systemApiService';
 import { presenceService } from '../../services/presenceService';
 import { Account, UserProfile } from '../../types';
@@ -27,6 +36,9 @@ import {
   Sparkles,
   Music,
   Volume2,
+  Download,
+  Trash2,
+  Loader2,
   VolumeX,
 } from 'lucide-react';
 import {
@@ -99,6 +111,63 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
   });
   const [isMusicPlaying, setIsMusicPlaying] = useState<boolean>(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioBgmUrlRef = useRef<string>('');
+  // Tải offline BGM (chỉ APK): idle | checking | downloading | done | error
+  const [bgmDl, setBgmDl] = useState<Record<string, { status: 'idle' | 'checking' | 'downloading' | 'done' | 'error'; progress: number; msg?: string }>>({});
+  // Tăng mỗi khi tải/xóa xong để audio resolve lại URL phát
+  const [bgmPlayVersion, setBgmPlayVersion] = useState(0);
+
+  // Quét trạng thái tải offline mỗi khi mở panel nhạc
+  useEffect(() => {
+    if (!showMusicSettings || !isBgmDownloadSupported()) return;
+    let cancelled = false;
+    (async () => {
+      const init: typeof bgmDl = {};
+      for (const t of MANGA_READER_MUSIC_TRACKS) {
+        if (t.id === 'off') continue;
+        init[t.id] = { status: 'checking', progress: 0 };
+      }
+      if (!cancelled) setBgmDl(init);
+      for (const t of MANGA_READER_MUSIC_TRACKS) {
+        if (t.id === 'off' || cancelled) continue;
+        try {
+          const done = await isBgmDownloaded(t.id, t.src);
+          if (!cancelled) setBgmDl((prev) => ({ ...prev, [t.id]: { status: done ? 'done' : 'idle', progress: done ? 100 : 0 } }));
+        } catch {
+          if (!cancelled) setBgmDl((prev) => ({ ...prev, [t.id]: { status: 'idle', progress: 0 } }));
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showMusicSettings]);
+
+  const handleDownloadBgm = useCallback(async (trackId: string, src: string) => {
+    setBgmDl((prev) => ({ ...prev, [trackId]: { status: 'downloading', progress: 0 } }));
+    try {
+      await downloadBgmTrack(trackId, src, (p) =>
+        setBgmDl((prev) => ({ ...prev, [trackId]: { status: 'downloading', progress: p } }))
+      );
+      setBgmDl((prev) => ({ ...prev, [trackId]: { status: 'done', progress: 100 } }));
+      setBgmPlayVersion((v) => v + 1);
+    } catch (e: any) {
+      setBgmDl((prev) => ({ ...prev, [trackId]: { status: 'error', progress: 0, msg: e?.message || 'Tải thất bại, thử lại' } }));
+    }
+  }, []);
+
+  const handleDeleteBgm = useCallback(async (trackId: string, src: string) => {
+    await deleteBgmDownload(trackId, src);
+    setBgmDl((prev) => ({ ...prev, [trackId]: { status: 'idle', progress: 0 } }));
+    setBgmPlayVersion((v) => v + 1);
+  }, []);
+
+  const formatBgmSize = (trackId: string): string => {
+    const size = getBgmDownloadInfo(trackId)?.sizeBytes;
+    if (typeof size === 'number' && size > 0) {
+      if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+      return `${Math.max(1, Math.round(size / 1024))} KB`;
+    }
+    return '';
+  };
 
   // Sync chapter khi parent đổi chap (do key giờ chỉ theo manga, giữ nhạc liền mạch)
   useEffect(() => {
@@ -176,7 +245,9 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
     if (audioRef.current) audioRef.current.volume = clamped;
   };
 
-  // Init / update audio element when track/volume changes
+  // Init / update audio element when track/volume changes.
+  // URL phát: ưu tiên file đã tải offline (APK), còn không thì stream từ backend
+  // (mp3 không còn nhúng trong APK để giảm dung lượng).
   useEffect(() => {
     const track = MANGA_READER_MUSIC_TRACKS.find((t) => t.id === musicTrack);
     if (!track || track.id === 'off' || !track.src) {
@@ -184,6 +255,7 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
         audioRef.current.pause();
         audioRef.current.src = '';
       }
+      audioBgmUrlRef.current = '';
       setIsMusicPlaying(false);
       return;
     }
@@ -195,32 +267,39 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
     const audio = audioRef.current;
     audio.loop = true;
     audio.volume = musicVolume;
-    if (audio.src !== window.location.origin + track.src && audio.src !== track.src) {
-      audio.src = track.src;
-      audio.load();
-    }
-    // Auto-play when track selected (requires user interaction; will be triggered by button click)
-    const playPromise = audio.play();
-    if (playPromise && typeof (playPromise as Promise<void>).then === 'function') {
-      (playPromise as Promise<void>)
-        .then(() => setIsMusicPlaying(true))
-        .catch(() => setIsMusicPlaying(false));
-    } else {
-      setIsMusicPlaying(true);
-    }
-
+    let cancelled = false;
     const onPlay = () => setIsMusicPlaying(true);
     const onPause = () => setIsMusicPlaying(false);
     const onError = () => setIsMusicPlaying(false);
     audio.addEventListener('play', onPlay);
     audio.addEventListener('pause', onPause);
     audio.addEventListener('error', onError);
+    resolveBgmPlayUrl(track.id, track.src)
+      .catch(() => getBgmStreamUrl(track.src))
+      .then((url) => {
+        if (cancelled || !url) return;
+        // Auto-play when track selected (requires user interaction; will be triggered by button click)
+        if (audioBgmUrlRef.current !== url) {
+          audioBgmUrlRef.current = url;
+          audio.src = url;
+          audio.load();
+        }
+        const playPromise = audio.play();
+        if (playPromise && typeof (playPromise as Promise<void>).then === 'function') {
+          (playPromise as Promise<void>)
+            .then(() => { if (!cancelled) setIsMusicPlaying(true); })
+            .catch(() => { if (!cancelled) setIsMusicPlaying(false); });
+        } else if (!cancelled) {
+          setIsMusicPlaying(true);
+        }
+      });
     return () => {
+      cancelled = true;
       audio.removeEventListener('play', onPlay);
       audio.removeEventListener('pause', onPause);
       audio.removeEventListener('error', onError);
     };
-  }, [musicTrack, musicVolume]);
+  }, [musicTrack, musicVolume, bgmPlayVersion]);
 
   // Sync volume to audio element
   useEffect(() => {
@@ -1408,6 +1487,9 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
               <div className="grid grid-cols-1 gap-2">
                 {MANGA_READER_MUSIC_TRACKS.map((track) => {
                   const isSelected = musicTrack === track.id;
+                  const dl = track.id === 'off' ? undefined : bgmDl[track.id];
+                  const dlSupported = track.id !== 'off' && isBgmDownloadSupported();
+                  const sizeLabel = track.id === 'off' ? '' : formatBgmSize(track.id);
                   return (
                     <button
                       key={track.id}
@@ -1423,18 +1505,62 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
                         <div className="min-w-0">
                           <p className="text-sm font-bold truncate">{track.label}</p>
                           <p className="text-xs text-gray-400 truncate">{track.subLabel}</p>
-                          {track.id !== 'off' && <p className="text-[11px] text-white/30 truncate mt-0.5">{track.src}</p>}
+                          {track.id !== 'off' && (
+                            <p className="text-[11px] text-white/30 truncate mt-0.5">
+                              {dl?.status === 'done'
+                                ? `Đã tải offline${sizeLabel ? ` • ${sizeLabel}` : ''}`
+                                : dl?.status === 'downloading'
+                                  ? `Đang tải... ${dl.progress}%`
+                                  : dl?.status === 'error'
+                                    ? (dl.msg || 'Tải thất bại, bấm để thử lại')
+                                    : dlSupported
+                                      ? 'Nghe online • bấm ⬇ để tải offline'
+                                      : 'Nghe online (stream)'}
+                            </p>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0 ml-2">
                         {track.id !== 'off' && isSelected && isMusicPlaying && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
+                        {/* Tải / xóa offline (chỉ APK) — chặn bubble để không đổi track */}
+                        {dlSupported && (dl?.status === 'done' ? (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            title="Xóa file đã tải"
+                            onClick={(e) => { e.stopPropagation(); handleDeleteBgm(track.id, track.src); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); handleDeleteBgm(track.id, track.src); } }}
+                            className="w-8 h-8 rounded-full bg-white/10 hover:bg-red-500/30 flex items-center justify-center text-gray-300 hover:text-red-300"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </span>
+                        ) : dl?.status === 'downloading' ? (
+                          <span className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-emerald-300" title={`Đang tải ${dl.progress}%`}>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          </span>
+                        ) : dl?.status === 'checking' ? (
+                          <span className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-gray-500">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          </span>
+                        ) : (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            title="Tải về máy để nghe offline"
+                            onClick={(e) => { e.stopPropagation(); handleDownloadBgm(track.id, track.src); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); handleDownloadBgm(track.id, track.src); } }}
+                            className="w-8 h-8 rounded-full bg-white/10 hover:bg-emerald-500/30 flex items-center justify-center text-gray-300 hover:text-emerald-300"
+                          >
+                            <Download className="w-4 h-4" />
+                          </span>
+                        ))}
                         {isSelected && <span className="w-6 h-6 rounded-full bg-emerald-600 flex items-center justify-center text-white text-xs">✓</span>}
                       </div>
                     </button>
                   );
                 })}
               </div>
-              <p className="text-[11px] text-white/30">Bạn có thể thay file nhạc trong thư mục <code className="bg-white/10 px-1 py-0.5 rounded">public/sounds/</code> – 3 file mặc định sẽ được cung cấp sau.</p>
+              <p className="text-[11px] text-white/30">Nhạc nghe online mặc định để app nhẹ. Trên app Android, bấm ⬇ để tải về nghe offline, bấm 🗑 để xóa file khi không cần.</p>
             </div>
 
             {/* Volume slider */}
