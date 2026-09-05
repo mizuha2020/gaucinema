@@ -12,6 +12,8 @@ import {
   downloadBgmTrack,
   deleteBgmDownload,
   resolveBgmPlayUrl,
+  resolveBgmPlaybackSources,
+  candidateBgmUrls,
 } from '../../services/mangaBgmDownloadService';
 import { systemApiService } from '../../services/systemApiService';
 import { presenceService } from '../../services/presenceService';
@@ -110,6 +112,7 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
     return 0.5;
   });
   const [isMusicPlaying, setIsMusicPlaying] = useState<boolean>(false);
+  const [bgmError, setBgmError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioBgmUrlRef = useRef<string>('');
   // Tải offline BGM (chỉ APK): idle | checking | downloading | done | error
@@ -246,17 +249,21 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
   };
 
   // Init / update audio element when track/volume changes.
-  // URL phát: ưu tiên file đã tải offline (APK), còn không thì stream từ backend
-  // (mp3 không còn nhúng trong APK để giảm dung lượng).
+  // URL phát: ưu tiên file đã tải offline (APK), còn không thì thử lần lượt
+  // các base (custom backend -> cloud -> relative) qua nhiều <source> để
+  // <audio> tự fallback khi gặp lỗi (mp3 không còn nhúng trong APK).
   useEffect(() => {
     const track = MANGA_READER_MUSIC_TRACKS.find((t) => t.id === musicTrack);
     if (!track || track.id === 'off' || !track.src) {
       if (audioRef.current) {
         audioRef.current.pause();
-        audioRef.current.src = '';
+        audioRef.current.removeAttribute('src');
+        audioRef.current.innerHTML = '';
+        try { audioRef.current.load(); } catch {}
       }
       audioBgmUrlRef.current = '';
       setIsMusicPlaying(false);
+      setBgmError(null);
       return;
     }
     if (!audioRef.current) {
@@ -268,20 +275,34 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
     audio.loop = true;
     audio.volume = musicVolume;
     let cancelled = false;
-    const onPlay = () => setIsMusicPlaying(true);
+    const onPlay = () => { setIsMusicPlaying(true); setBgmError(null); };
     const onPause = () => setIsMusicPlaying(false);
-    const onError = () => setIsMusicPlaying(false);
+    const onError = () => {
+      if (!cancelled) {
+        setIsMusicPlaying(false);
+        setBgmError(`Không phát được "${track.label}". Kiểm tra mạng rồi thử lại.`);
+      }
+    };
     audio.addEventListener('play', onPlay);
     audio.addEventListener('pause', onPause);
     audio.addEventListener('error', onError);
-    resolveBgmPlayUrl(track.id, track.src)
-      .catch(() => getBgmStreamUrl(track.src))
-      .then((url) => {
-        if (cancelled || !url) return;
+    setBgmError(null);
+    resolveBgmPlaybackSources(track.id, track.src)
+      .catch(() => candidateBgmUrls(track.src))
+      .then((urls) => {
+        if (cancelled || !urls.length) return;
+        const key = urls.join('|');
         // Auto-play when track selected (requires user interaction; will be triggered by button click)
-        if (audioBgmUrlRef.current !== url) {
-          audioBgmUrlRef.current = url;
-          audio.src = url;
+        if (audioBgmUrlRef.current !== key) {
+          audioBgmUrlRef.current = key;
+          try { audio.removeAttribute('src'); } catch {}
+          audio.innerHTML = '';
+          for (const u of urls) {
+            const s = document.createElement('source');
+            s.src = u;
+            if (u.toLowerCase().split('?')[0].endsWith('.mp3')) s.type = 'audio/mpeg';
+            audio.appendChild(s);
+          }
           audio.load();
         }
         const playPromise = audio.play();
@@ -324,7 +345,14 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
       return;
     }
     if (audioRef.current.paused) {
-      audioRef.current.play().then(() => setIsMusicPlaying(true)).catch(() => setIsMusicPlaying(false));
+      setBgmError(null);
+      audioRef.current.play()
+        .then(() => setIsMusicPlaying(true))
+        .catch(() => {
+          setIsMusicPlaying(false);
+          const track = MANGA_READER_MUSIC_TRACKS.find((t) => t.id === musicTrack);
+          setBgmError(`Không phát được "${track?.label || 'nhạc'}". Kiểm tra mạng rồi thử lại.`);
+        });
     } else {
       audioRef.current.pause();
       setIsMusicPlaying(false);
@@ -1561,6 +1589,9 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
                 })}
               </div>
               <p className="text-[11px] text-white/30">Nhạc nghe online mặc định để app nhẹ. Trên app Android, bấm ⬇ để tải về nghe offline, bấm 🗑 để xóa file khi không cần.</p>
+              {bgmError && (
+                <p className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2">⚠️ {bgmError}</p>
+              )}
             </div>
 
             {/* Volume slider */}

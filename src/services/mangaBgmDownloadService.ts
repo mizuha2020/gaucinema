@@ -1,6 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
-import { getFullApiUrl, isNativeApp } from './apiConfig';
+import { CLOUD_BACKEND_URL, getFullApiUrl, isNativeApp } from './apiConfig';
 
 // Nhạc nền manga (BGM) KHÔNG còn nhúng trong APK để giảm dung lượng.
 // - Mặc định: stream trực tiếp từ backend (getFullApiUrl trên native).
@@ -27,6 +27,78 @@ export function isBgmDownloadSupported(): boolean {
 /** URL stream: native -> absolute backend URL, web -> relative path. */
 export function getBgmStreamUrl(remoteSrc: string): string {
   return getFullApiUrl(remoteSrc);
+}
+
+function cleanSrc(remoteSrc: string): string {
+  return remoteSrc.startsWith('/') ? remoteSrc : `/${remoteSrc}`;
+}
+
+/**
+ * Các URL ứng viên theo thứ tự ưu tiên:
+ * 1. primary (custom backend / VITE_API_URL / cloud mặc định)
+ * 2. CLOUD_BACKEND_URL trực tiếp (phòng custom backend thiếu file /sounds)
+ * 3. relative (chỉ có nghĩa trên web/dev)
+ */
+export function candidateBgmUrls(remoteSrc: string): string[] {
+  const clean = cleanSrc(remoteSrc);
+  const list: string[] = [];
+  const primary = getFullApiUrl(remoteSrc);
+  if (primary) list.push(primary);
+  try {
+    const cloud = `${CLOUD_BACKEND_URL}${clean}`;
+    if (!list.includes(cloud)) list.push(cloud);
+  } catch {}
+  if (!list.includes(clean)) list.push(clean);
+  return list;
+}
+
+async function urlReachable(url: string, timeoutMs = 6000): Promise<boolean> {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { method: 'HEAD', signal: ctrl.signal });
+      if (res.ok) return true;
+      // Một số host chặn HEAD -> thử GET 1 byte
+      if (res.status === 403 || res.status === 405) {
+        const res2 = await fetch(url, { method: 'GET', headers: { Range: 'bytes=0-0' }, signal: ctrl.signal });
+        return res2.ok;
+      }
+      return false;
+    } finally {
+      clearTimeout(t);
+    }
+  } catch {
+    return false;
+  }
+}
+
+const BASE_OK_KEY = 'manga_bgm_base_ok_v1';
+
+/**
+ * Tìm URL stream sống (check song song, ưu tiên theo thứ tự).
+ * Dùng cho download. Playback thì dùng multi-source nên không cần đợi.
+ */
+export async function resolveBgmStreamUrl(remoteSrc: string): Promise<string> {
+  const candidates = candidateBgmUrls(remoteSrc);
+  // Fast path: base đã verified trước đó
+  try {
+    const saved = localStorage.getItem(BASE_OK_KEY);
+    if (saved) {
+      const hit = candidates.find((u) => u.startsWith(saved));
+      if (hit && (await urlReachable(hit, 5000))) return hit;
+    }
+  } catch {}
+  const results = await Promise.all(candidates.map((u) => urlReachable(u)));
+  const idx = results.findIndex(Boolean);
+  const pick = idx >= 0 ? candidates[idx] : candidates[0] || remoteSrc;
+  if (idx >= 0) {
+    try {
+      const base = pick.slice(0, pick.length - cleanSrc(remoteSrc).length);
+      if (base) localStorage.setItem(BASE_OK_KEY, base);
+    } catch {}
+  }
+  return pick;
 }
 
 function fileNameOf(remoteSrc: string): string {
@@ -89,7 +161,8 @@ export async function downloadBgmTrack(
   remoteSrc: string,
   onProgress?: (pct: number) => void
 ): Promise<string> {
-  const url = getBgmStreamUrl(remoteSrc);
+  // Tìm URL sống trước (phòng custom backend thiếu file)
+  const url = await resolveBgmStreamUrl(remoteSrc);
   const destPath = bgmFilePath(remoteSrc);
   try {
     await Filesystem.mkdir({ path: BGM_DIR, directory: Directory.Data, recursive: true });
@@ -146,6 +219,22 @@ async function saveDownloadRecord(trackId: string, destPath: string, knownSize?:
 async function toLocalPlayUrl(destPath: string): Promise<string> {
   const st = await Filesystem.getUri({ path: destPath, directory: Directory.Data });
   return Capacitor.convertFileSrc(st.uri);
+}
+
+/**
+ * Danh sách source để phát: file offline nếu có, ngược lại toàn bộ URL ứng
+ * viên. <audio> sẽ tự thử từng <source> khi gặp lỗi nên không cần preflight
+ * (tránh CORS false-negative + phát ngay không đợi).
+ */
+export async function resolveBgmPlaybackSources(trackId: string, remoteSrc: string): Promise<string[]> {
+  if (isBgmDownloadSupported()) {
+    try {
+      if (await isBgmDownloaded(trackId, remoteSrc)) {
+        return [await toLocalPlayUrl(bgmFilePath(remoteSrc))];
+      }
+    } catch {}
+  }
+  return candidateBgmUrls(remoteSrc);
 }
 
 /**
