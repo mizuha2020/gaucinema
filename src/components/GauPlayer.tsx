@@ -983,29 +983,6 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     };
   }, []);
 
-  // Badge chẩn đoán TẠM THỜI (xóa sau khi fix xong): chụp màn hình gửi dev.
-  // Cho biết app có nhận ra APK native không + lệnh native có chạy không.
-  const [debugInfo, setDebugInfo] = useState('');
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      let plat = '?';
-      let capNative = '?';
-      let host = '';
-      try { plat = Capacitor.getPlatform(); } catch { plat = 'err'; }
-      try { capNative = String((window as any)?.Capacitor?.isNative ?? '?'); } catch {}
-      try { host = `${window.location.protocol}//${window.location.host}`; } catch {}
-      let probe = '?';
-      try { probe = String(await checkNativePipSupported()); } catch { probe = 'err'; }
-      if (!cancelled) {
-        setDebugInfo(
-          `nat:${isNativeAndroid() ? 1 : 0} capNat:${capNative} plat:${plat} host:${host} pipBtn:${pipSupported ? 1 : 0} pipProbe:${probe} imm:${nativeImmersive ? 1 : 0}`
-        );
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [pipSupported, nativeImmersive]);
-
   // Mở player là hẹn giờ tự ẩn controls (kẻo hiện mãi nếu không chạm gì)
   useEffect(() => {
     resetControlsTimer();
@@ -1016,6 +993,12 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     if (!isNativeAndroid()) return;
     setNativeVideoPlaying(isPlaying);
   }, [isPlaying]);
+
+  // Thoát player là reset flag phát về false. Nếu không: thoát phim lúc đang
+  // phát thì flag kẹt ở true, về trang chủ vuốt Home cũng bị lôi vào PiP.
+  useEffect(() => {
+    return () => { if (isNativeAndroid()) setNativeVideoPlaying(false); };
+  }, []);
 
   // ---- Timeline scrub: 1 bộ pointer events cho cả chuột + touch ----
   // Kéo là thấy preview (dùng chung preview video ẩn), thả ra mới seek thật.
@@ -1134,10 +1117,6 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
       onContextMenu={e => e.preventDefault()}
       style={{ touchAction: 'manipulation' }}
     >
-      {/* Badge chẩn đoán TẠM THỜI — chụp màn hình gửi dev, sẽ xóa sau khi fix xong */}
-      <div className="absolute top-1 left-1 z-[80] px-1.5 py-0.5 rounded bg-black/70 text-[9px] font-mono text-lime-300 pointer-events-none select-none max-w-[95vw] truncate">
-        {debugInfo || 'dbg...'}
-      </div>
       <div
         className="video-area relative flex-1 bg-black flex items-center justify-center overflow-hidden"
         onClick={() => { if (!isTouchDeviceRef.current) handleVideoAreaClick(); }}
