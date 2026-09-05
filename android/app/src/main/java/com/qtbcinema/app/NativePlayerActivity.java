@@ -28,8 +28,8 @@ import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.dash.DashMediaSource;
 import androidx.media3.exoplayer.drm.DefaultDrmSessionManager;
-import androidx.media3.exoplayer.drm.DefaultDrmSessionManagerProvider;
 import androidx.media3.exoplayer.drm.DrmSessionManager;
+import androidx.media3.exoplayer.drm.DrmSessionManagerProvider;
 import androidx.media3.exoplayer.drm.ExoMediaDrm;
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm;
 import androidx.media3.exoplayer.drm.MediaDrmCallback;
@@ -181,15 +181,14 @@ public class NativePlayerActivity extends AppCompatActivity {
 
             // DRM (ClearKey) gắn qua MediaSource.Factory — ExoPlayer.Builder của
             // media3 không có setDrmSessionManagerProvider.
-            DefaultDrmSessionManagerProvider drmProvider = null;
+            DrmSessionManagerProvider drmProvider = null;
             if (drmKey != null && !drmKey.trim().isEmpty()) {
                 MediaDrmCallback drmCallback = new NativeClearKeyDrmCallback(drmKey, userAgent);
                 DrmSessionManager drmSessionManager = new DefaultDrmSessionManager.Builder()
                         .setUuidAndExoMediaDrmProvider(CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
                         .build(drmCallback);
 
-                drmProvider = new DefaultDrmSessionManagerProvider();
-                drmProvider.setDrmSessionManager(CLEARKEY_UUID, drmSessionManager);
+                drmProvider = mediaItem -> drmSessionManager;
             }
 
             player = playerBuilder.build();
