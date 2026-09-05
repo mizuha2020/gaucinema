@@ -36,10 +36,8 @@ jobs:
           echo "Building with API URL: $VITE_API_URL"
           npm run build
 
-      - name: Prepare Clean Android Platform & Assets
+      - name: Sync Android Platform & Assets
         run: |
-          rm -rf android
-          npx cap add android
           npx cap sync android
           node scripts/prepare-assets.cjs
 

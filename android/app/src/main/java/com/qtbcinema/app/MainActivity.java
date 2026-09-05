@@ -26,6 +26,8 @@ public class MainActivity extends BridgeActivity {
 
     private static final String DEFAULT_STREAM_UA = "Dalvik/2.1.0 (Linux; U; Android 10; Build/QP1A.190711.020)";
     private boolean isPlayingVideo = false;
+    private boolean immersiveEnabled = false;
+    private boolean isInPip = false;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -41,6 +43,20 @@ public class MainActivity extends BridgeActivity {
             settings.setAllowFileAccess(true);
             settings.setAllowContentAccess(true);
             settings.setJavaScriptCanOpenWindowsAutomatically(true);
+
+            // Edge-to-edge để WebView vẽ được dưới status bar khi immersive (xem phim fullscreen thật sự)
+            try {
+                getWindow().setStatusBarColor(android.graphics.Color.TRANSPARENT);
+                getWindow().setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    getWindow().setDecorFitsSystemWindows(false);
+                } else {
+                    getWindow().getDecorView().setSystemUiVisibility(
+                        android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+                }
+            } catch (Exception e) { e.printStackTrace(); }
 
             // Install Native Media & IPTV Stream Interceptor
             this.bridge.setWebViewClient(new BridgeWebViewClient(this.bridge) {
@@ -63,19 +79,102 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
-    public void enterPipMode() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+    public boolean enterPipMode() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false;
+        try {
+            // Dùng tỉ lệ khung hình thực tế của màn hình để tránh lỗi aspect-ratio trên máy dọc
+            Rational rational = new Rational(16, 9);
             try {
-                Rational rational = new Rational(16, 9);
-                PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder()
-                        .setAspectRatio(rational);
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    builder.setAutoEnterEnabled(true);
+                android.graphics.Point size = new android.graphics.Point();
+                getWindowManager().getDefaultDisplay().getSize(size);
+                if (size.x > 0 && size.y > 0) {
+                    int w = Math.max(size.x, size.y);
+                    int h = Math.max(1, Math.min(size.x, size.y));
+                    rational = new Rational(w, h);
                 }
-                enterPictureInPictureMode(builder.build());
-            } catch (Exception e) {
-                e.printStackTrace();
+            } catch (Exception ignored) {}
+            PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder()
+                    .setAspectRatio(rational);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                builder.setAutoEnterEnabled(isPlayingVideo);
+                builder.setSeamlessResizeEnabled(true);
             }
+            boolean ok = enterPictureInPictureMode(builder.build());
+            // Một số máy trả false nhưng vẫn vào PiP qua onUserLeaveHint -> coi như đã gọi
+            if (!ok) {
+                // Fallback: thử lại với tỉ lệ 16:9 chuẩn
+                try {
+                    ok = enterPictureInPictureMode(new PictureInPictureParams.Builder()
+                            .setAspectRatio(new Rational(16, 9)).build());
+                } catch (Exception e) { e.printStackTrace(); }
+            }
+            return ok;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    /** Bật/tắt immersive sticky (ẩn status bar + nav bar). Giữ flag để re-apply khi focus/resume. */
+    public void setImmersiveEnabled(boolean enabled) {
+        this.immersiveEnabled = enabled;
+        runOnUiThread(this::applyImmersive);
+    }
+
+    private void applyImmersive() {
+        try {
+            if (isInPip) return; // đang ở PiP thì không ép immersive
+            android.view.Window window = getWindow();
+            android.view.View decor = window.getDecorView();
+            if (immersiveEnabled) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    window.setDecorFitsSystemWindows(false);
+                    if (window.getInsetsController() != null) {
+                        window.getInsetsController().hide(
+                            android.view.WindowInsets.Type.statusBars()
+                                | android.view.WindowInsets.Type.navigationBars());
+                        window.getInsetsController().setSystemBarsBehavior(
+                            android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                    }
+                } else {
+                    int flags = android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
+                    decor.setSystemUiVisibility(flags);
+                }
+            } else {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    window.setDecorFitsSystemWindows(true);
+                    if (window.getInsetsController() != null) {
+                        window.getInsetsController().show(
+                            android.view.WindowInsets.Type.statusBars()
+                                | android.view.WindowInsets.Type.navigationBars());
+                    }
+                } else {
+                    decor.setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_VISIBLE);
+                }
+            }
+        } catch (Exception e) { e.printStackTrace(); }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        // Capacitor/Bridge hay reset systemUI khi focus lại -> re-apply immersive
+        if (hasFocus && immersiveEnabled) applyImmersive();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (immersiveEnabled) {
+            // post delay nhẹ để qua mặt Splash/Bridge reset
+            try {
+                getWindow().getDecorView().postDelayed(this::applyImmersive, 100);
+            } catch (Exception e) { applyImmersive(); }
         }
     }
 
@@ -104,11 +203,18 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        this.isInPip = isInPictureInPictureMode;
         if (this.bridge != null && this.bridge.getWebView() != null) {
             this.bridge.getWebView().evaluateJavascript(
                 "window.dispatchEvent(new CustomEvent('native-pip-change', { detail: { isPip: " + isInPictureInPictureMode + " } }));",
                 null
             );
+        }
+        // Thoát PiP mà player vẫn mở -> ẩn lại status bar
+        if (!isInPictureInPictureMode && immersiveEnabled) {
+            try {
+                getWindow().getDecorView().postDelayed(this::applyImmersive, 200);
+            } catch (Exception e) { applyImmersive(); }
         }
     }
 

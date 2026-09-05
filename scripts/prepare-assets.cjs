@@ -355,44 +355,10 @@ async function run() {
       fs.writeFileSync(manifestPath, manifest);
     }
 
-    const mainActivityPath = path.join(
-      rootDir,
-      "android",
-      "app",
-      "src",
-      "main",
-      "java",
-      "com",
-      "qtbcinema",
-      "app",
-      "MainActivity.java",
-    );
-    if (fs.existsSync(mainActivityPath)) {
-      const mainActivityContent = `package com.qtbcinema.app;
-
-import android.os.Bundle;
-import android.webkit.WebSettings;
-import com.getcapacitor.BridgeActivity;
-
-public class MainActivity extends BridgeActivity {
-    @Override
-    public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        if (this.bridge != null && this.bridge.getWebView() != null) {
-            WebSettings settings = this.bridge.getWebView().getSettings();
-            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-            settings.setMediaPlaybackRequiresUserGesture(false);
-            settings.setDomStorageEnabled(true);
-            settings.setDatabaseEnabled(true);
-            settings.setAllowFileAccess(true);
-            settings.setAllowContentAccess(true);
-            settings.setJavaScriptCanOpenWindowsAutomatically(true);
-        }
-    }
-}
-`;
-      fs.writeFileSync(mainActivityPath, mainActivityContent);
-    }
+    // NOTE: KHÔNG ghi đè MainActivity.java ở đây.
+    // File đó chứa code native quan trọng (NativeVideoPlayer plugin, PiP,
+    // immersive fullscreen, stream interceptor) và được version-control trong
+    // android/. Ghi đè sẽ làm APK mất PiP + mất ẩn status bar.
   }
 }
 

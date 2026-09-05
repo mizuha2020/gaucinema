@@ -127,7 +127,12 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   const isLockedRef = useRef(false);
   isLockedRef.current = isLocked;
   const [speedBoost, setSpeedBoost] = useState(false);
-  const [pipSupported, setPipSupported] = useState(false);
+  // APK Android: mặc định hiện nút PiP luôn (manifest đã khai báo support).
+  // Chỉ ẩn khi native check trả về false *rõ ràng* — còn lỗi bridge thì giữ hiện
+  // (trước đây catch -> false nên nút biến mất hẳn trên APK).
+  const [pipSupported, setPipSupported] = useState<boolean>(() => {
+    try { return isNativeAndroid(); } catch { return false; }
+  });
   const [nativeImmersive, setNativeImmersive] = useState(false);
   const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
   const singleTapTimer = useRef<number | null>(null);
@@ -920,14 +925,22 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   }, []);
 
   // PiP hỗ trợ ở đâu thì hiện nút ở đó:
-  // - APK Android: native PiP qua plugin (WebView không có requestPictureInPicture)
+  // - APK Android: native PiP qua plugin (WebView không có requestPictureInPicture).
+  //   Mặc định đã hiện (initial state true); chỉ tắt khi check trả về supported=false rõ ràng.
   // - Web / PWA: browser PiP (Chrome Android hỗ trợ, iOS Safari 14.2+ hỗ trợ)
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (isNativeAndroid()) {
-        const ok = await checkNativePipSupported();
-        if (!cancelled) setPipSupported(ok);
+        try {
+          const ok = await checkNativePipSupported();
+          // check trả false rõ ràng (máy không có FEATURE_PICTURE_IN_PICTURE) mới ẩn nút
+          if (!cancelled && ok === false) setPipSupported(false);
+          else if (!cancelled) setPipSupported(true);
+        } catch {
+          // Lỗi bridge (plugin chưa sync...) -> giữ nút hiện để user vẫn bấm thử
+          if (!cancelled) setPipSupported(true);
+        }
       } else {
         try {
           const v = document.createElement('video') as any;
@@ -940,12 +953,26 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     return () => { cancelled = true; };
   }, []);
 
-  // APK: mở player là ẩn status bar luôn (immersive), thoát player thì hiện lại
+  // APK: mở player là ẩn status bar luôn (immersive), thoát player thì hiện lại.
+  // Re-apply khi app focus/visible lại vì Bridge hay reset systemUI (nguyên nhân
+  // status bar hiện lại sau 1 chạm).
   useEffect(() => {
     if (!isNativeAndroid()) return;
     setImmersiveMode(true);
     setNativeImmersive(true);
-    return () => { setImmersiveMode(false); };
+    const reapply = () => { try { setImmersiveMode(true); } catch {} };
+    const onVis = () => { if (document.visibilityState === 'visible') reapply(); };
+    const onFocus = () => reapply();
+    const onPipChange = () => { /* thoát PiP -> native tự re-apply sau 200ms */ };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('native-pip-change' as any, onPipChange as any);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('native-pip-change' as any, onPipChange as any);
+      setImmersiveMode(false);
+    };
   }, []);
 
   // Mở player là hẹn giờ tự ẩn controls (kẻo hiện mãi nếu không chạm gì)

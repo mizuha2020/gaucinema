@@ -10,7 +10,7 @@ export interface NativeVideoPlayerPlugin {
   playExternal(options: {
     url: string;
   }): Promise<void>;
-  enterPip(): Promise<void>;
+  enterPip(): Promise<{ entered?: boolean }>;
   setVideoPlaying(options: { playing: boolean }): Promise<void>;
   setImmersive(options: { enabled: boolean }): Promise<void>;
   isPipSupported(): Promise<{ supported: boolean }>;
@@ -22,10 +22,15 @@ const NativeVideoPlayer = registerPlugin<NativeVideoPlayerPlugin>('NativeVideoPl
 export async function enterNativePip(): Promise<boolean> {
   if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
     try {
-      await NativeVideoPlayer.enterPip();
+      const res = await NativeVideoPlayer.enterPip();
+      // Native trả { entered } — một số máy trả false nhưng vẫn vào PiP qua
+      // onPictureInPictureModeChanged, nên chỉ log chứ không coi là lỗi.
+      if (res && typeof (res as any).entered === 'boolean' && !(res as any).entered) {
+        try { console.warn('[PiP] native enterPip returned false'); } catch {}
+      }
       return true;
     } catch (err) {
-      void 0;
+      try { console.warn('[PiP] enterNativePip failed', err); } catch {}
       return false;
     }
   }

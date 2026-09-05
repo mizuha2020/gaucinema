@@ -74,10 +74,14 @@ public class NativeVideoPlayerPlugin extends Plugin {
     public void enterPip(PluginCall call) {
         try {
             if (getActivity() instanceof MainActivity) {
-                getActivity().runOnUiThread(() -> {
-                    ((MainActivity) getActivity()).enterPipMode();
+                MainActivity act = (MainActivity) getActivity();
+                act.runOnUiThread(() -> {
+                    boolean entered = false;
+                    try { entered = act.enterPipMode(); } catch (Exception e) { e.printStackTrace(); }
+                    JSObject ret = new JSObject();
+                    ret.put("entered", entered);
+                    call.resolve(ret);
                 });
-                call.resolve();
             } else {
                 call.reject("Activity không hỗ trợ PiP");
             }
@@ -107,7 +111,12 @@ public class NativeVideoPlayerPlugin extends Plugin {
     public void setImmersive(PluginCall call) {
         boolean enabled = call.getBoolean("enabled", true);
         try {
-            if (getActivity() != null) {
+            // Ủy quyền cho MainActivity giữ flag + tự re-apply khi focus/resume/thoát PiP
+            // (trước đây set trực tiếp ở đây nên bị Bridge reset sau 1 chạm là hiện lại status bar)
+            if (getActivity() instanceof MainActivity) {
+                MainActivity act = (MainActivity) getActivity();
+                act.runOnUiThread(() -> act.setImmersiveEnabled(enabled));
+            } else if (getActivity() != null) {
                 getActivity().runOnUiThread(() -> {
                     android.view.Window window = getActivity().getWindow();
                     android.view.View decor = window.getDecorView();
@@ -153,8 +162,13 @@ public class NativeVideoPlayerPlugin extends Plugin {
 
     @PluginMethod
     public void isPipSupported(PluginCall call) {        JSObject ret = new JSObject();
-        boolean supported = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O;
-        ret.put("supported", supported);
+        boolean sdkOk = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O;
+        boolean featureOk = true;
+        try {
+            featureOk = getContext().getPackageManager()
+                .hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE);
+        } catch (Exception ignored) {}
+        ret.put("supported", sdkOk && featureOk);
         call.resolve(ret);
     }
 
