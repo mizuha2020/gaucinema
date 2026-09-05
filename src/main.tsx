@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+import { AppRouter } from './appRouter.tsx';
 
 // Safe global unhandled rejection handler for benign browser/media warnings
 if (typeof window !== 'undefined') {
@@ -30,7 +31,9 @@ if (rootElement) {
     createRoot(rootElement).render(
       <StrictMode>
         <ErrorBoundary>
-          <App />
+          <AppRouter>
+            <App />
+          </AppRouter>
         </ErrorBoundary>
       </StrictMode>
     );
