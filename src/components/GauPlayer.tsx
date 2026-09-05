@@ -6,10 +6,10 @@ import { getMirrorUrls } from '../utils/mirrorUrls';
 import { loadCleanedM3u8Url, revokeBlobUrl } from '../utils/m3u8Cleaner';
 import { getFullApiUrl } from '../services/apiConfig';
 import { Capacitor } from '@capacitor/core';
-import { enterNativePip, setNativeVideoPlaying, checkNativePipSupported, setImmersiveMode } from '../utils/nativeVideoPlayer';
+import { enterNativePip, setNativeVideoPlaying, checkNativePipSupported, setImmersiveMode, isNativeAndroidApp } from '../utils/nativeVideoPlayer';
 
 function isNativeAndroid(): boolean {
-  try { return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'; } catch { return false; }
+  try { return isNativeAndroidApp(); } catch { return false; }
 }
 
 type IntroSegment = { start_sec: number; end_sec: number; start_ms: number; end_ms: number; confidence?: number; submission_count?: number } | null;
@@ -627,6 +627,15 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
       });
       return;
     }
+    // Detection có thể sai trên một số WebView -> vẫn thử lệnh native trước,
+    // thành công thì thôi, thất bại mới dùng web fullscreen.
+    try {
+      const nativeOk = await setImmersiveMode(!nativeImmersive);
+      if (nativeOk) {
+        setNativeImmersive(!nativeImmersive);
+        return;
+      }
+    } catch {}
     const c = containerRef.current;
     if (!c) return;
     try {
@@ -642,14 +651,16 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
         try { (screen.orientation as any)?.unlock?.(); } catch {}
       }
     } catch {}
-  }, []);
+  }, [nativeImmersive]);
   const handlePip = useCallback(async () => {
-    // APK: dùng native PiP (WebView không hỗ trợ requestPictureInPicture)
+    // APK: dùng native PiP (WebView thường không hỗ trợ requestPictureInPicture).
+    // Nếu native fail thì rớt xuống thử web PiP.
     if (isNativeAndroid()) {
-      try { await enterNativePip(); } catch {}
-      return;
+      try {
+        if (await enterNativePip()) return;
+      } catch {}
     }
-    // Web / PWA: dùng browser PiP nếu được hỗ trợ (Chrome/Android + Safari/iOS)
+    // Web / PWA (và fallback APK): dùng browser PiP nếu được hỗ trợ (Chrome/Android + Safari/iOS)
     const v = videoRef.current as any;
     if (!v) return;
     try {
@@ -925,30 +936,23 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   }, []);
 
   // PiP hỗ trợ ở đâu thì hiện nút ở đó:
-  // - APK Android: native PiP qua plugin (WebView không có requestPictureInPicture).
-  //   Mặc định đã hiện (initial state true); chỉ tắt khi check trả về supported=false rõ ràng.
+  // - APK Android: LUÔN hiện nút (kể cả khi probe native fail) để user bấm được.
+  //   Bấm mà native fail thì tự rớt xuống thử web PiP.
   // - Web / PWA: browser PiP (Chrome Android hỗ trợ, iOS Safari 14.2+ hỗ trợ)
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (isNativeAndroid()) {
-        try {
-          const ok = await checkNativePipSupported();
-          // check trả false rõ ràng (máy không có FEATURE_PICTURE_IN_PICTURE) mới ẩn nút
-          if (!cancelled && ok === false) setPipSupported(false);
-          else if (!cancelled) setPipSupported(true);
-        } catch {
-          // Lỗi bridge (plugin chưa sync...) -> giữ nút hiện để user vẫn bấm thử
-          if (!cancelled) setPipSupported(true);
-        }
-      } else {
-        try {
-          const v = document.createElement('video') as any;
-          const stdOk = (document as any).pictureInPictureEnabled && typeof v.requestPictureInPicture === 'function';
-          const safariOk = typeof v.webkitSetPresentationMode === 'function';
-          if (!cancelled) setPipSupported(!!(stdOk || safariOk));
-        } catch { if (!cancelled) setPipSupported(false); }
+        try { await checkNativePipSupported(); } catch {}
+        if (!cancelled) setPipSupported(true);
+        return;
       }
+      try {
+        const v = document.createElement('video') as any;
+        const stdOk = (document as any).pictureInPictureEnabled && typeof v.requestPictureInPicture === 'function';
+        const safariOk = typeof v.webkitSetPresentationMode === 'function';
+        if (!cancelled) setPipSupported(!!(stdOk || safariOk));
+      } catch { if (!cancelled) setPipSupported(false); }
     })();
     return () => { cancelled = true; };
   }, []);
@@ -956,11 +960,14 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   // APK: mở player là ẩn status bar luôn (immersive), thoát player thì hiện lại.
   // Re-apply khi app focus/visible lại vì Bridge hay reset systemUI (nguyên nhân
   // status bar hiện lại sau 1 chạm).
+  // Gọi lệnh native KHÔNG gate theo detection (setImmersiveMode tự check robust
+  // bên trong) để phòng detection sai trên một số WebView.
   useEffect(() => {
-    if (!isNativeAndroid()) return;
-    setImmersiveMode(true);
-    setNativeImmersive(true);
-    const reapply = () => { try { setImmersiveMode(true); } catch {} };
+    let cancelled = false;
+    setImmersiveMode(true).then((ok) => {
+      if (!cancelled && ok) setNativeImmersive(true);
+    }).catch(() => {});
+    const reapply = () => { try { setImmersiveMode(true).catch(() => {}); } catch {} };
     const onVis = () => { if (document.visibilityState === 'visible') reapply(); };
     const onFocus = () => reapply();
     const onPipChange = () => { /* thoát PiP -> native tự re-apply sau 200ms */ };
@@ -968,12 +975,36 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     window.addEventListener('focus', onFocus);
     window.addEventListener('native-pip-change' as any, onPipChange as any);
     return () => {
+      cancelled = true;
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('native-pip-change' as any, onPipChange as any);
-      setImmersiveMode(false);
+      try { setImmersiveMode(false).catch(() => {}); } catch {}
     };
   }, []);
+
+  // Badge chẩn đoán TẠM THỜI (xóa sau khi fix xong): chụp màn hình gửi dev.
+  // Cho biết app có nhận ra APK native không + lệnh native có chạy không.
+  const [debugInfo, setDebugInfo] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let plat = '?';
+      let capNative = '?';
+      let host = '';
+      try { plat = Capacitor.getPlatform(); } catch { plat = 'err'; }
+      try { capNative = String((window as any)?.Capacitor?.isNative ?? '?'); } catch {}
+      try { host = `${window.location.protocol}//${window.location.host}`; } catch {}
+      let probe = '?';
+      try { probe = String(await checkNativePipSupported()); } catch { probe = 'err'; }
+      if (!cancelled) {
+        setDebugInfo(
+          `nat:${isNativeAndroid() ? 1 : 0} capNat:${capNative} plat:${plat} host:${host} pipBtn:${pipSupported ? 1 : 0} pipProbe:${probe} imm:${nativeImmersive ? 1 : 0}`
+        );
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pipSupported, nativeImmersive]);
 
   // Mở player là hẹn giờ tự ẩn controls (kẻo hiện mãi nếu không chạm gì)
   useEffect(() => {
@@ -1103,6 +1134,10 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
       onContextMenu={e => e.preventDefault()}
       style={{ touchAction: 'manipulation' }}
     >
+      {/* Badge chẩn đoán TẠM THỜI — chụp màn hình gửi dev, sẽ xóa sau khi fix xong */}
+      <div className="absolute top-1 left-1 z-[80] px-1.5 py-0.5 rounded bg-black/70 text-[9px] font-mono text-lime-300 pointer-events-none select-none max-w-[95vw] truncate">
+        {debugInfo || 'dbg...'}
+      </div>
       <div
         className="video-area relative flex-1 bg-black flex items-center justify-center overflow-hidden"
         onClick={() => { if (!isTouchDeviceRef.current) handleVideoAreaClick(); }}
