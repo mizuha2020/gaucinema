@@ -1987,11 +1987,41 @@ setTimeout(seedInitialCastIndex, 2000);
         finalMovies = finalMovies.map((m: any) => mergeMovieOverrides(m, prevMoviesMap.get(m.slug)));
         finalTvShows = finalTvShows.map((m: any) => mergeMovieOverrides(m, prevMoviesMap.get(m.slug)));
 
+        // GUARD: seed cứng có poster tương đối (uploads/...) -> ảnh hỏng + sai thứ tự.
+        // Nếu scrape mới lỗi (mất mạng tới Tudum/PhimAPI) mà vẫn ghi đè RTDB thì sẽ
+        // phá dữ liệu tốt đang có (đặc biệt khi 2 server cùng chạy batch: server nào
+        // chạy sau mà lỗi sẽ ghi đè server chạy trước). Giữ lại list cũ khi list mới kém hơn.
+        const countGoodPosters = (list: any[]): number =>
+          (Array.isArray(list) ? list : []).filter(
+            (m) => typeof m?.poster_url === 'string' && m.poster_url.startsWith('http')
+          ).length;
+
+        const existingMovies = existingRtdbNetflix?.data?.movies;
+        const existingTvShows = existingRtdbNetflix?.data?.tvShows;
+        const existingMovieTitles = existingRtdbNetflix?.data?.movieTitles;
+        const existingTvTitles = existingRtdbNetflix?.data?.tvTitles;
+
+        let outMovies = finalMovies;
+        let outTvShows = finalTvShows;
+        let outMovieTitles = movieTitles;
+        let outTvTitles = tvTitles;
+
+        if (countGoodPosters(finalMovies) < 6 && countGoodPosters(existingMovies) >= 6) {
+          console.log('[Netflix Top10] Giữ danh sách phim cũ (kết quả scrape mới bị lỗi, thiếu poster).');
+          outMovies = existingMovies;
+          if (Array.isArray(existingMovieTitles)) outMovieTitles = existingMovieTitles;
+        }
+        if (countGoodPosters(finalTvShows) < 6 && countGoodPosters(existingTvShows) >= 6) {
+          console.log('[Netflix Top10] Giữ danh sách TV cũ (kết quả scrape mới bị lỗi, thiếu poster).');
+          outTvShows = existingTvShows;
+          if (Array.isArray(existingTvTitles)) outTvTitles = existingTvTitles;
+        }
+
         netflixTop10Cache = {
-          movies: finalMovies,
-          tvShows: finalTvShows,
-          movieTitles,
-          tvTitles,
+          movies: outMovies,
+          tvShows: outTvShows,
+          movieTitles: outMovieTitles,
+          tvTitles: outTvTitles,
           lastUpdated: Date.now(),
         };
 
@@ -1999,10 +2029,10 @@ setTimeout(seedInitialCastIndex, 2000);
         const rtdbPayload = {
           status: true,
           data: {
-            movies: finalMovies,
-            tvShows: finalTvShows,
-            movieTitles,
-            tvTitles,
+            movies: outMovies,
+            tvShows: outTvShows,
+            movieTitles: outMovieTitles,
+            tvTitles: outTvTitles,
             lastUpdated: Date.now(),
           }
         };

@@ -1868,8 +1868,9 @@ export const movieApi = {
       tvTitles: seedTv.map((t) => t.name),
     };
 
-    saveCacheToFirebase('netflix_top10', { status: true, data: fallbackResult, lastUpdated: nowTs });
-
+    // QUAN TRỌNG: KHÔNG ghi seed fallback vào Firebase. Seed chỉ để hiển thị
+    // tạm trong bộ nhớ — nếu ghi vào RTDB sẽ ghi đè dữ liệu Batch thật của
+    // server khác, gây sai thứ tự + ảnh hỏng cho toàn bộ client khác.
     return fallbackResult;
   },
 };

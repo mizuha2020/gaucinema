@@ -92,9 +92,14 @@ export const authService = {
 
     const adminDocRef = doc(db, 'accounts', 'admin');
 
+    // Chỉ được tạo mới khi CHẮC CHẮN doc chưa tồn tại (đọc thành công + !exists)
+    // hoặc khi forceReset. Nếu đọc lỗi (mất mạng, timeout) thì TUYỆT ĐỐI không
+    // ghi đè — nếu không password/displayName admin sẽ bị reset về mặc định.
+    let readOk = false;
     try {
       if (!forceReset) {
         const snap = await getDoc(adminDocRef);
+        readOk = true;
         if (snap.exists()) {
           const acc = snap.data() as Account;
           const locals = getLocalAccounts();
@@ -103,9 +108,19 @@ export const authService = {
           }
           return acc;
         }
+      } else {
+        readOk = true;
       }
     } catch (e) {
-      void 0;
+      readOk = false;
+    }
+
+    if (!readOk) {
+      // Đọc thất bại: trả về cache local hoặc fallback trong bộ nhớ, KHÔNG setDoc
+      const locals = getLocalAccounts();
+      const existing = locals.find((a) => a.username === 'admin');
+      if (existing) return existing;
+      return fallbackAdmin;
     }
 
     const adminAccount: Account = fallbackAdmin;
