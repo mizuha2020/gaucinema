@@ -2105,7 +2105,9 @@ setTimeout(seedInitialCastIndex, 2000);
     }, delay);
   }
 
-  // Pre-seed from RTDB or trigger initial background batch (delayed 2s)
+  // Pre-seed from RTDB on startup (chỉ hydrate cache từ dữ liệu có sẵn,
+  // KHÔNG chạy batch sync ở đây — batch chỉ chạy 2 mốc cố định 00:00/12:00 ICT
+  // hoặc khi admin sync thủ công qua POST /api/system/batch-sync)
   setTimeout(async () => {
     try {
       // 1. Try fast-hydration from RTDB first
@@ -2127,8 +2129,7 @@ setTimeout(seedInitialCastIndex, 2000);
       }
     } catch {}
 
-    // Run batch sync
-    runFullSystemBatch().catch(() => {});
+    console.log("[Batch Worker] ♻️ Đã hydrate cache từ RTDB (bỏ qua batch sync khi start server)");
   }, 2000);
 
   // Start fixed schedule (00:00 & 12:00 Vietnam time)

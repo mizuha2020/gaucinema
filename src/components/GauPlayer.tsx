@@ -1294,7 +1294,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
               <button
                 onClick={(e) => { e.stopPropagation(); togglePlay(); resetControlsTimer(); }}
                 aria-label={isPlaying ? 'Tạm dừng' : 'Phát'}
-                className="rounded-full bg-white/20 backdrop-blur flex items-center justify-center pointer-events-auto active:bg-white/40 transition w-20 h-20"
+                className="rounded-full bg-black/50 backdrop-blur flex items-center justify-center pointer-events-auto active:bg-black/70 transition w-20 h-20"
                 style={{ touchAction: 'manipulation' }}
               >
                 {isPlaying
@@ -1315,7 +1315,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
         ) : (
           !isPlaying && !isLoading && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <button onClick={(e) => { e.stopPropagation(); togglePlay(); }} aria-label={isPlaying ? 'Tạm dừng' : 'Phát'} className="rounded-full bg-white/15 backdrop-blur flex items-center justify-center pointer-events-auto active:bg-white/35 hover:bg-white/25 transition w-16 h-16" style={{ touchAction: 'manipulation' }}>
+              <button onClick={(e) => { e.stopPropagation(); togglePlay(); }} aria-label={isPlaying ? 'Tạm dừng' : 'Phát'} className="rounded-full bg-black/50 backdrop-blur flex items-center justify-center pointer-events-auto active:bg-black/70 hover:bg-black/60 transition w-16 h-16" style={{ touchAction: 'manipulation' }}>
                 <Play className="w-7 h-7 text-white ml-1 shrink-0" fill="white" />
               </button>
             </div>
