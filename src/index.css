@@ -206,8 +206,19 @@ video::-webkit-media-controls {
   padding-left: max(3vw, 32px) !important;
   padding-right: max(3vw, 32px) !important;
 }
-.tv-mode button, .tv-mode [role="button"] {
+.tv-mode button:not(.hero-dot):not([data-dot]):not(.no-tv-min-h),
+.tv-mode [role="button"]:not(.hero-dot):not([data-dot]):not(.no-tv-min-h) {
   min-height: 48px;
+}
+
+/* Hero Banner & Carousel Pagination Dots: strictly enforce slender indicator pill geometry on all devices */
+.hero-dot,
+button.hero-dot,
+[data-dot],
+button[data-dot] {
+  min-height: 0 !important;
+  line-height: 0 !important;
+  box-sizing: border-box !important;
 }
 /* HeroBanner TV: larger 10ft */
 .tv-mode #qtb-hero-banner { min-height: 640px !important; height: 82vh !important; max-height: 860px !important; }

@@ -289,7 +289,17 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
       try {
         const data = await movieApi.getMovieDetail(movie.slug);
         if (isMounted) {
-          setFullMovieData(data.movie);
+          // Merge with movie prop to never lose existing backdrop_url, backdrops, logos, etc.
+          const mergedMovie: Movie = {
+            ...data.movie,
+            backdrop_url: data.movie.backdrop_url || movie.backdrop_url,
+            backdrops: (data.movie.backdrops && data.movie.backdrops.length > 0) ? data.movie.backdrops : movie.backdrops,
+            logos: (data.movie.logos && data.movie.logos.length > 0) ? data.movie.logos : movie.logos,
+            logo_url: data.movie.logo_url || movie.logo_url,
+            color_palette: data.movie.color_palette || movie.color_palette,
+            tmdb: data.movie.tmdb || movie.tmdb,
+          };
+          setFullMovieData(mergedMovie);
           setEpisodes(data.episodes || []);
           setSelectedServerIndex(0);
 
@@ -352,11 +362,16 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
     const target = currentData || movie;
     if (!target) { setTmdbBackdrop(null); return; }
     const primaryUrl = target.backdrops?.find((b) => b.primary)?.url || '';
-    const hasTmdbInline = primaryUrl.includes('image.tmdb.org') || (target.backdrop_url || '').includes('image.tmdb.org');
-    if (hasTmdbInline) { setTmdbBackdrop(null); return; }
-    const tmdbId = (target as any)?.tmdb?.id ? String((target as any).tmdb.id).trim() : '';
-    if (!tmdbId || !/^\d+$/.test(tmdbId)) { setTmdbBackdrop(null); return; }
-    const tmdbType = (target as any)?.tmdb?.type ? String((target as any).tmdb.type).trim() : undefined;
+    const inlineUrl = primaryUrl.includes('image.tmdb.org') ? primaryUrl : (target.backdrop_url?.includes('image.tmdb.org') ? target.backdrop_url : '');
+    if (inlineUrl) {
+      setTmdbBackdrop(inlineUrl);
+      return;
+    }
+    const tmdbId = (target as any)?.tmdb?.id || (movie as any)?.tmdb?.id ? String((target as any)?.tmdb?.id || (movie as any)?.tmdb?.id).trim() : '';
+    if (!tmdbId || !/^\d+$/.test(tmdbId)) { return; }
+    const tmdbType = (target as any)?.tmdb?.type || (target as any)?.type || (movie as any)?.tmdb?.type || (movie as any)?.type
+      ? String((target as any)?.tmdb?.type || (target as any)?.type || (movie as any)?.tmdb?.type || (movie as any)?.type).trim()
+      : undefined;
     let cancelled = false;
     getTmdbAssets(tmdbId, tmdbType).then((assets) => {
       if (!cancelled && assets.backdropUrl) setTmdbBackdrop(assets.backdropUrl);
@@ -389,16 +404,29 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
   const detailBackdropSrc = useMemo(() => {
     if (!currentData) return '';
     if (loadedTmdbSrc) return loadedTmdbSrc;
+    if (tmdbBackdrop) return tmdbBackdrop;
+
     const primary = currentData.backdrops?.find((b) => b.primary)?.url;
-    if (primary) {
-      if (primary.includes('image.tmdb.org')) return primary.includes('/original') ? primary : primary.replace(/\/w\d+/, '/original');
-      return primary;
+    if (primary && primary.includes('image.tmdb.org')) {
+      return primary.includes('/original') ? primary : primary.replace(/\/w\d+/, '/original');
     }
     if (currentData.backdrop_url && currentData.backdrop_url.includes('image.tmdb.org')) {
       return currentData.backdrop_url.includes('/original') ? currentData.backdrop_url : currentData.backdrop_url.replace(/\/w\d+/, '/original');
     }
+
+    const moviePrimary = movie?.backdrops?.find((b) => b.primary)?.url;
+    if (moviePrimary && moviePrimary.includes('image.tmdb.org')) {
+      return moviePrimary.includes('/original') ? moviePrimary : moviePrimary.replace(/\/w\d+/, '/original');
+    }
+    if (movie?.backdrop_url && movie.backdrop_url.includes('image.tmdb.org')) {
+      return movie.backdrop_url.includes('/original') ? movie.backdrop_url : movie.backdrop_url.replace(/\/w\d+/, '/original');
+    }
+
+    if (primary) return primary;
+    if (currentData.backdrop_url) return currentData.backdrop_url;
+
     return fallbackThumbSrc;
-  }, [currentData, loadedTmdbSrc, fallbackThumbSrc]);
+  }, [currentData, loadedTmdbSrc, tmdbBackdrop, fallbackThumbSrc, movie]);
 
   const isShowingTmdb = Boolean(detailBackdropSrc && detailBackdropSrc !== fallbackThumbSrc && detailBackdropSrc.includes('image.tmdb.org'));
 
@@ -778,7 +806,12 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
             referrerPolicy="no-referrer"
             className="absolute top-0 left-0 w-full h-[calc(env(safe-area-inset-top,0px)+210px)] sm:h-full object-cover object-center pointer-events-none blur-none opacity-100"
             onError={(e) => {
-              (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
+              const img = e.target as HTMLImageElement;
+              if (fallbackThumbSrc && img.src !== fallbackThumbSrc) {
+                img.src = fallbackThumbSrc;
+                return;
+              }
+              img.src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
             }}
           />
           {/* Top layer: TMDB backdrop - chỉ hiện khi đã preload xong, fade mượt */}
@@ -801,21 +834,6 @@ export const MovieDetailModal: React.FC<MovieDetailModalProps> = ({
               />
             )}
           </AnimatePresence>
-          {/* Khi không có TMDB, dùng single img với detailBackdropSrc (chính là thumb) để giữ logic cũ */}
-          {!isShowingTmdb && detailBackdropSrc !== fallbackThumbSrc && (
-            <img
-              src={detailBackdropSrc}
-              alt={currentData.name}
-              referrerPolicy="no-referrer"
-              className="absolute top-0 left-0 w-full h-[calc(env(safe-area-inset-top,0px)+210px)] sm:h-full object-cover object-center pointer-events-none blur-none opacity-100"
-              onError={(e) => {
-                const fallback = fallbackThumbSrc;
-                const img = e.target as HTMLImageElement;
-                if (img.src !== fallback) { img.src = fallback; return; }
-                img.src = 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&auto=format&fit=crop&q=80';
-              }}
-            />
-          )}
           {/* Mobile-specific cover photo gradient overlay */}
           <div className="absolute top-0 left-0 w-full h-[calc(env(safe-area-inset-top,0px)+210px)] sm:hidden bg-gradient-to-t from-[#060a14] via-[#060a14]/20 to-transparent pointer-events-none z-[5]" />
 

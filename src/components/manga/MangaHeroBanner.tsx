@@ -225,33 +225,72 @@ export const MangaHeroBanner: React.FC<MangaHeroBannerProps> = ({
 
       {/* Controls */}
       <div className="absolute right-4 sm:right-6 bottom-4 sm:bottom-6 z-20 hidden sm:flex items-center gap-2.5">
-        <div className="flex items-center gap-1.5 mr-1">
-          {mangas.slice(0, 5).map((_, idx) => (
-            <button
-              key={idx}
-              onClick={() => { setCurrentIndex(idx); resetInterval(); }}
-              className={`h-1.5 rounded-full transition-all ${idx === currentIndex ? 'w-7 bg-fuchsia-500' : 'w-2.5 bg-white/30 hover:bg-white/60'}`}
-              aria-label={`Slide ${idx + 1}`}
-            />
-          ))}
+        <div className="flex items-center gap-1.5 mr-1 flex-nowrap shrink-0">
+          {mangas.slice(0, 5).map((_, idx) => {
+            const isActive = idx === currentIndex;
+            return (
+              <button
+                key={idx}
+                type="button"
+                data-dot="true"
+                onClick={() => { setCurrentIndex(idx); resetInterval(); }}
+                className="hero-dot no-tv-min-h group relative flex items-center justify-center py-2 px-0.5 cursor-pointer bg-transparent border-0 outline-none !min-h-0 !h-auto transition-transform hover:scale-110 active:scale-95 shrink-0"
+                aria-label={`Slide ${idx + 1}`}
+                aria-current={isActive ? 'true' : undefined}
+              >
+                <span
+                  className={`block rounded-full transition-all duration-300 pointer-events-none ${
+                    isActive
+                      ? 'w-7 bg-fuchsia-500 shadow-[0_0_10px_rgba(217,70,239,0.7)]'
+                      : 'w-2.5 bg-white/30 group-hover:bg-white/60'
+                  }`}
+                  style={{ height: '5px', minHeight: '5px', maxHeight: '5px' }}
+                />
+              </button>
+            );
+          })}
         </div>
-        <button onClick={handlePrev} className="w-9 h-9 rounded-full bg-black/60 hover:bg-purple-600 border border-white/15 text-white flex items-center justify-center backdrop-blur transition-colors cursor-pointer" aria-label="Trước">
+        <button
+          type="button"
+          onClick={handlePrev}
+          className="w-9 h-9 !min-h-[36px] !max-h-[36px] rounded-full bg-black/60 hover:bg-purple-600 border border-white/15 text-white flex items-center justify-center backdrop-blur transition-colors cursor-pointer no-tv-min-h shrink-0"
+          aria-label="Trước"
+        >
           <ChevronLeft className="w-5 h-5" />
         </button>
-        <button onClick={handleNext} className="w-9 h-9 rounded-full bg-black/60 hover:bg-purple-600 border border-white/15 text-white flex items-center justify-center backdrop-blur transition-colors cursor-pointer" aria-label="Tiếp">
+        <button
+          type="button"
+          onClick={handleNext}
+          className="w-9 h-9 !min-h-[36px] !max-h-[36px] rounded-full bg-black/60 hover:bg-purple-600 border border-white/15 text-white flex items-center justify-center backdrop-blur transition-colors cursor-pointer no-tv-min-h shrink-0"
+          aria-label="Tiếp"
+        >
           <ChevronRight className="w-5 h-5" />
         </button>
       </div>
 
       {/* Mobile dots bottom center */}
-      <div className="sm:hidden absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5">
-        {mangas.slice(0, 5).map((_, idx) => (
-          <button
-            key={idx}
-            onClick={() => { setCurrentIndex(idx); resetInterval(); }}
-            className={`h-1 rounded-full transition-all ${idx === currentIndex ? 'w-6 bg-fuchsia-500' : 'w-3 bg-white/40'}`}
-          />
-        ))}
+      <div className="sm:hidden absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full border border-white/10 shadow-lg">
+        {mangas.slice(0, 5).map((_, idx) => {
+          const isActive = idx === currentIndex;
+          return (
+            <button
+              key={idx}
+              type="button"
+              data-dot="true"
+              onClick={() => { setCurrentIndex(idx); resetInterval(); }}
+              className="hero-dot no-tv-min-h group relative flex items-center justify-center py-1 px-0.5 cursor-pointer bg-transparent border-0 outline-none !min-h-0 !h-auto shrink-0"
+              aria-label={`Slide ${idx + 1}`}
+              aria-current={isActive ? 'true' : undefined}
+            >
+              <span
+                className={`block rounded-full transition-all duration-300 pointer-events-none ${
+                  isActive ? 'w-6 bg-fuchsia-500 shadow-[0_0_8px_rgba(217,70,239,0.7)]' : 'w-2 bg-white/40'
+                }`}
+                style={{ height: '4px', minHeight: '4px', maxHeight: '4px' }}
+              />
+            </button>
+          );
+        })}
       </div>
     </div>
   );
