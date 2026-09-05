@@ -28,7 +28,9 @@ import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.dash.DashMediaSource;
 import androidx.media3.exoplayer.drm.DefaultDrmSessionManager;
+import androidx.media3.exoplayer.drm.DefaultDrmSessionManagerProvider;
 import androidx.media3.exoplayer.drm.DrmSessionManager;
+import androidx.media3.exoplayer.drm.ExoMediaDrm;
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm;
 import androidx.media3.exoplayer.drm.MediaDrmCallback;
 import androidx.media3.exoplayer.hls.HlsMediaSource;
@@ -177,13 +179,17 @@ public class NativePlayerActivity extends AppCompatActivity {
 
             ExoPlayer.Builder playerBuilder = new ExoPlayer.Builder(this);
 
+            // DRM (ClearKey) gắn qua MediaSource.Factory — ExoPlayer.Builder của
+            // media3 không có setDrmSessionManagerProvider.
+            DefaultDrmSessionManagerProvider drmProvider = null;
             if (drmKey != null && !drmKey.trim().isEmpty()) {
                 MediaDrmCallback drmCallback = new NativeClearKeyDrmCallback(drmKey, userAgent);
                 DrmSessionManager drmSessionManager = new DefaultDrmSessionManager.Builder()
                         .setUuidAndExoMediaDrmProvider(CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
                         .build(drmCallback);
 
-                playerBuilder.setDrmSessionManagerProvider(mediaItem -> drmSessionManager);
+                drmProvider = new DefaultDrmSessionManagerProvider();
+                drmProvider.setDrmSessionManager(CLEARKEY_UUID, drmSessionManager);
             }
 
             player = playerBuilder.build();
@@ -194,11 +200,13 @@ public class NativePlayerActivity extends AppCompatActivity {
             String lowerUrl = url.toLowerCase();
 
             if (lowerUrl.contains(".mpd")) {
-                mediaSource = new DashMediaSource.Factory(dataSourceFactory)
-                        .createMediaSource(MediaItem.fromUri(uri));
+                DashMediaSource.Factory dashFactory = new DashMediaSource.Factory(dataSourceFactory);
+                if (drmProvider != null) dashFactory.setDrmSessionManagerProvider(drmProvider);
+                mediaSource = dashFactory.createMediaSource(MediaItem.fromUri(uri));
             } else if (lowerUrl.contains(".m3u8")) {
-                mediaSource = new HlsMediaSource.Factory(dataSourceFactory)
-                        .createMediaSource(MediaItem.fromUri(uri));
+                HlsMediaSource.Factory hlsFactory = new HlsMediaSource.Factory(dataSourceFactory);
+                if (drmProvider != null) hlsFactory.setDrmSessionManagerProvider(drmProvider);
+                mediaSource = hlsFactory.createMediaSource(MediaItem.fromUri(uri));
             } else {
                 mediaSource = new ProgressiveMediaSource.Factory(dataSourceFactory)
                         .createMediaSource(MediaItem.fromUri(uri));
@@ -303,15 +311,16 @@ public class NativePlayerActivity extends AppCompatActivity {
         }
 
         @Override
-        public byte[] executeProvisionRequest(UUID uuid, MediaDrmCallback.ProvisionRequest request) throws Exception {
+        public byte[] executeProvisionRequest(UUID uuid, ExoMediaDrm.ProvisionRequest request) {
             return new byte[0];
         }
 
         @Override
-        public byte[] executeKeyRequest(UUID uuid, MediaDrmCallback.KeyRequest request) throws Exception {
-            if (drmKey.isEmpty()) {
-                return new byte[0];
-            }
+        public byte[] executeKeyRequest(UUID uuid, ExoMediaDrm.KeyRequest request) {
+            try {
+                if (drmKey.isEmpty()) {
+                    return new byte[0];
+                }
 
             // 1. Static KID:KEY format (hex or base64)
             if (drmKey.contains(":")) {
@@ -358,6 +367,9 @@ public class NativePlayerActivity extends AppCompatActivity {
                 }
 
                 return respStr.getBytes(StandardCharsets.UTF_8);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
             }
 
             return new byte[0];

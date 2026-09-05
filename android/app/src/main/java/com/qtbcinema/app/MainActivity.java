@@ -168,7 +168,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
-    protected void onResume() {
+    public void onResume() {
         super.onResume();
         if (immersiveEnabled) {
             // post delay nhẹ để qua mặt Splash/Bridge reset
