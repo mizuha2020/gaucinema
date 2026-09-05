@@ -31,8 +31,12 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+        // QUAN TRỌNG: phải register plugin TRƯỚC super.onCreate(), vì Bridge
+        // được init trong super.onCreate và chỉ nạp plugin đã đăng ký lúc đó.
+        // Gọi sau -> plugin NativeVideoPlayer không tồn tại -> mọi lệnh
+        // PiP/immersive từ JS đều fail silently (pipProbe:false, imm:0).
         registerPlugin(NativeVideoPlayerPlugin.class);
+        super.onCreate(savedInstanceState);
         if (this.bridge != null && this.bridge.getWebView() != null) {
             WebView webView = this.bridge.getWebView();
             WebSettings settings = webView.getSettings();
