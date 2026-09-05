@@ -149,7 +149,7 @@ class UserAnalyticsService {
     const profileName = params.profileName || 'Hồ sơ 1';
     const mediaType = params.mediaType || 'browsing';
     const isActivelyPlaying = !!params.isActivelyPlaying;
-    const seconds = Math.max(1, Math.min(300, params.secondsElapsed || 60));
+    const seconds = Math.max(1, Math.min(300, params.secondsElapsed ?? 60));
     const now = Date.now();
 
     // 1. Accumulate Account Stats

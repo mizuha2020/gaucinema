@@ -11,15 +11,10 @@ import {
   Film,
   BookOpen,
   Tv,
-  Activity,
-  CheckCircle2,
-  AlertTriangle,
-  XCircle,
   Clock,
   Radio,
   Sparkles,
   Server,
-  Layers,
   History,
 } from 'lucide-react';
 
@@ -179,7 +174,7 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
             }`}
           >
             <Radio className="w-3.5 h-3.5 text-red-400 animate-pulse" />
-            <span>Đang Xem Trực Tiếp ({activeSessions.length})</span>
+            <span>Đang xem ({activeSessions.length})</span>
           </button>
 
           <button
@@ -192,7 +187,7 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
             }`}
           >
             <Users className="w-3.5 h-3.5 text-sky-400" />
-            <span>Thống Kê Thời Lượng & Online ({userStats.length})</span>
+            <span>Người dùng ({userStats.length})</span>
           </button>
 
           <button
@@ -205,7 +200,7 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
             }`}
           >
             <History className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Lịch Sử Xem Toàn Hệ Thống</span>
+            <span>Lịch sử xem</span>
           </button>
         </div>
 
@@ -214,7 +209,7 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
           </span>
-          <span className="text-[11px] font-medium text-emerald-400">Firestore Real-time Active</span>
+          <span className="text-[11px] font-medium text-emerald-400">Trực tiếp</span>
         </div>
       </div>
 
@@ -242,7 +237,7 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
                 </span>
-                <span className="text-emerald-400 font-medium">Real-time Heartbeat Firestore</span>
+                <span className="text-emerald-400 font-medium">Đang cập nhật trực tiếp</span>
               </div>
             </div>
 
@@ -265,9 +260,8 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
                   <Film className="w-6 h-6" />
                 </div>
               </div>
-              <div className="mt-4 pt-3 border-t border-slate-800/60 text-xs text-slate-400 flex items-center justify-between">
-                <span>Server HLS / Embed</span>
-                <span className="text-sky-300 font-medium">Lọc theo phim →</span>
+              <div className="mt-4 pt-3 border-t border-slate-800/60 text-xs text-slate-500">
+                Bấm để lọc danh sách bên dưới
               </div>
             </div>
 
@@ -290,9 +284,8 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
                   <BookOpen className="w-6 h-6" />
                 </div>
               </div>
-              <div className="mt-4 pt-3 border-t border-slate-800/60 text-xs text-slate-400 flex items-center justify-between">
-                <span>OTruyen / CuuTruyen</span>
-                <span className="text-emerald-300 font-medium">Lọc theo truyện →</span>
+              <div className="mt-4 pt-3 border-t border-slate-800/60 text-xs text-slate-500">
+                Bấm để lọc danh sách bên dưới
               </div>
             </div>
 
@@ -315,96 +308,31 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
                   <Tv className="w-6 h-6" />
                 </div>
               </div>
-              <div className="mt-4 pt-3 border-t border-slate-800/60 text-xs text-slate-400 flex items-center justify-between">
-                <span>IPTV / DASH / HLS</span>
-                <span className="text-amber-300 font-medium">Lọc theo TV →</span>
+              <div className="mt-4 pt-3 border-t border-slate-800/60 text-xs text-slate-500">
+                Bấm để lọc danh sách bên dưới
               </div>
             </div>
           </div>
 
-          {/* System APIs Health Status Overview Card */}
-          <div className="bg-[#0b1222] border border-blue-950/80 rounded-2xl p-5 shadow-lg">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-slate-800/80">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-blue-900/40 border border-blue-700/50 flex items-center justify-center text-blue-400">
-                  <Server className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <span>Trạng Thái Hệ Thống API</span>
-                    <span className="text-xs bg-blue-950 text-sky-400 border border-blue-800 px-2 py-0.5 rounded-full font-mono">
-                      {apis.length} API Tích Hợp
-                    </span>
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Tự động điều phối endpoint động, cân bằng tải và giám sát độ trễ server
-                  </p>
-                </div>
+          {/* Nguồn phim: dải trạng thái gọn */}
+          <button
+            onClick={onSwitchToApisTab}
+            className="w-full bg-[#0b1222] border border-blue-950/80 rounded-2xl p-4 shadow-lg flex items-center justify-between gap-3 cursor-pointer hover:border-blue-700/60 transition-all text-left"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-blue-900/40 border border-blue-700/50 flex items-center justify-center text-blue-400 shrink-0">
+                <Server className="w-5 h-5" />
               </div>
-
-              <button
-                onClick={onSwitchToApisTab}
-                className="flex items-center gap-2 text-xs font-semibold text-sky-400 bg-sky-950/60 border border-sky-800/60 hover:bg-sky-900/80 px-3 py-2 rounded-xl transition-colors cursor-pointer"
-              >
-                <Layers className="w-4 h-4" />
-                <span>Quản Lý Danh Sách API →</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-              <div className="bg-[#0f172a] border border-emerald-900/40 rounded-xl p-3 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <div>
-                    <p className="text-[11px] text-slate-400 font-medium">Hoạt động (Live)</p>
-                    <p className="text-lg font-bold text-emerald-400">{liveApisCount}</p>
-                  </div>
-                </div>
-                <span className="text-[10px] text-emerald-500/80 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/40 font-mono">
-                  &lt; 600ms
-                </span>
-              </div>
-
-              <div className="bg-[#0f172a] border border-amber-900/40 rounded-xl p-3 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-                  <div>
-                    <p className="text-[11px] text-slate-400 font-medium">Chậm (Slow)</p>
-                    <p className="text-lg font-bold text-amber-400">{slowApisCount}</p>
-                  </div>
-                </div>
-                <span className="text-[10px] text-amber-500/80 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800/40 font-mono">
-                  600-2500ms
-                </span>
-              </div>
-
-              <div className="bg-[#0f172a] border border-red-900/40 rounded-xl p-3 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <XCircle className="w-4 h-4 text-red-400 shrink-0" />
-                  <div>
-                    <p className="text-[11px] text-slate-400 font-medium">Mất kết nối (Down)</p>
-                    <p className="text-lg font-bold text-red-400">{downApisCount}</p>
-                  </div>
-                </div>
-                <span className="text-[10px] text-red-500/80 bg-red-950/60 px-2 py-0.5 rounded border border-red-800/40 font-mono">
-                  Timeout / 500
-                </span>
-              </div>
-
-              <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-3 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <Activity className="w-4 h-4 text-slate-400 shrink-0" />
-                  <div>
-                    <p className="text-[11px] text-slate-400 font-medium">Tạm vô hiệu hóa</p>
-                    <p className="text-lg font-bold text-slate-400">{disabledApisCount}</p>
-                  </div>
-                </div>
-                <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded font-mono">
-                  Disabled
-                </span>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-white">Nguồn phim</p>
+                <p className="text-xs text-slate-400 truncate">
+                  🟢 {liveApisCount} tốt • 🟡 {slowApisCount} chậm • 🔴 {downApisCount} lỗi
+                  {disabledApisCount > 0 ? ` • ${disabledApisCount} đang tắt` : ''}
+                </p>
               </div>
             </div>
-          </div>
+            <span className="text-xs font-semibold text-sky-400 shrink-0">Xem →</span>
+          </button>
 
           {/* Detailed Live Sessions Grid & Activity Feeds */}
           <div className="space-y-4">
@@ -412,7 +340,7 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
               <div className="flex items-center gap-2">
                 <Radio className="w-5 h-5 text-red-500 animate-pulse" />
                 <h3 className="text-base font-bold text-white">
-                  Chi Tiết Nội Dung Đang Xem Theo Thời Gian Thực
+                  Đang xem gì
                 </h3>
                 <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full font-mono">
                   {filteredSessions.length} phiên
@@ -469,9 +397,9 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
                 <div className="w-12 h-12 rounded-2xl bg-slate-800/80 mx-auto flex items-center justify-center text-slate-500">
                   <Users className="w-6 h-6" />
                 </div>
-                <p className="text-sm font-semibold text-slate-300">Hiện chưa có người dùng nào đang phát nội dung</p>
+                <p className="text-sm font-semibold text-slate-300">Chưa có ai đang xem</p>
                 <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  Khi thành viên mở phát phim, đọc truyện tranh hoặc xem truyền hình LiveTV, thông tin và tiến độ sẽ tự động hiển thị trực tiếp tại đây.
+                  Khi có người xem phim, đọc truyện hoặc xem TV, thông tin sẽ hiện ở đây.
                 </p>
               </div>
             ) : (
@@ -508,7 +436,6 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
                               <p className="text-xs font-bold text-slate-200 truncate group-hover:text-sky-300">
                                 {session.profileName || session.accountDisplayName}
                               </p>
-                              <p className="text-[10px] text-slate-500 truncate font-mono">@{session.accountId}</p>
                             </div>
                           </button>
 
@@ -554,11 +481,6 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
                                 {session.itemSubtitle}
                               </p>
                             )}
-                            {session.apiSourceUsed && (
-                              <span className="inline-block mt-1 text-[9px] font-mono px-1.5 py-0.2 rounded bg-slate-800/80 text-slate-400 border border-slate-700">
-                                Nguồn: {session.apiSourceUsed.toUpperCase()}
-                              </span>
-                            )}
                           </div>
                         </div>
 
@@ -600,12 +522,11 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
                       </div>
 
                       {/* Footer Heartbeat Time */}
-                      <div className="flex items-center justify-between pt-3 mt-3 border-t border-slate-800/60 text-[10px] text-slate-500">
+                      <div className="flex items-center pt-3 mt-3 border-t border-slate-800/60 text-[10px] text-slate-500">
                         <span className="flex items-center gap-1">
                           <Clock className="w-3 h-3" />
                           Cập nhật: {getTimeAgo(session.lastHeartbeat)}
                         </span>
-                        <span className="font-mono text-slate-400">{session.deviceInfo || 'Web/Mobile'}</span>
                       </div>
                     </div>
                   );

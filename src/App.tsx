@@ -1666,6 +1666,8 @@ export default function App() {
               onSelectEpisode={handleSelectEpisode}
               onSaveProgress={handleSaveProgress}
               onTimeUpdate={handlePlayerTimeUpdate}
+              currentAccount={currentAccount}
+              activeProfile={activeProfile}
             />
           )}
         </AnimatePresence>

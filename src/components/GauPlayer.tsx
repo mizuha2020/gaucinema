@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo, memo } from 'react';
 import Hls from 'hls.js';
 import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Settings, PictureInPicture2, X, RotateCcw, RotateCw, SkipForward, SkipBack, List, Server, Sun, ChevronDown, FastForward, Lock } from 'lucide-react';
-import { EpisodeServer, Movie, MovieEpisode } from '../types';
+import { EpisodeServer, Movie, MovieEpisode, Account, UserProfile } from '../types';
 import { getMirrorUrls } from '../utils/mirrorUrls';
 import { loadCleanedM3u8Url, revokeBlobUrl } from '../utils/m3u8Cleaner';
 import { getFullApiUrl } from '../services/apiConfig';
+import { presenceService } from '../services/presenceService';
 import { Capacitor } from '@capacitor/core';
 import { enterNativePip, setNativeVideoPlaying, checkNativePipSupported, setImmersiveMode, isNativeAndroidApp } from '../utils/nativeVideoPlayer';
 
@@ -40,6 +41,8 @@ interface GauPlayerProps {
   onSaveProgress?: (currentTime: number, duration: number) => void;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
   initialTime?: number;
+  currentAccount?: Account | null;
+  activeProfile?: UserProfile | null;
 }
 
 function getAdCleanUrl(raw: string): string {
@@ -72,6 +75,8 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   onSaveProgress,
   onTimeUpdate,
   initialTime = 0,
+  currentAccount,
+  activeProfile,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -124,6 +129,28 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   const pinchRef = useRef<{ startDist: number } | null>(null);
   const saveProgressRef = useRef(onSaveProgress);
   saveProgressRef.current = onSaveProgress;
+
+  // Presence + analytics: báo admin ai đang xem phim gì (_GauPlayer là player chính,
+  // SimplePlayer đã không còn dùng nên pipeline userStats/lịch sử bị thiếu phim).
+  useEffect(() => {
+    if (!currentAccount) return;
+    presenceService.startSession({
+      accountId: currentAccount.id || currentAccount.username || 'user',
+      accountDisplayName: currentAccount.displayName || currentAccount.username || 'Khán Giả Phim',
+      profileId: activeProfile?.id || 'movie_profile',
+      profileName: activeProfile?.name || 'Người xem',
+      profileAvatar: activeProfile?.avatar || '',
+      type: 'movie',
+      contentId: movie.slug,
+      itemTitle: movie.name,
+      itemSubtitle: currentEpisode.name ? `Tập ${currentEpisode.name}` : undefined,
+      itemCover: movie.poster_url || movie.thumb_url,
+      apiSourceUsed: currentServer.server_name || 'movie',
+    });
+    return () => {
+      presenceService.stopSession();
+    };
+  }, [movie.slug, movie.name, currentEpisode.slug, currentEpisode.name, currentServer.server_name, currentAccount, activeProfile]);
   const isLockedRef = useRef(false);
   isLockedRef.current = isLocked;
   const [speedBoost, setSpeedBoost] = useState(false);

@@ -5,8 +5,7 @@ import { firestoreStorage } from '../services/firestoreStorage';
 import { AdminConfirmModal } from './AdminConfirmModal';
 import { AdminOverviewTab } from './admin/AdminOverviewTab';
 import { AdminApisTab } from './admin/AdminApisTab';
-import { AdminNotificationsTab } from './admin/AdminNotificationsTab';
-import { AdminEcoSystemTab } from './admin/AdminEcoSystemTab';
+import { AdminSettingsTab } from './admin/AdminSettingsTab';
 import {
   Users,
   Image as ImageIcon,
@@ -17,20 +16,16 @@ import {
   KeyRound,
   Upload,
   ArrowLeft,
-  ShieldCheck,
-  CheckCircle2,
-  AlertTriangle,
-  Sparkles,
+  Shield,
   Search,
   X,
   RefreshCw,
   User,
-  Shield,
   Check,
+  Sparkles,
   Server,
   Activity,
-  Bell,
-  Power,
+  Settings,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -45,11 +40,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onBackToCinema,
   onShowToast,
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'apis' | 'notifications' | 'accounts' | 'avatars' | 'ecosystem'>(() => {
+  const [activeTab, setActiveTab] = useState<'overview' | 'media' | 'accounts' | 'settings'>(() => {
     try {
       const saved = localStorage.getItem('gau_admin_active_tab');
-      if (saved && ['overview', 'apis', 'notifications', 'accounts', 'avatars', 'ecosystem'].includes(saved)) {
-        return saved as 'overview' | 'apis' | 'notifications' | 'accounts' | 'avatars' | 'ecosystem';
+      // Migrate tab cũ sang cấu trúc 4 mục mới
+      const migrate: Record<string, 'overview' | 'media' | 'accounts' | 'settings'> = {
+        overview: 'overview',
+        apis: 'media',
+        accounts: 'accounts',
+        avatars: 'accounts',
+        notifications: 'settings',
+        ecosystem: 'settings',
+        settings: 'settings',
+        media: 'media',
+      };
+      if (saved && migrate[saved]) {
+        return migrate[saved];
       }
     } catch (e) {
       void 0;
@@ -59,8 +65,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Sub-tab states for each major section
   const [overviewSubTab, setOverviewSubTab] = useState<'live' | 'users_stats' | 'watch_history'>('live');
-  const [apisSubTab, setApisSubTab] = useState<'api_status' | 'fallback_routing' | 'system_info' | 'hero_assets'>('api_status');
-  const [accountsSubTab, setAccountsSubTab] = useState<'accounts_list' | 'roles_permissions' | 'security_audit'>('accounts_list');
+  const [accountsSubTab, setAccountsSubTab] = useState<'accounts_list' | 'avatars'>('accounts_list');
   const [avatarsSubTab, setAvatarsSubTab] = useState<'avatar_gallery' | 'avatar_upload' | 'default_presets'>('avatar_gallery');
 
   useEffect(() => {
@@ -407,42 +412,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             </button>
 
-            {/* Item 2: APIs */}
+            {/* Item 2: Nguồn phim & Banner */}
             <button
               id="sidebar-nav-apis-btn"
-              onClick={() => setActiveTab('apis')}
+              onClick={() => setActiveTab('media')}
               className={`w-full flex items-center justify-between p-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
-                activeTab === 'apis'
+                activeTab === 'media'
                   ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
                   : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
               }`}
             >
               <div className="flex items-center gap-3">
                 <Server className="w-4 h-4" />
-                <span>Hệ Thống API</span>
+                <span>Nguồn Phim</span>
               </div>
             </button>
 
-            {/* Item 3: Notifications */}
-            <button
-              id="sidebar-nav-notifications-btn"
-              onClick={() => setActiveTab('notifications')}
-              className={`w-full flex items-center justify-between p-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
-                activeTab === 'notifications'
-                  ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
-                  : 'text-amber-400 hover:text-amber-300 hover:bg-amber-950/40'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Bell className="w-4 h-4 text-amber-400" />
-                <span>Gửi Thông Báo</span>
-              </div>
-              <span className="px-1.5 py-0.2 text-[9px] bg-amber-950 text-amber-300 border border-amber-800/80 rounded-full font-mono">
-                Banner
-              </span>
-            </button>
-
-            {/* Item 4: Accounts */}
+            {/* Item 3: Tài khoản & Avatar */}
             <button
               id="sidebar-nav-accounts-btn"
               onClick={() => setActiveTab('accounts')}
@@ -454,45 +440,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             >
               <div className="flex items-center gap-3">
                 <Users className="w-4 h-4" />
-                <span>Quản Lý Tài Khoản</span>
+                <span>Tài Khoản</span>
               </div>
               <span className="px-2 py-0.5 text-[10px] bg-slate-800 rounded-full text-slate-300 font-mono">
                 {accounts.length}
               </span>
             </button>
 
-            {/* Item 5: Avatars */}
+            {/* Item 4: Cài đặt */}
             <button
-              id="sidebar-nav-avatars-btn"
-              onClick={() => setActiveTab('avatars')}
+              id="sidebar-nav-settings-btn"
+              onClick={() => setActiveTab('settings')}
               className={`w-full flex items-center justify-between p-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
-                activeTab === 'avatars'
+                activeTab === 'settings'
                   ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
                   : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
               }`}
             >
               <div className="flex items-center gap-3">
-                <ImageIcon className="w-4 h-4" />
-                <span>Kho Avatar</span>
-              </div>
-              <span className="px-2 py-0.5 text-[10px] bg-slate-800 rounded-full text-slate-300 font-mono">
-                {customAvatars.length}
-              </span>
-            </button>
-
-            {/* Item 6: Eco System */}
-            <button
-              id="sidebar-nav-ecosystem-btn"
-              onClick={() => setActiveTab('ecosystem')}
-              className={`w-full flex items-center justify-between p-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
-                activeTab === 'ecosystem'
-                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-600/30'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Power className="w-4 h-4" />
-                <span>Hệ Sinh Thái</span>
+                <Settings className="w-4 h-4" />
+                <span>Cài Đặt</span>
               </div>
             </button>
           </nav>
@@ -543,7 +510,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-slate-400 mt-0.5 hidden sm:block">
-                  Quản lý người dùng, cấp quyền bảo mật, thông báo chữ chạy và nguồn API
+                  Tài khoản, nguồn phim, banner và cài đặt hệ thống
                 </p>
               </div>
             </div>
@@ -567,39 +534,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               currentSubTab={overviewSubTab}
               onChangeSubTab={setOverviewSubTab}
               onSwitchToApisTab={() => {
-                setActiveTab('apis');
-                setApisSubTab('api_status');
+                setActiveTab('media');
               }}
               onShowToast={onShowToast}
             />
           </div>
         )}
 
-        {/* --- TAB 0.5: API MANAGEMENT --- */}
-        {activeTab === 'apis' && (
+        {/* --- TAB: NGUỒN PHIM & BANNER --- */}
+        {activeTab === 'media' && (
           <div className="animate-in fade-in duration-200">
-            <AdminApisTab
-              currentSubTab={apisSubTab}
-              onChangeSubTab={setApisSubTab}
-              onShowToast={onShowToast}
-            />
+            <AdminApisTab onShowToast={onShowToast} />
           </div>
         )}
 
-        {/* --- TAB 0.8: NOTIFICATIONS MANAGEMENT --- */}
-        {activeTab === 'notifications' && (
+        {/* --- TAB: CÀI ĐẶT (Thông báo / Ứng dụng / Bảo trì) --- */}
+        {activeTab === 'settings' && (
           <div className="animate-in fade-in duration-200">
-            <AdminNotificationsTab
-              currentAccount={currentAccount}
-              onShowToast={onShowToast}
-            />
-          </div>
-        )}
-
-        {/* --- TAB 5: ECOSYSTEM MANAGEMENT --- */}
-        {activeTab === 'ecosystem' && (
-          <div className="animate-in fade-in duration-200">
-            <AdminEcoSystemTab
+            <AdminSettingsTab
               currentAccount={currentAccount}
               onShowToast={onShowToast}
             />
@@ -622,33 +574,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   }`}
                 >
                   <Users className="w-3.5 h-3.5 text-sky-400" />
-                  <span>Danh Sách Tài Khoản ({accounts.length})</span>
+                  <span>Tài Khoản ({accounts.length})</span>
                 </button>
 
                 <button
-                  id="subtab-roles-permissions-btn"
-                  onClick={() => setAccountsSubTab('roles_permissions')}
+                  id="subtab-avatars-btn"
+                  onClick={() => setAccountsSubTab('avatars')}
                   className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    accountsSubTab === 'roles_permissions'
+                    accountsSubTab === 'avatars'
                       ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Phân Quyền & Vai Trò</span>
-                </button>
-
-                <button
-                  id="subtab-security-audit-btn"
-                  onClick={() => setAccountsSubTab('security_audit')}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    accountsSubTab === 'security_audit'
-                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Lock className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Bảo Mật & Phiên Đăng Nhập</span>
+                  <ImageIcon className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Avatar ({customAvatars.length})</span>
                 </button>
               </div>
 
@@ -801,111 +740,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             )}
 
-            {/* Sub-tab 2: Roles & Permissions */}
-            {accountsSubTab === 'roles_permissions' && (
-              <div className="space-y-5 animate-in fade-in duration-150">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Role Super Admin */}
-                  <div className="bg-[#0f172a] border border-blue-900/60 p-5 rounded-3xl space-y-4">
-                    <div className="flex items-center gap-3 pb-3 border-b border-slate-800">
-                      <div className="w-10 h-10 rounded-xl bg-red-950 border border-red-800 flex items-center justify-center text-red-400 font-bold">
-                        <Shield className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-white text-sm">Quản Trị Viên Tối Cao (Super Admin)</h4>
-                        <p className="text-xs text-slate-400">Tài khoản chính: @admin</p>
-                      </div>
-                    </div>
-
-                    <ul className="space-y-2.5 text-xs text-slate-300">
-                      <li className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                        <span>Toàn quyền thêm, sửa, xóa, kiểm tra và chuyển đổi nguồn API</span>
-                      </li>
-                      <li className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                        <span>Quản lý, tạo mới, khóa và cấp lại mật khẩu mọi tài khoản</span>
-                      </li>
-                      <li className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                        <span>Xem số liệu thống kê thời gian thực và quản lý kho avatar</span>
-                      </li>
-                    </ul>
-                  </div>
-
-                  {/* Role Standard User */}
-                  <div className="bg-[#0f172a] border border-blue-900/60 p-5 rounded-3xl space-y-4">
-                    <div className="flex items-center gap-3 pb-3 border-b border-slate-800">
-                      <div className="w-10 h-10 rounded-xl bg-blue-950 border border-blue-800 flex items-center justify-center text-sky-400 font-bold">
-                        <User className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-white text-sm">Người Dùng Rạp Phim (Standard User)</h4>
-                        <p className="text-xs text-slate-400">Các thành viên xem phim & đọc truyện</p>
-                      </div>
-                    </div>
-
-                    <ul className="space-y-2.5 text-xs text-slate-300">
-                      <li className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
-                        <span>Tạo và quản lý tối đa 5 hồ sơ cá nhân / gia đình</span>
-                      </li>
-                      <li className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
-                        <span>Tự động lưu lịch sử xem phim, danh sách yêu thích và tập đang xem</span>
-                      </li>
-                      <li className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" />
-                        <span>Không có quyền truy cập vào cổng cấu hình Admin Portal</span>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Sub-tab 3: Security Audit */}
-            {accountsSubTab === 'security_audit' && (
-              <div className="bg-[#0f172a] border border-blue-900/60 p-5 sm:p-6 rounded-3xl space-y-5 animate-in fade-in duration-150">
-                <div className="flex items-center gap-3 pb-4 border-b border-slate-800">
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-950 border border-emerald-800 flex items-center justify-center text-emerald-400 shrink-0">
-                    <ShieldCheck className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-bold text-white">Chính Sách An Toàn & Bảo Mật Mật Khẩu</h3>
-                    <p className="text-xs text-slate-400">
-                      Đảm bảo tính riêng tư, bảo mật mật khẩu và xác thực an toàn nhiều lớp
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-300">
-                  <div className="bg-[#131f37] p-4 rounded-2xl border border-slate-800 space-y-2">
-                    <p className="font-bold text-sky-300">🔒 Ẩn Mật Khẩu Tuyệt Đối</p>
-                    <p className="text-slate-400">
-                      Mật khẩu của người dùng không bao giờ được hiển thị công khai trên giao diện quản trị viên.
-                    </p>
-                  </div>
-                  <div className="bg-[#131f37] p-4 rounded-2xl border border-slate-800 space-y-2">
-                    <p className="font-bold text-indigo-300">🔑 Đặt Lại Mật Khẩu An Toàn</p>
-                    <p className="text-slate-400">
-                      Mọi hành động đổi mật khẩu hoặc xóa tài khoản đều yêu cầu mật khẩu Admin xác thực.
-                    </p>
-                  </div>
-                  <div className="bg-[#131f37] p-4 rounded-2xl border border-slate-800 space-y-2">
-                    <p className="font-bold text-emerald-300">🛡️ Tự Động Khóa Khi Cần</p>
-                    <p className="text-slate-400">
-                      Admin có thể khóa tạm thời bất kỳ tài khoản vi phạm nào chỉ với một cú nhấp chuột.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
         )}
 
-        {/* --- TAB 2: AVATAR GALLERY MANAGEMENT --- */}
-        {activeTab === 'avatars' && (
+        {/* --- TAB: AVATAR (gộp trong Tài Khoản) --- */}
+        {activeTab === 'accounts' && accountsSubTab === 'avatars' && (
           <div className="space-y-6 animate-in fade-in duration-200">
             {/* Avatars Sub-Navigation Tabs Bar */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-[#0b1329] border border-blue-900/60 p-2 sm:p-2.5 rounded-2xl shadow-xl">
@@ -1135,7 +974,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               )}
             </button>
 
-            {/* Nav item 2: Accounts */}
+            {/* Nav item 2: Nguồn phim */}
+            <button
+              id="bottom-nav-apis-btn"
+              onClick={() => setActiveTab('media')}
+              className={`flex flex-col items-center justify-center py-1 px-3 sm:px-6 rounded-2xl transition-all cursor-pointer relative ${
+                activeTab === 'media'
+                  ? 'text-sky-400 bg-blue-950/80 border border-blue-700/60 shadow-lg shadow-blue-900/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
+              }`}
+            >
+              <Server className="w-5 h-5" />
+              <span className="text-[11px] sm:text-xs font-bold mt-1">Nguồn Phim</span>
+              {activeTab === 'media' && (
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 absolute -bottom-1" />
+              )}
+            </button>
+
+            {/* Nav item 3: Tài khoản */}
             <button
               id="bottom-nav-accounts-btn"
               onClick={() => setActiveTab('accounts')}
@@ -1157,58 +1013,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               )}
             </button>
 
-            {/* Nav item 3: APIs */}
+            {/* Nav item 4: Cài đặt */}
             <button
-              id="bottom-nav-apis-btn"
-              onClick={() => setActiveTab('apis')}
+              id="bottom-nav-settings-btn"
+              onClick={() => setActiveTab('settings')}
               className={`flex flex-col items-center justify-center py-1 px-3 sm:px-6 rounded-2xl transition-all cursor-pointer relative ${
-                activeTab === 'apis'
+                activeTab === 'settings'
                   ? 'text-sky-400 bg-blue-950/80 border border-blue-700/60 shadow-lg shadow-blue-900/30'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
               }`}
             >
-              <Server className="w-5 h-5" />
-              <span className="text-[11px] sm:text-xs font-bold mt-1">Hệ Thống API</span>
-              {activeTab === 'apis' && (
-                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 absolute -bottom-1" />
-              )}
-            </button>
-
-            {/* Nav item 4: Notifications */}
-            <button
-              id="bottom-nav-notifications-btn"
-              onClick={() => setActiveTab('notifications')}
-              className={`flex flex-col items-center justify-center py-1 px-3 sm:px-6 rounded-2xl transition-all cursor-pointer relative ${
-                activeTab === 'notifications'
-                  ? 'text-amber-400 bg-amber-950/80 border border-amber-700/60 shadow-lg shadow-amber-900/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
-              }`}
-            >
-              <Bell className="w-5 h-5 text-amber-400" />
-              <span className="text-[11px] sm:text-xs font-bold mt-1">Thông Báo</span>
-              {activeTab === 'notifications' && (
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 absolute -bottom-1" />
-              )}
-            </button>
-
-            {/* Nav item 5: Avatars */}
-            <button
-              id="bottom-nav-avatars-btn"
-              onClick={() => setActiveTab('avatars')}
-              className={`flex flex-col items-center justify-center py-1 px-3 sm:px-6 rounded-2xl transition-all cursor-pointer relative ${
-                activeTab === 'avatars'
-                  ? 'text-sky-400 bg-blue-950/80 border border-blue-700/60 shadow-lg shadow-blue-900/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
-              }`}
-            >
-              <div className="relative">
-                <ImageIcon className="w-5 h-5" />
-                <span className="absolute -top-1.5 -right-3 bg-indigo-600 text-white text-[9px] font-bold px-1.5 py-0.2 rounded-full">
-                  {customAvatars.length}
-                </span>
-              </div>
-              <span className="text-[11px] sm:text-xs font-bold mt-1">Kho Avatar</span>
-              {activeTab === 'avatars' && (
+              <Settings className="w-5 h-5" />
+              <span className="text-[11px] sm:text-xs font-bold mt-1">Cài Đặt</span>
+              {activeTab === 'settings' && (
                 <span className="w-1.5 h-1.5 rounded-full bg-sky-400 absolute -bottom-1" />
               )}
             </button>
