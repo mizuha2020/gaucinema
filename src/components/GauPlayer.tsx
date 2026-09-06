@@ -5,6 +5,7 @@ import { EpisodeServer, Movie, MovieEpisode, Account, UserProfile } from '../typ
 import { getMirrorUrls } from '../utils/mirrorUrls';
 import { loadCleanedM3u8Url, revokeBlobUrl } from '../utils/m3u8Cleaner';
 import { getFullApiUrl } from '../services/apiConfig';
+import { TMDB_API_KEY, TMDB_BASE_URL } from '../services/movieApi';
 import { presenceService } from '../services/presenceService';
 import { Capacitor } from '@capacitor/core';
 import { enterNativePip, setNativeVideoPlaying, checkNativePipSupported, setImmersiveMode, isNativeAndroidApp } from '../utils/nativeVideoPlayer';
@@ -213,10 +214,12 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
       : null;
   }, [currentServer, episodeIndex]);
 
-  // single fetch per episode: imdb from movie detail (movie.imdb.id), season/episode parsed locally
+  // single fetch per episode: imdb from movie detail (movie.imdb.id), season/episode parsed locally.
+  // Resilient chain (APK hay mất nút Bỏ qua intro vì 1 trong 2 khâu này):
+  // 1) thiếu movie.imdb.id (nguồn detail không có) -> resolve qua TMDB external_ids (TMDB CORS *, gọi trực tiếp được).
+  // 2) proxy backend cold-start 502/timeout -> retry 1 lần sau 1.5s rồi mới bỏ.
   useEffect(() => {
-    const imdbId = (movie as any)?.imdb?.id ? String((movie as any).imdb.id).trim() : '';
-    if (!imdbId || !/^tt\d{7,8}$/.test(imdbId)) { setSegments(null); setActiveSegment(null); return; }
+    const directImdb = (movie as any)?.imdb?.id ? String((movie as any).imdb.id).trim() : '';
     const season = Number((movie as any)?.tmdb?.season) > 0 ? Number((movie as any).tmdb.season) : 1;
     let epNum = NaN;
     const m = String(currentEpisode.name || '').match(/\d+/);
@@ -229,22 +232,78 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     let cancelled = false;
     setSegments(null); setActiveSegment(null);
     // APK-safe: use backend proxy via getFullApiUrl so relative URL resolves to CLOUD_BACKEND_URL on native
-    const url = getFullApiUrl(`/api/intro/segments?imdb_id=${encodeURIComponent(imdbId)}&season=${season}&episode=${epNum}`);
     // APK-safe timeout: AbortSignal.timeout() missing on old Android WebView -> would throw sync and kill segments
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => { try { controller.abort(); } catch {} }, 6000);
-    // cache:no-store -> server ETag could answer 304 with empty body (res.ok=false), killing segments
-    fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal as any, cache: 'no-store' as RequestCache })
-      .then(async r => {
-        if (r.status === 404) return { imdb_id: imdbId, season, episode: epNum, intro: null, recap: null, outro: null } as any;
-        if (!r.ok) throw new Error(String(r.status));
-        return r.json();
-      })
-      .then((data: SegmentsResponse) => { if (!cancelled) setSegments(normalizeSegments(data)); })
-      .catch(() => { if (!cancelled) setSegments(null); })
-      .finally(() => window.clearTimeout(timeoutId));
+    const resolveImdbViaTmdb = async (): Promise<string> => {
+      try {
+        if (/^tt\d{7,8}$/.test(directImdb)) return directImdb;
+        const tmdbId = (movie as any)?.tmdb?.id ? String((movie as any).tmdb.id).trim() : '';
+        if (!/^\d+$/.test(tmdbId)) return '';
+        const t = String((movie as any)?.tmdb?.type || '').toLowerCase();
+        const types = t === 'tv' ? ['tv'] : t === 'movie' ? ['movie'] : ['tv', 'movie'];
+        for (const ty of types) {
+          if (cancelled) return '';
+          try {
+            const r = await fetch(`${TMDB_BASE_URL}/${ty}/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`, {
+              headers: { Accept: 'application/json' },
+              signal: controller.signal as any,
+            });
+            if (!r.ok) continue;
+            const j = await r.json().catch(() => null);
+            const id = j?.imdb_id ? String(j.imdb_id).trim() : '';
+            if (/^tt\d{7,8}$/.test(id)) return id;
+          } catch { /* thử type còn lại */ }
+        }
+      } catch { /* ignore */ }
+      return '';
+    };
+    (async () => {
+      try {
+        const imdbId = await resolveImdbViaTmdb();
+        if (cancelled) return;
+        if (!imdbId) {
+          console.info(`[intro] skip: no imdb_id for ${(movie as any)?.slug || '?'}, ep ${epNum}`);
+          return;
+        }
+        const url = getFullApiUrl(`/api/intro/segments?imdb_id=${encodeURIComponent(imdbId)}&season=${season}&episode=${epNum}`);
+        // cache:no-store -> server ETag could answer 304 with empty body (res.ok=false), killing segments
+        let data: SegmentsResponse | null = null;
+        let lastErr = '';
+        for (let attempt = 0; attempt < 2 && !cancelled; attempt++) {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal as any, cache: 'no-store' as RequestCache });
+            if (r.status === 404) { data = { imdb_id: imdbId, season, episode: epNum, intro: null, recap: null, outro: null } as any; break; }
+            if (!r.ok) throw new Error(String(r.status));
+            // eslint-disable-next-line no-await-in-loop
+            data = await r.json();
+            break;
+          } catch (e: any) {
+            lastErr = e?.message || String(e);
+            if (attempt === 0 && !cancelled) {
+              // eslint-disable-next-line no-await-in-loop
+              await new Promise(res => setTimeout(res, 1500));
+            }
+          }
+        }
+        if (cancelled) return;
+        if (data) {
+          const norm = normalizeSegments(data);
+          setSegments(norm);
+          console.info(`[intro] ${imdbId} s${season}e${epNum}:`, norm?.intro ? `intro ${norm.intro.start_sec}-${norm.intro.end_sec}s` : 'no intro');
+        } else {
+          console.info(`[intro] fetch failed ${imdbId} s${season}e${epNum}: ${lastErr}`);
+          setSegments(null);
+        }
+      } catch {
+        if (!cancelled) setSegments(null);
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    })();
     return () => { cancelled = true; window.clearTimeout(timeoutId); try { controller.abort(); } catch {} };
-  }, [(movie as any)?.imdb?.id, (movie as any)?.tmdb?.season, currentEpisode.slug, currentEpisode.name, currentServer]);
+  }, [(movie as any)?.imdb?.id, (movie as any)?.tmdb?.id, (movie as any)?.tmdb?.season, currentEpisode.slug, currentEpisode.name, currentServer]);
 
   const handleSkipSegment = useCallback((type: 'intro' | 'recap' | 'outro') => {
     const v = videoRef.current;
@@ -1478,32 +1537,32 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
                     ? <Pause className="w-4 h-4 shrink-0" fill="currentColor" />
                     : <Play className="w-4 h-4 ml-0.5 shrink-0" fill="currentColor" />}
                 </button>
-                {/* Desktop: tua -10s cạnh play */}
+                {/* Desktop chuột: tua -10s cạnh play (mobile dùng phím giữa màn hình + vuốt) */}
                 <button
                   onClick={() => { skip(-10); resetControlsTimer(); }}
                   aria-label="Tua lại 10 giây"
                   title="Tua lại 10 giây (←)"
-                  className="hidden sm:flex rounded-full hover:bg-white/10 active:scale-95 items-center justify-center text-white w-9 h-9 shrink-0 transition"
+                  className="hidden pointer-fine:flex rounded-full hover:bg-white/10 active:scale-95 items-center justify-center text-white w-9 h-9 shrink-0 transition"
                 >
                   <span className="relative flex items-center justify-center">
                     <RotateCcw className="w-5 h-5 shrink-0" strokeWidth={1.75} />
                     <span className="absolute inset-0 flex items-center justify-center text-[8px] font-bold text-white tabular-nums pt-0.5">10</span>
                   </span>
                 </button>
-                {/* Desktop: tua +10s cạnh play */}
+                {/* Desktop chuột: tua +10s cạnh play (mobile dùng phím giữa màn hình + vuốt) */}
                 <button
                   onClick={() => { skip(10); resetControlsTimer(); }}
                   aria-label="Tua tới 10 giây"
                   title="Tua tới 10 giây (→)"
-                  className="hidden sm:flex rounded-full hover:bg-white/10 active:scale-95 items-center justify-center text-white w-9 h-9 shrink-0 transition"
+                  className="hidden pointer-fine:flex rounded-full hover:bg-white/10 active:scale-95 items-center justify-center text-white w-9 h-9 shrink-0 transition"
                 >
                   <span className="relative flex items-center justify-center">
                     <RotateCw className="w-5 h-5 shrink-0" strokeWidth={1.75} />
                     <span className="absolute inset-0 flex items-center justify-center text-[8px] font-bold text-white tabular-nums pt-0.5">10</span>
                   </span>
                 </button>
-                {/* Desktop: volume mute + slider nở ra khi hover (gọn thanh control) */}
-                <div className="hidden sm:flex items-center gap-0.5 group/vol">
+                {/* Desktop chuột: volume mute + slider (mobile dùng phím cứng của máy) */}
+                <div className="hidden pointer-fine:flex items-center gap-0.5 group/vol">
                   <button
                     onClick={() => { toggleMute(); resetControlsTimer(); }}
                     aria-label={isMuted || volume === 0 ? 'Bật tiếng (M)' : 'Tắt tiếng (M)'}
