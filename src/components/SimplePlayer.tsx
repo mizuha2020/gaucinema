@@ -154,6 +154,9 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
   const progressTrackRef = useRef<HTMLDivElement>(null);
   const previewSeekTimer = useRef<NodeJS.Timeout | null>(null);
   const previewDebounce = useRef<NodeJS.Timeout | null>(null);
+  // Cache frame preview theo bucket 2s để hover lại hiện ngay, khỏi seek lại
+  const previewFrameCache = useRef(new Map<number, string>());
+  const lastPreviewTarget = useRef(-1);
   const [preview, setPreview] = useState<{ time: number; xPct: number; img: string | null; visible: boolean; loading: boolean } | null>(null);
 
   const [hud, setHud] = useState<{ type: 'volume' | 'brightness'; value: number } | null>(null);
@@ -275,6 +278,11 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
       if (!ctx) return;
       ctx.drawImage(pv, 0, 0, cw, ch);
       const dataUrl = cv.toDataURL('image/jpeg', 0.65);
+      try {
+        const bucket = Math.floor((pv.currentTime || 0) / 2);
+        if (previewFrameCache.current.size > 120) previewFrameCache.current.clear();
+        previewFrameCache.current.set(bucket, dataUrl);
+      } catch {}
       setPreview(prev => prev ? { ...prev, img: dataUrl, loading: false } : prev);
     } catch (e) {
       // CORS taint fallback - keep time label only
@@ -286,6 +294,17 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     const pv = previewVideoRef.current;
     if (!pv || !duration || duration <= 0) return;
     const clamped = Math.max(0, Math.min(duration - 0.5, time));
+    // Đã có frame trong cache -> hiện ngay, khỏi seek
+    const bucket = Math.floor(clamped / 2);
+    const cached = previewFrameCache.current.get(bucket);
+    if (cached) {
+      if (previewSeekTimer.current) clearTimeout(previewSeekTimer.current);
+      lastPreviewTarget.current = clamped;
+      setPreview(prev => prev ? { ...prev, time: clamped, img: cached, loading: false } : prev);
+      return;
+    }
+    if (Math.abs(clamped - lastPreviewTarget.current) < 1) return;
+    lastPreviewTarget.current = clamped;
     setPreview(prev => prev ? { ...prev, time: clamped, loading: true } : prev);
     if (previewSeekTimer.current) clearTimeout(previewSeekTimer.current);
     // Debounce seek a bit to avoid spamming
@@ -293,7 +312,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
       try {
         pv.currentTime = clamped;
       } catch {}
-    }, 80);
+    }, 180);
   }, [duration]);
 
   const getTimeFromClientX = useCallback((clientX: number) => {
@@ -825,6 +844,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     rawCandidates.forEach((u) => { if (u) { const p = getAdCleanUrl(u); if (p && !candidates.includes(p)) candidates.push(p); } });
     let candidateIndex = 0;
     let blobUrl: string | null = null;
+    let extraBlobs: string[] = [];
     let cancelled = false;
 
     const tryNext = (hls: Hls) => {
@@ -871,9 +891,10 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
       (async () => {
         try {
           const cleaned = await loadCleanedM3u8Url(rawCandidates[0]);
-          if (cancelled) { if (cleaned) revokeBlobUrl(cleaned.blobUrl); return; }
+          if (cancelled) { if (cleaned) revokeBlobUrl([cleaned.blobUrl, ...(cleaned.extraBlobs || [])]); return; }
           if (cleaned) {
             blobUrl = cleaned.blobUrl;
+            extraBlobs = [cleaned.blobUrl, ...(cleaned.extraBlobs || [])];
             candidates.unshift(blobUrl);
             candidateIndex = 0;
             hls.loadSource(blobUrl);
@@ -930,7 +951,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
 
     return () => {
       cancelled = true;
-      revokeBlobUrl(blobUrl);
+      revokeBlobUrl([blobUrl, ...extraBlobs]);
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
@@ -944,13 +965,15 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     if (!pv || !currentEpisode.link_m3u8 || useEmbed) return;
     // reset preview state on source change
     setPreview(null);
+    previewFrameCache.current.clear();
+    lastPreviewTarget.current = -1;
     if (previewHlsRef.current) {
       previewHlsRef.current.destroy();
       previewHlsRef.current = null;
     }
     const directRaw = getMirrorUrls(currentEpisode.link_m3u8)[0];
     if (!directRaw) return;
-    let previewBlob: string | null = null;
+    let previewBlobs: string[] = [];
     let cancelled = false;
     const onSeeked = () => {
       capturePreviewFrame();
@@ -991,8 +1014,8 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     };
     // Same cleaner as main player so preview aligns with cleaned timeline
     loadCleanedM3u8Url(directRaw).then((cleaned) => {
-      if (cancelled) { if (cleaned) revokeBlobUrl(cleaned.blobUrl); return; }
-      if (cleaned) { previewBlob = cleaned.blobUrl; attachPreview(previewBlob); }
+      if (cancelled) { if (cleaned) revokeBlobUrl([cleaned.blobUrl, ...(cleaned.extraBlobs || [])]); return; }
+      if (cleaned) { previewBlobs = [cleaned.blobUrl, ...(cleaned.extraBlobs || [])]; attachPreview(cleaned.blobUrl); }
       else attachPreview(directRaw);
     }).catch(() => { if (!cancelled) attachPreview(directRaw); });
 
@@ -1003,7 +1026,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
         previewHlsRef.current.destroy();
         previewHlsRef.current = null;
       }
-      revokeBlobUrl(previewBlob);
+      revokeBlobUrl(previewBlobs);
     };
   }, [currentEpisode.link_m3u8, useEmbed, capturePreviewFrame]);
 
@@ -1367,7 +1390,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
             onClick={handleVideoClick}
           />
           {/* Hidden preview video + canvas for thumbnail (desktop hover / mobile drag / TV dpad) */}
-          <video ref={previewVideoRef} muted playsInline preload="metadata" crossOrigin="anonymous" className="hidden w-0 h-0 opacity-0 pointer-events-none" tabIndex={-1} />
+            <video ref={previewVideoRef} muted playsInline preload="metadata" crossOrigin="anonymous" className="pointer-events-none absolute left-0 top-0 h-[2px] w-[2px] opacity-0" tabIndex={-1} aria-hidden />
           <canvas ref={previewCanvasRef} className="hidden w-0 h-0 opacity-0 pointer-events-none" />
 
           {isLoading && (

@@ -20,8 +20,9 @@ export function isTvDevice(): boolean {
     if (new URLSearchParams(window.location.search).get('tv') === '1') return true;
     return isTvUA;
   }
-  if (new URLSearchParams(window.location.search).get('tv') === '1') return true;
-  return isTvUA;
+
+  // 4. Default: Desktop browsers and regular displays are not 10-foot TV mode
+  return false;
 }
 
 export function applyTvClass() {

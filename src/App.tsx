@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Account,
@@ -57,6 +57,15 @@ import { FollowedRow } from "./components/FollowedRow";
 import { Capacitor } from "@capacitor/core";
 import { applyTvClass } from "./utils/tvDetect";
 import { App as CapApp } from "@capacitor/app";
+import { appNavigate } from "./routerNav";
+import { RouteSync } from "./components/RouteSync";
+import {
+  buildTabUrl,
+  buildPhimUrl,
+  buildXemUrl,
+  parseLocation,
+  type ParsedRoute,
+} from "./routes";
 import {
   Sparkles,
   Flame,
@@ -227,8 +236,38 @@ export default function App() {
   const [isProfileSwitchLoaderOpen, setIsProfileSwitchLoaderOpen] = useState(false);
   const [isProfileDataReady, setIsProfileDataReady] = useState(false);
 
-  // App Navigation Tab
+  // App Navigation Tab (URL-first: deep-link /series... mở đúng tab ngay, không flash)
   const [activeTab, setActiveTab] = useState<NavTab>(() => {
+    try {
+      const r = parseLocation(window.location.pathname, window.location.search);
+      if (r.kind === "tab") {
+        const validTabs: NavTab[] = [
+          "home",
+          "series",
+          "single",
+          "cinema",
+          "anime",
+          "tv-shows",
+          "manga",
+          "filter",
+          "my-list",
+          "history",
+          "offline",
+          "tv-live",
+          "youtube",
+          "xem-chung",
+        ];
+        const isNative = (() => {
+          try {
+            return Capacitor.isNativePlatform();
+          } catch {
+            return false;
+          }
+        })();
+        if (!isNative && r.tab === "offline") return "home";
+        if (validTabs.includes(r.tab)) return r.tab;
+      }
+    } catch {}
     try {
       const savedTab = localStorage.getItem("gau_active_tab");
       const validTabs: NavTab[] = [
@@ -272,9 +311,23 @@ export default function App() {
     }
   }, [activeTab]);
 
-  const [searchKeyword, setSearchKeyword] = useState<string>("");
-  const [filterCountry, setFilterCountry] = useState<string>("");
-  const [filterGenre, setFilterGenre] = useState<string>("");
+  // Filter/search state (URL-first: /browse?q=... mở đúng bộ lọc ngay)
+  const readInitialFilter = (key: "keyword" | "genre" | "country"): string => {
+    try {
+      const r = parseLocation(window.location.pathname, window.location.search);
+      if (r.kind === "tab" && r.tab === "filter") return r.filter[key];
+    } catch {}
+    return "";
+  };
+  const [searchKeyword, setSearchKeyword] = useState<string>(() =>
+    readInitialFilter("keyword"),
+  );
+  const [filterCountry, setFilterCountry] = useState<string>(() =>
+    readInitialFilter("country"),
+  );
+  const [filterGenre, setFilterGenre] = useState<string>(() =>
+    readInitialFilter("genre"),
+  );
 
   // Auto scroll to top when entering home tab
   useTabScroll(activeTab);
@@ -309,6 +362,17 @@ export default function App() {
   // Active Modals & Player State
   const [selectedMovieForDetail, setSelectedMovieForDetail] =
     useState<Movie | null>(null);
+  // URL để quay về khi đóng overlay (deep-link vào thẳng thì về tab, đi trong app thì về chỗ cũ)
+  const detailReturnRef = useRef<string>("/");
+  const playerReturnRef = useRef<string>("/");
+  // Chống resolve deep-link cũ đè resolve mới khi fetch chồng nhau
+  const routeReqRef = useRef(0);
+  // Ref trỏ tới các handler điều hướng (effect back-button khai báo trước handler nên gọi qua ref để tránh TDZ)
+  const navActionsRef = useRef<{
+    closePlayer: () => void;
+    closeDetailModal: () => void;
+    goHome: () => void;
+  }>({ closePlayer: () => {}, closeDetailModal: () => {}, goHome: () => {} });
   const [showExitConfirmModal, setShowExitConfirmModal] =
     useState<boolean>(false);
 
@@ -339,6 +403,8 @@ export default function App() {
   const [initialResumeTime, setInitialResumeTime] = useState<number>(0);
   const videoTimeRef = useRef(0);
   const videoDurationRef = useRef(0);
+  // Mirror để handler stable (handleSelectEpisode) vẫn biết phim đang phát mà sync URL
+  const playingMovieRef = useRef<Movie | null>(null);
 
   // Watch Together State
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
@@ -668,6 +734,8 @@ export default function App() {
         setSelectedMovieForDetail(null);
         setActiveRoomId(roomId);
         showToast("Đã tạo phòng xem chung thành công!");
+        // Phòng không có route riêng: đưa URL về tab xem-chung (replace, khỏi rác history)
+        appNavigate(buildTabUrl("xem-chung"), { replace: true });
       } catch (err: any) {
         showToast(err.message, "error");
       }
@@ -690,6 +758,7 @@ export default function App() {
         setSelectedMovieForDetail(null);
         setActiveRoomId(roomId);
         showToast("Đã tham gia phòng xem chung!", "success");
+        appNavigate(buildTabUrl("xem-chung"), { replace: true });
       } catch (err: any) {
         const msg = err.message || "Mật khẩu sai. Vui lòng thử lại.";
         if (msg.includes("Yêu cầu vào lại đã được gửi")) {
@@ -712,6 +781,13 @@ export default function App() {
     }
     setActiveRoomId(null);
     setActiveRoomData(null);
+    // Trả URL về tab nếu đang kẹt ở URL detail/player cũ
+    try {
+      const r = parseLocation(window.location.pathname, window.location.search);
+      if (r.kind === "detail" || r.kind === "player") {
+        appNavigate(buildTabUrl("xem-chung"), { replace: true });
+      }
+    } catch {}
   }, [currentAccount]);
 
   // Watch Together - End room handler
@@ -721,6 +797,12 @@ export default function App() {
     }
     setActiveRoomId(null);
     setActiveRoomData(null);
+    try {
+      const r = parseLocation(window.location.pathname, window.location.search);
+      if (r.kind === "detail" || r.kind === "player") {
+        appNavigate(buildTabUrl("xem-chung"), { replace: true });
+      }
+    } catch {}
   }, [currentAccount]);
 
   // Fetch Home collections with Progressive 2-Stage Loading for maximum speed
@@ -1061,6 +1143,8 @@ export default function App() {
   ]);
 
   // Unified History/Back Button Manager
+  // Tab/detail/player đã có router (RouteSync) lo theo URL; handler này chỉ giữ
+  // các overlay cùng-URL (admin, profiles) + stack riêng của manga.
   useEffect(() => {
     const handlePopState = (e: PopStateEvent) => {
       // Manga overlay (detail/reader) is handled by MangaView; skip global handler to avoid exit popup
@@ -1075,48 +1159,7 @@ export default function App() {
       if (curMangaView === "detail" || curMangaView === "reader") {
         return;
       }
-      if (playingMovie) {
-        const episodeToSave = playingEpisode;
-        const serverToSave = playingServer;
-        const movieToDetail = playingMovie;
-        setPlayingMovie(null);
-        // Giữ detail ở dưới nếu đã có, tránh re-mount gây zoom ngược (rule: back là thu nhỏ, không phải zoom vào detail mới)
-        // Save one final progress snapshot before closing
-        if (
-          currentAccount &&
-          activeProfile &&
-          episodeToSave &&
-          serverToSave &&
-          videoTimeRef.current > 0
-        ) {
-          firestoreStorage
-            .saveWatchProgress(currentAccount.id, activeProfile.id, {
-              id: `${movieToDetail.slug}_${episodeToSave.slug}`,
-              movieSlug: movieToDetail.slug,
-              movieName: movieToDetail.name,
-              movieOriginName: movieToDetail.origin_name,
-              movieThumb: movieToDetail.thumb_url,
-              moviePoster: movieToDetail.poster_url,
-              episodeName: episodeToSave.name,
-              episodeSlug: episodeToSave.slug,
-              serverName: serverToSave.server_name,
-              linkM3u8: episodeToSave.link_m3u8,
-              currentTime: videoTimeRef.current,
-              duration: videoDurationRef.current || 0,
-              progressPercent:
-                videoDurationRef.current > 0
-                  ? Math.round(
-                      (videoTimeRef.current / videoDurationRef.current) * 100,
-                    )
-                  : 0,
-            })
-            .then(() => refreshProfileData());
-        } else {
-          refreshProfileData();
-        }
-      } else if (selectedMovieForDetail) {
-        setSelectedMovieForDetail(null);
-      } else if (showAdminDashboard) {
+      if (showAdminDashboard) {
         if (
           e.state &&
           (e.state.overlay === "admin" ||
@@ -1128,8 +1171,6 @@ export default function App() {
         setShowAdminDashboard(false);
       } else if (showProfileSelector && currentAccount && activeProfile) {
         setShowProfileSelector(false);
-      } else if (e.state && e.state.tab) {
-        setActiveTab(e.state.tab);
       } else if (!e.state) {
         // Don't show exit when in manga/livetv app; MangaView handles its own back stack
         if (activeApp !== "cinema") {
@@ -1168,16 +1209,17 @@ export default function App() {
           }
           if (showExitConfirmModal) {
             setShowExitConfirmModal(false);
+          } else if (playingMovie || selectedMovieForDetail) {
+            // Player/detail đóng theo URL thật (deep-link được) thay vì history.back() mù
+            if (playingMovie) navActionsRef.current.closePlayer();
+            else navActionsRef.current.closeDetailModal();
           } else if (
-            playingMovie ||
-            selectedMovieForDetail ||
             showAdminDashboard ||
             (showProfileSelector && currentAccount && activeProfile)
           ) {
             window.history.back();
           } else if (activeTab !== "home") {
-            setActiveTab("home");
-            window.history.pushState({ tab: "home" }, "", "");
+            navActionsRef.current.goHome();
           } else {
             setShowExitConfirmModal(true);
           }
@@ -1198,8 +1240,6 @@ export default function App() {
   }, [
     showExitConfirmModal,
     playingMovie,
-    playingEpisode,
-    playingServer,
     selectedMovieForDetail,
     showAdminDashboard,
     showProfileSelector,
@@ -1207,10 +1247,9 @@ export default function App() {
     activeProfile,
     activeTab,
     activeApp,
-    refreshProfileData,
   ]);
 
-  // Wrapper for state changes
+  // Wrapper for state changes (URL-first: mỗi tab là 1 deep-link)
   const handleTabChange = (tab: NavTab) => {
     if (tab === activeTab) return;
     // Chặn tab offline trên Web
@@ -1221,13 +1260,13 @@ export default function App() {
       }
     } catch {}
 
-    window.history.pushState({ tab }, "", "");
     setActiveTab(tab);
     if (tab !== "filter") {
       setSearchKeyword("");
       setFilterCountry("");
       setFilterGenre("");
     }
+    appNavigate(buildTabUrl(tab));
   };
 
   const openAdminDashboard = () => {
@@ -1250,20 +1289,23 @@ export default function App() {
 
   const openDetailModal = (movie: Movie) => {
     if (!selectedMovieForDetail) {
-      window.history.pushState({ overlay: "detail" }, "", "");
+      // Nhớ chỗ đang đứng để nút Đóng/X quay về (đi trong app); deep-link vào thẳng thì ref đã là tab
+      detailReturnRef.current =
+        window.location.pathname + window.location.search;
     }
     setSelectedMovieForDetail(movie);
+    appNavigate(buildPhimUrl(movie.slug));
   };
 
   const closeDetailModal = () => {
-    if (window.history.state && window.history.state.overlay === "detail") {
-      window.history.back();
-    } else {
-      setSelectedMovieForDetail(null);
-    }
+    const r = parseLocation(window.location.pathname, window.location.search);
+    setSelectedMovieForDetail(null);
+    // Đang ở URL detail thì về chỗ cũ, không thì chỉ đóng state (tránh yank URL lạ)
+    if (r.kind === "detail") appNavigate(detailReturnRef.current || "/");
   };
 
-  const openPlayerWithHistory = (
+  // Lõi mở player (set state + ghi lịch sử), KHÔNG đụng URL — wrapper mới điều hướng
+  const applyPlayerOpen = (
     movie: Movie,
     episode: MovieEpisode,
     server: EpisodeServer,
@@ -1273,12 +1315,11 @@ export default function App() {
     videoTimeRef.current = resumeTime;
     videoDurationRef.current = 0;
     setPlayingMovie(movie);
+    playingMovieRef.current = movie;
     setPlayingEpisode(episode);
     setPlayingServer(server);
     setAllServers(servers);
     setInitialResumeTime(resumeTime);
-    // Giữ detail ở dưới player để player zoom trên nền detail (đúng rule iOS: mở zoom vào, đóng thu nhỏ)
-    window.history.pushState({ playerOpen: true }, "", "");
 
     // Ghi nhận ngay khi bắt đầu xem để mục "Xem tiếp" / "Lịch sử" xuất hiện lập tức.
     if (currentAccount && activeProfile) {
@@ -1302,13 +1343,73 @@ export default function App() {
     }
   };
 
-  const closePlayer = () => {
-    if (window.history.state && window.history.state.playerOpen) {
-      window.history.back();
+  const openPlayerWithHistory = (
+    movie: Movie,
+    episode: MovieEpisode,
+    server: EpisodeServer,
+    servers: EpisodeServer[],
+    resumeTime: number,
+  ) => {
+    applyPlayerOpen(movie, episode, server, servers, resumeTime);
+    // Giữ detail ở dưới player để player zoom trên nền detail (đúng rule iOS: mở zoom vào, đóng thu nhỏ)
+    // Đóng player sẽ quay về detail (nếu đang mở) hoặc tab.
+    playerReturnRef.current = selectedMovieForDetail
+      ? buildPhimUrl(selectedMovieForDetail.slug)
+      : buildTabUrl(activeTab);
+    appNavigate(buildXemUrl(movie.slug, episode.slug, server.server_name));
+  };
+
+  // Snapshot tiến độ lần cuối khi thoát player (bản cũ nằm ở popstate)
+  const saveFinalProgress = () => {
+    if (
+      currentAccount &&
+      activeProfile &&
+      playingMovie &&
+      playingEpisode &&
+      playingServer &&
+      videoTimeRef.current > 0
+    ) {
+      firestoreStorage
+        .saveWatchProgress(currentAccount.id, activeProfile.id, {
+          id: `${playingMovie.slug}_${playingEpisode.slug}`,
+          movieSlug: playingMovie.slug,
+          movieName: playingMovie.name,
+          movieOriginName: playingMovie.origin_name,
+          movieThumb: playingMovie.thumb_url,
+          moviePoster: playingMovie.poster_url,
+          episodeName: playingEpisode.name,
+          episodeSlug: playingEpisode.slug,
+          serverName: playingServer.server_name,
+          linkM3u8: playingEpisode.link_m3u8,
+          currentTime: videoTimeRef.current,
+          duration: videoDurationRef.current || 0,
+          progressPercent:
+            videoDurationRef.current > 0
+              ? Math.round(
+                  (videoTimeRef.current / videoDurationRef.current) * 100,
+                )
+              : 0,
+        })
+        .then(() => refreshProfileData());
     } else {
-      setPlayingMovie(null);
       refreshProfileData();
     }
+  };
+
+  const closePlayer = () => {
+    const r = parseLocation(window.location.pathname, window.location.search);
+    saveFinalProgress();
+    setPlayingMovie(null);
+    playingMovieRef.current = null;
+    // Đang ở URL player thì về chỗ cũ, không thì chỉ clear state
+    if (r.kind === "player") appNavigate(playerReturnRef.current || "/");
+  };
+
+  // Đăng ký vào ref cho effect back-button (khai báo trước handler)
+  navActionsRef.current = {
+    closePlayer,
+    closeDetailModal,
+    goHome: () => handleTabChange("home"),
   };
 
   // Start Playing a Movie directly
@@ -1439,11 +1540,14 @@ export default function App() {
   };
 
   // Select episode inside the player (memoized so re-renders don't retrigger the player's load effect)
+  // Đổi tập trong player cũng đổi URL (replace để khỏi ngập history)
   const handleSelectEpisode = useCallback(
     (ep: MovieEpisode, srv: EpisodeServer, resumeTime?: number) => {
       setPlayingEpisode(ep);
       setPlayingServer(srv);
       setInitialResumeTime(resumeTime ?? 0);
+      const m = playingMovieRef.current;
+      if (m) appNavigate(buildXemUrl(m.slug, ep.slug, srv.server_name), { replace: true });
     },
     [],
   );
@@ -1506,52 +1610,209 @@ export default function App() {
     ],
   );
 
-  // Search Submit Handler
+  // Search Submit Handler (URL-first: /browse?q=... chia sẻ được)
   const handleSearchSubmit = (keyword: string) => {
     setSearchKeyword(keyword);
     setFilterCountry("");
     setFilterGenre("");
+    if (selectedMovieForDetail) {
+      setSelectedMovieForDetail(null);
+    }
     if (activeTab !== "filter") {
-      window.history.pushState({ tab: "filter" }, "", "");
       setActiveTab("filter");
     } else {
       // Already in filter tab, just scroll to top
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
-    if (selectedMovieForDetail) {
-      setSelectedMovieForDetail(null);
-    }
+    appNavigate(buildTabUrl("filter", { keyword, genre: "", country: "" }));
   };
 
   const handleSelectCountry = (countrySlug: string) => {
     setFilterCountry(countrySlug);
     setFilterGenre("");
     setSearchKeyword("");
+    if (selectedMovieForDetail) {
+      setSelectedMovieForDetail(null);
+    }
     if (activeTab !== "filter") {
-      window.history.pushState({ tab: "filter" }, "", "");
       setActiveTab("filter");
     } else {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
-    if (selectedMovieForDetail) {
-      setSelectedMovieForDetail(null);
-    }
+    appNavigate(buildTabUrl("filter", { keyword: "", genre: "", country: countrySlug }));
   };
 
   const handleSelectGenre = (genreSlug: string) => {
     setFilterGenre(genreSlug);
     setFilterCountry("");
     setSearchKeyword("");
+    if (selectedMovieForDetail) {
+      setSelectedMovieForDetail(null);
+    }
     if (activeTab !== "filter") {
-      window.history.pushState({ tab: "filter" }, "", "");
       setActiveTab("filter");
     } else {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
-    if (selectedMovieForDetail) {
-      setSelectedMovieForDetail(null);
-    }
+    appNavigate(buildTabUrl("filter", { keyword: "", genre: genreSlug, country: "" }));
   };
+
+  // ---- URL <-> state (react-router): state là nguồn sự thật, URL phản chiếu ----
+  // Route mà state hiện tại hàm ý — RouteSync so với URL, lệch thì áp URL vào state.
+  const expectedRoute: ParsedRoute = useMemo(() => {
+    if (playingMovie) {
+      return {
+        kind: "player",
+        slug: playingMovie.slug,
+        episodeSlug: playingEpisode?.slug,
+        serverName: playingServer?.server_name,
+      };
+    }
+    if (selectedMovieForDetail) {
+      return { kind: "detail", slug: selectedMovieForDetail.slug };
+    }
+    if (activeTab === "filter") {
+      return {
+        kind: "tab",
+        tab: activeTab,
+        filter: { keyword: searchKeyword, genre: filterGenre, country: filterCountry },
+      };
+    }
+    return { kind: "tab", tab: activeTab, filter: { keyword: "", genre: "", country: "" } };
+  }, [
+    playingMovie,
+    playingEpisode,
+    playingServer,
+    selectedMovieForDetail,
+    activeTab,
+    searchKeyword,
+    filterGenre,
+    filterCountry,
+  ]);
+
+  // Áp URL -> state (back/forward/truy cập trực tiếp). Fetch chồng nhau thì cái sau thắng.
+  const applyLocationRoute = useCallback(
+    (route: ParsedRoute) => {
+      const reqId = ++routeReqRef.current;
+      const alive = () => routeReqRef.current === reqId;
+      if (route.kind === "unknown") {
+        appNavigate("/", { replace: true });
+        return;
+      }
+      if (route.kind === "tab") {
+        if (playingMovie) {
+          saveFinalProgress();
+          setPlayingMovie(null);
+          playingMovieRef.current = null;
+        }
+        if (selectedMovieForDetail) setSelectedMovieForDetail(null);
+        if (route.tab === "filter") {
+          setSearchKeyword(route.filter.keyword);
+          setFilterGenre(route.filter.genre);
+          setFilterCountry(route.filter.country);
+        }
+        setActiveTab(route.tab);
+        return;
+      }
+      if (route.kind === "detail") {
+        if (playingMovie) {
+          saveFinalProgress();
+          setPlayingMovie(null);
+          playingMovieRef.current = null;
+        }
+        if (selectedMovieForDetail?.slug === route.slug) return;
+        detailReturnRef.current = buildTabUrl(activeTab);
+        void (async () => {
+          try {
+            const d = await movieApi.getMovieDetail(route.slug);
+            if (!alive()) return;
+            if (d?.movie) {
+              setSelectedMovieForDetail(d.movie);
+            } else {
+              showToast("Không tìm thấy phim", "error");
+              appNavigate("/", { replace: true });
+            }
+          } catch {
+            if (!alive()) return;
+            showToast("Không tải được thông tin phim", "error");
+            appNavigate("/", { replace: true });
+          }
+        })();
+        return;
+      }
+      // route.kind === 'player'
+      const samePlayer =
+        playingMovie?.slug === route.slug &&
+        (playingEpisode?.slug || undefined) === (route.episodeSlug || undefined) &&
+        (route.serverName
+          ? playingServer?.server_name === route.serverName
+          : true);
+      if (samePlayer) return;
+      if (selectedMovieForDetail && selectedMovieForDetail.slug !== route.slug) {
+        setSelectedMovieForDetail(null);
+      }
+      playerReturnRef.current =
+        selectedMovieForDetail && selectedMovieForDetail.slug === route.slug
+          ? buildPhimUrl(route.slug)
+          : buildTabUrl(activeTab);
+      void (async () => {
+        try {
+          const d = await movieApi.getMovieDetail(route.slug);
+          if (!alive()) return;
+          const movie = d?.movie;
+          const servers: EpisodeServer[] = d?.episodes || [];
+          if (!movie || servers.length === 0) {
+            showToast("Phim chưa có nguồn phát", "warning");
+            appNavigate(buildPhimUrl(route.slug), { replace: true });
+            return;
+          }
+          const server =
+            (route.serverName &&
+              servers.find((s) => s.server_name === route.serverName)) ||
+            servers[0];
+          const eps = server.server_data || [];
+          let episode = (route.episodeSlug && eps.find((e) => e.slug === route.episodeSlug)) || null;
+          let resume = 0;
+          if (!episode) {
+            episode = eps[0];
+            if (currentAccount && activeProfile) {
+              const m = watchHistory.find((h) => h.movieSlug === movie.slug);
+              if (m && m.currentTime > 10) resume = m.currentTime;
+            }
+          } else if (activeProfile) {
+            const m = watchHistory.find(
+              (h) => h.movieSlug === movie.slug && h.episodeSlug === episode.slug,
+            );
+            if (m && m.currentTime > 10) resume = m.currentTime;
+          }
+          if (!episode) {
+            appNavigate(buildPhimUrl(route.slug), { replace: true });
+            return;
+          }
+          applyPlayerOpen(movie, episode, server, servers, resume);
+          appNavigate(buildXemUrl(movie.slug, episode.slug, server.server_name), {
+            replace: true,
+          });
+        } catch {
+          if (!alive()) return;
+          showToast("Không tải được phim", "error");
+          appNavigate("/", { replace: true });
+        }
+      })();
+    },
+    [
+      playingMovie,
+      playingEpisode,
+      playingServer,
+      selectedMovieForDetail,
+      activeTab,
+      currentAccount,
+      activeProfile,
+      watchHistory,
+      applyPlayerOpen,
+      saveFinalProgress,
+    ],
+  );
 
   // 1. GATEKEEPER: Not Logged In -> Show LoginScreen Only
   if (!currentAccount) {
@@ -2602,6 +2863,7 @@ export default function App() {
 
   return (
     <>
+      <RouteSync expected={expectedRoute} onRoute={applyLocationRoute} activeApp={activeApp} />
       <NotificationTickerBanner currentAccount={currentAccount} />
       {/* Maintenance Warning Banner */}
       {maintenanceMessage && (

@@ -397,7 +397,19 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
           <div className="flex items-center flex-wrap gap-2.5 sm:gap-3 pt-1 sm:pt-2">
             <button
               id="hero-play-btn"
-              onClick={() => handlePlay(currentMovie)}
+              onClick={() => {
+                const backdropUrl = getHeroSrc(currentMovie);
+                const logoUrl = currentMovie.logos?.find((l) => l.primary)?.url || currentMovie.logo_url || tmdbLogoMap[currentMovie.slug];
+                const enrichedMovie: Movie = {
+                  ...currentMovie,
+                  backdrop_url: (backdropUrl && backdropUrl.includes('image.tmdb.org')) ? backdropUrl : currentMovie.backdrop_url,
+                  backdrops: currentMovie.backdrops && currentMovie.backdrops.length > 0
+                    ? currentMovie.backdrops
+                    : (backdropUrl && backdropUrl.includes('image.tmdb.org') ? [{ url: backdropUrl, primary: true }] : currentMovie.backdrops),
+                  logo_url: logoUrl || currentMovie.logo_url,
+                };
+                handlePlay(enrichedMovie);
+              }}
               className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-5 py-2 sm:px-8 sm:py-3 rounded-xl font-bold text-xs sm:text-base transition-all duration-200 shadow-xl shadow-blue-600/30 hover:scale-105 active:scale-95 cursor-pointer"
             >
               <Play className="w-4 h-4 sm:w-5 sm:h-5 fill-white" />
@@ -406,7 +418,19 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
 
             <button
               id="hero-detail-btn"
-              onClick={() => handleOpenDetail(currentMovie)}
+              onClick={() => {
+                const backdropUrl = getHeroSrc(currentMovie);
+                const logoUrl = currentMovie.logos?.find((l) => l.primary)?.url || currentMovie.logo_url || tmdbLogoMap[currentMovie.slug];
+                const enrichedMovie: Movie = {
+                  ...currentMovie,
+                  backdrop_url: (backdropUrl && backdropUrl.includes('image.tmdb.org')) ? backdropUrl : currentMovie.backdrop_url,
+                  backdrops: currentMovie.backdrops && currentMovie.backdrops.length > 0
+                    ? currentMovie.backdrops
+                    : (backdropUrl && backdropUrl.includes('image.tmdb.org') ? [{ url: backdropUrl, primary: true }] : currentMovie.backdrops),
+                  logo_url: logoUrl || currentMovie.logo_url,
+                };
+                handleOpenDetail(enrichedMovie);
+              }}
               className="flex items-center gap-1.5 sm:gap-2 bg-slate-900/85 hover:bg-slate-800 text-slate-200 hover:text-white px-4 py-2 sm:px-7 sm:py-3 rounded-xl font-semibold text-xs sm:text-base backdrop-blur-md transition-all duration-200 border border-slate-700/80 shadow-lg hover:scale-105 active:scale-95 cursor-pointer"
             >
               <Info className="w-4 h-4 sm:w-5 sm:h-5 text-sky-400" />
@@ -432,32 +456,47 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
       {/* Navigation Indicators & Next/Prev Controls (Desktop & Tablet) */}
       <div className="absolute right-4 sm:right-8 bottom-4 sm:bottom-24 z-20 hidden sm:flex items-center gap-3">
         {/* Pagination Dots - 10 films */}
-        <div className="flex items-center gap-1.5 mr-2 max-w-[220px] flex-wrap justify-end">
-          {heroMovies.map((_, idx) => (
-            <button
-              key={idx}
-              onClick={() => { setCurrentIndex(idx); resetInterval(); }}
-              className={`h-1.5 rounded-full transition-all duration-300 cursor-pointer ${
-                idx === currentIndex ? 'w-6 bg-blue-500' : 'w-2 bg-slate-600 hover:bg-slate-400'
-              }`}
-              aria-label={`Chuyển đến phim ${idx + 1}`}
-            />
-          ))}
+        <div className="flex items-center gap-1.5 mr-2 flex-nowrap shrink-0">
+          {heroMovies.map((_, idx) => {
+            const isActive = idx === currentIndex;
+            return (
+              <button
+                key={idx}
+                type="button"
+                data-dot="true"
+                onClick={() => { setCurrentIndex(idx); resetInterval(); }}
+                className="hero-dot no-tv-min-h group relative flex items-center justify-center py-2 px-0.5 cursor-pointer bg-transparent border-0 outline-none !min-h-0 !h-auto transition-transform hover:scale-110 active:scale-95 shrink-0"
+                aria-label={`Chuyển đến phim ${idx + 1}`}
+                aria-current={isActive ? 'true' : undefined}
+              >
+                <span
+                  className={`block rounded-full transition-all duration-300 pointer-events-none ${
+                    isActive
+                      ? 'w-7 sm:w-8 bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.7)]'
+                      : 'w-2 sm:w-2.5 bg-slate-500/60 group-hover:bg-slate-300'
+                  }`}
+                  style={{ height: '5px', minHeight: '5px', maxHeight: '5px' }}
+                />
+              </button>
+            );
+          })}
         </div>
 
         {/* Prev / Next buttons */}
         <button
           id="hero-prev-btn"
+          type="button"
           onClick={handlePrev}
-          className="w-9 h-9 rounded-full bg-slate-900/80 hover:bg-slate-800 text-slate-200 flex items-center justify-center border border-slate-700 transition-colors backdrop-blur-md cursor-pointer"
+          className="w-9 h-9 !min-h-[36px] !max-h-[36px] rounded-full bg-slate-900/80 hover:bg-slate-800 text-slate-200 flex items-center justify-center border border-slate-700 transition-colors backdrop-blur-md cursor-pointer no-tv-min-h shrink-0"
           aria-label="Phim trước"
         >
           <ChevronLeft className="w-5 h-5" />
         </button>
         <button
           id="hero-next-btn"
+          type="button"
           onClick={handleNext}
-          className="w-9 h-9 rounded-full bg-slate-900/80 hover:bg-slate-800 text-slate-200 flex items-center justify-center border border-slate-700 transition-colors backdrop-blur-md cursor-pointer"
+          className="w-9 h-9 !min-h-[36px] !max-h-[36px] rounded-full bg-slate-900/80 hover:bg-slate-800 text-slate-200 flex items-center justify-center border border-slate-700 transition-colors backdrop-blur-md cursor-pointer no-tv-min-h shrink-0"
           aria-label="Phim kế tiếp"
         >
           <ChevronRight className="w-5 h-5" />
@@ -465,17 +504,30 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
       </div>
 
       {/* Mobile Pagination Dots (visible on <sm) */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex sm:hidden items-center gap-1.5 bg-black/50 backdrop-blur-md px-3 py-2 rounded-full border border-white/10">
-        {heroMovies.map((_, idx) => (
-          <button
-            key={idx}
-            onClick={() => { setCurrentIndex(idx); resetInterval(); }}
-            className={`h-1.5 rounded-full transition-all duration-300 cursor-pointer ${
-              idx === currentIndex ? 'w-5 bg-blue-500' : 'w-1.5 bg-white/50'
-            }`}
-            aria-label={`Chuyển đến phim ${idx + 1}`}
-          />
-        ))}
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex sm:hidden items-center gap-1 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full border border-white/10 shadow-lg">
+        {heroMovies.map((_, idx) => {
+          const isActive = idx === currentIndex;
+          return (
+            <button
+              key={idx}
+              type="button"
+              data-dot="true"
+              onClick={() => { setCurrentIndex(idx); resetInterval(); }}
+              className="hero-dot no-tv-min-h group relative flex items-center justify-center py-1 px-0.5 cursor-pointer bg-transparent border-0 outline-none !min-h-0 !h-auto shrink-0"
+              aria-label={`Chuyển đến phim ${idx + 1}`}
+              aria-current={isActive ? 'true' : undefined}
+            >
+              <span
+                className={`block rounded-full transition-all duration-300 pointer-events-none ${
+                  isActive
+                    ? 'w-5 bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.7)]'
+                    : 'w-1.5 bg-white/40 group-hover:bg-white/70'
+                }`}
+                style={{ height: '4px', minHeight: '4px', maxHeight: '4px' }}
+              />
+            </button>
+          );
+        })}
       </div>
       {/* Counter badge: 1 / 10 */}
       <div className="absolute top-4 right-4 z-20 sm:hidden bg-black/60 backdrop-blur-md text-white text-[11px] font-bold px-2.5 py-1 rounded-full border border-white/10">
