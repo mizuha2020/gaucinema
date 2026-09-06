@@ -206,9 +206,9 @@ video::-webkit-media-controls {
   padding-left: max(3vw, 32px) !important;
   padding-right: max(3vw, 32px) !important;
 }
-.tv-mode button, .tv-mode [role="button"] {
-  min-height: 48px;
-}
+/* TV buttons: KHÔNG đặt min-height toàn cục (từng làm dots hero h-1.5 bị kéo thành thanh dọc 48px).
+   Nút player đã có rule riêng (.tv-player-bottom button), nút </> carousel đã cao sẵn (h-14+). */
+#qtb-hero-banner button { min-height: 0; }
 /* HeroBanner TV: larger 10ft */
 .tv-mode #qtb-hero-banner { min-height: 640px !important; height: 82vh !important; max-height: 860px !important; }
 .tv-mode #qtb-hero-banner h1 { font-size: 3.75rem !important; line-height: 1.1 !important; }

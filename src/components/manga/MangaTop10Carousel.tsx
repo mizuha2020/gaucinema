@@ -21,12 +21,18 @@ export const MangaTop10Carousel: React.FC<MangaTop10CarouselProps> = ({
   mangas,
   onOpenDetail,
 }) => {
+  // Native scroll cho: màn nhỏ (<1024) + MỌI thiết bị cảm ứng (pointer chính là coarse),
+  // không phân biệt cỡ màn hình — màn cảm ứng càng to càng phải vuốt tự do.
+  // Chỉ desktop chuột (pointer fine) mới dùng carousel transform + nút </>.
   const checkIsMobileOrTablet = () => {
     if (typeof window === "undefined") return false;
-    const isTouch =
-      "ontouchstart" in window ||
-      (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0);
-    return window.innerWidth < 1024 || (isTouch && window.innerWidth < 1366);
+    if (window.innerWidth < 1024) return true;
+    try {
+      if (window.matchMedia("(pointer: coarse)").matches) return true;
+    } catch {
+      // matchMedia không khả dụng -> coi như desktop chuột
+    }
+    return false;
   };
   const [isMobile, setIsMobile] = useState(checkIsMobileOrTablet);
   useEffect(() => {

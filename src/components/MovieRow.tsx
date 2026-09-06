@@ -40,12 +40,18 @@ export const MovieRow: React.FC<MovieRowProps> = ({
   subtitle,
 }) => {
   const isTv = useTvMode();
+  // Native scroll cho: màn nhỏ (<1024) + MỌI thiết bị cảm ứng (pointer chính là coarse),
+  // không phân biệt cỡ màn hình — màn cảm ứng càng to càng phải vuốt tự do.
+  // Chỉ desktop chuột (pointer fine) mới dùng carousel transform + nút </>.
   const checkIsMobileOrTablet = () => {
     if (typeof window === "undefined") return false;
-    const isTouch =
-      "ontouchstart" in window ||
-      (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0);
-    return window.innerWidth < 1024 || (isTouch && window.innerWidth < 1366);
+    if (window.innerWidth < 1024) return true;
+    try {
+      if (window.matchMedia("(pointer: coarse)").matches) return true;
+    } catch {
+      // matchMedia không khả dụng -> coi như desktop chuột
+    }
+    return false;
   };
   const [isMobile, setIsMobile] = useState(checkIsMobileOrTablet);
   useEffect(() => {
@@ -332,6 +338,38 @@ export const MovieRow: React.FC<MovieRowProps> = ({
   };
   const onDesktopTouchEnd = () => onDesktopMouseUpOrLeave();
 
+  // DESKTOP: trackpad/chuột wheel ngang -> trượt track (wheel dọc vẫn cuộn trang bình thường).
+  // Track dùng transform nên không có native scroll — handler này lấp khoảng trống đó.
+  const wheelSnapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (isMobile) return;
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const onWheel = (e: WheelEvent) => {
+      const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      if (!horizontal || e.deltaX === 0) return;
+      e.preventDefault();
+      const track = trackRef.current;
+      if (!track) return;
+      isDraggingRef.current = true;
+      hasMovedRef.current = true;
+      setIsDragging(true);
+      setDisableTransition(true);
+      const next = offsetRef.current + e.deltaX;
+      offsetRef.current = next;
+      track.style.transform = `translateX(-${next}px)`;
+      if (wheelSnapTimerRef.current) clearTimeout(wheelSnapTimerRef.current);
+      wheelSnapTimerRef.current = setTimeout(() => {
+        onDesktopMouseUpOrLeave();
+      }, 140);
+    };
+    vp.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      vp.removeEventListener("wheel", onWheel);
+      if (wheelSnapTimerRef.current) clearTimeout(wheelSnapTimerRef.current);
+    };
+  }, [isMobile, loopMovies]);
+
   const handlePlay = useCallback(
     (movie: Movie) => {
       if (hasMovedRef.current) return;
@@ -449,7 +487,7 @@ export const MovieRow: React.FC<MovieRowProps> = ({
             className={`absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 ${
               isTv
                 ? "w-11 h-20 opacity-100"
-                : "h-14 sm:h-16 opacity-0 group-hover/row:opacity-100"
+                : "h-14 sm:h-16 opacity-0 group-hover/row:opacity-100 [@media(hover:none)]:opacity-100 [@media(any-pointer:coarse)]:opacity-100"
             } bg-[#0b1329]/85 hover:bg-blue-600 text-white flex items-center justify-center transition-all backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer focus:opacity-100 focus:ring-2 focus:ring-blue-500 hover:scale-105 active:scale-95`}
             aria-label="Cuộn sang trái"
           >
@@ -519,7 +557,7 @@ export const MovieRow: React.FC<MovieRowProps> = ({
             className={`absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 ${
               isTv
                 ? "w-11 h-20 opacity-100"
-                : "h-14 sm:h-16 opacity-0 group-hover/row:opacity-100"
+                : "h-14 sm:h-16 opacity-0 group-hover/row:opacity-100 [@media(hover:none)]:opacity-100 [@media(any-pointer:coarse)]:opacity-100"
             } bg-[#0b1329]/85 hover:bg-blue-600 text-white flex items-center justify-center transition-all backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer focus:opacity-100 focus:ring-2 focus:ring-blue-500 hover:scale-105 active:scale-95`}
             aria-label="Cuộn sang phải"
           >

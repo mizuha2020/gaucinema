@@ -6,7 +6,12 @@ export function isTvDevice(): boolean {
   const hasCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
   const isTvUA = tvUA || ua.includes('tv') && ua.includes('android');
   // Consider TV if large + (coarse or tv UA) or width >= 1920 (10-foot)
-  if (window.innerWidth >= 1920) return true;
+  // NOTE: desktop màn hình >= 1920px có chuột (hover) KHÔNG tính là TV (từng gây lỗi dots hero + nút carousel)
+  if (window.innerWidth >= 1920) {
+    const canHover = window.matchMedia('(hover: hover)').matches;
+    if (!canHover) return true;
+    return isTvUA;
+  }
   if (isLargeScreen && (tvUA || hasCoarsePointer && window.innerWidth >= 1280)) {
     // Avoid false positive for desktop large monitor with mouse: check hover capability
     const canHover = window.matchMedia('(hover: hover)').matches;
