@@ -46,18 +46,10 @@ interface WatchTogetherRoomProps {
   onRoomClosed?: () => void;
 }
 
-const AD_RANGES: Array<{ start: number; end: number }> = [
-    { start: 900, end: 930 },
-  ];
-
-  function isInAdRange(time: number): { inAd: boolean; seekTo: number } | null {
-    for (const ad of AD_RANGES) {
-      if (time >= ad.start && time < ad.end) {
-        return { inAd: true, seekTo: ad.end };
-      }
-    }
-    return null;
-  }
+// Chặn QC kiểu mới: lọc segment QC ngay trong playlist m3u8 (loadCleanedM3u8Url
+// + proxy /api/proxy/m3u8, rules động từ RTDB qua adblockService).
+// KHÔNG dùng range cứng nữa: playlist sạch làm timeline co lại, range cứng cũ
+// sẽ cắt nhầm vào nội dung phim.
 
 export const WatchTogetherRoom: React.FC<WatchTogetherRoomProps> = ({
   room,
@@ -98,7 +90,6 @@ export const WatchTogetherRoom: React.FC<WatchTogetherRoomProps> = ({
   const [pendingJoins, setPendingJoins] = useState<Array<{ userId: string; userName: string; requestedAt: number }>>([]);
   const [isRequesting, setIsRequesting] = useState(false);
   const [isRejected, setIsRejected] = useState(false);
-  const [adSkipMessage, setAdSkipMessage] = useState<string | null>(null);
   const isPending = pendingJoins.some((pj) => pj.userId === currentUserId);
 
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -112,7 +103,6 @@ export const WatchTogetherRoom: React.FC<WatchTogetherRoomProps> = ({
 
   const controlsTimer = useRef<NodeJS.Timeout | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const lastAdSkipTime = useRef<number>(0);
 
   useEffect(() => {
     const unsubMembers = watchTogetherService.subscribeMembers(room.roomId, setMembers);
@@ -142,17 +132,6 @@ export const WatchTogetherRoom: React.FC<WatchTogetherRoomProps> = ({
     const unsub = watchTogetherService.subscribePlayback(room.roomId, (state: PlaybackState) => {
       const video = videoRef.current;
       if (!video) return;
-
-      if (Date.now() - lastAdSkipTime.current < 3000) return;
-
-      const adCheck = isInAdRange(video.currentTime);
-      if (adCheck) {
-        video.currentTime = adCheck.seekTo;
-        lastAdSkipTime.current = Date.now();
-        setAdSkipMessage('Đã tự động bỏ qua quảng cáo');
-        setTimeout(() => setAdSkipMessage(null), 3000);
-        return;
-      }
 
       setIsSyncing(true);
       const diff = Math.abs(video.currentTime - state.position);
@@ -244,16 +223,6 @@ export const WatchTogetherRoom: React.FC<WatchTogetherRoomProps> = ({
       const t = video.currentTime;
       setCurrentTime(t);
       setDuration(video.duration || 0);
-
-      const adCheck = isInAdRange(t);
-      if (adCheck && isHost) {
-        video.currentTime = adCheck.seekTo;
-        lastAdSkipTime.current = Date.now();
-        watchTogetherService.updatePlayback(room.roomId, currentUserId, { position: adCheck.seekTo, isPlaying: !video.paused });
-        setAdSkipMessage('Đã tự động bỏ qua quảng cáo');
-        setTimeout(() => setAdSkipMessage(null), 3000);
-        return;
-      }
 
       if (isHost) {
         const now = Date.now();
@@ -677,13 +646,6 @@ export const WatchTogetherRoom: React.FC<WatchTogetherRoomProps> = ({
               <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-sky-600/80 text-white text-xs font-medium flex items-center gap-1.5 animate-pulse">
                 <Loader2 className="w-3 h-3 animate-spin" />
                 Đang đồng bộ...
-              </div>
-            )}
-
-            {adSkipMessage && (
-              <div className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-lg bg-emerald-600/90 text-white text-xs font-bold flex items-center gap-1.5 animate-in fade-in slide-in-from-top duration-300">
-                <Check className="w-3.5 h-3.5" />
-                {adSkipMessage}
               </div>
             )}
 
