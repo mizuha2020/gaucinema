@@ -1499,6 +1499,60 @@ setTimeout(seedInitialCastIndex, 2000);
     return res.json(payload);
   });
 
+  // --- REMOTE ADBLOCK RULES (admin sửa trên RTDB system_cache/adblock, không cần build lại) ---
+  const DEFAULT_ADBLOCK_KEYWORDS = [
+    "/ad", "/ad.", "_ad.", "-ad.", ".ad.", "ads",
+    "quangcao", "quang-cao", "promo", "preroll", "midroll", "banner",
+    "intro", "advert", "convertv", "/convert", "/segment_", "segment_00",
+    "adservice", "doubleclick",
+  ];
+  const DEFAULT_ADBLOCK_REGEXES = ["\\/v\\d+\\/"];
+  let adblockRulesCache: { keywords: string[]; regexes: string[]; compiled: RegExp[]; fetchedAt: number } = {
+    keywords: [...DEFAULT_ADBLOCK_KEYWORDS],
+    regexes: [...DEFAULT_ADBLOCK_REGEXES],
+    compiled: [],
+    fetchedAt: 0,
+  };
+  try {
+    adblockRulesCache.compiled = DEFAULT_ADBLOCK_REGEXES.map((s) => new RegExp(s, "i"));
+  } catch {}
+  const ADBLOCK_TTL_MS = 60 * 1000;
+
+  async function getAdblockRules(): Promise<{ keywords: string[]; regexes: string[]; compiled: RegExp[] }> {
+    try {
+      if (Date.now() - adblockRulesCache.fetchedAt < ADBLOCK_TTL_MS) return adblockRulesCache;
+      const remote: any = await fetchFromRtdb("system_cache/adblock");
+      const kw: string[] = Array.isArray(remote?.keywords)
+        ? [...new Set((remote.keywords as any[]).map((k: any) => String(k ?? "").trim().toLowerCase()).filter((s: string) => s.length >= 2))].slice(0, 200) as string[]
+        : [];
+      const rxSrc: string[] = Array.isArray(remote?.regexes)
+        ? [...new Set((remote.regexes as any[]).map((r: any) => String(r ?? "").trim()).filter(Boolean))].slice(0, 50) as string[]
+        : [];
+      const compiled: RegExp[] = [];
+      const validRx: string[] = [];
+      for (const src of rxSrc) {
+        try {
+          compiled.push(new RegExp(src, "i"));
+          validRx.push(src);
+        } catch {}
+      }
+      // RTDB có key nhưng rỗng -> giữ rule cũ (tránh admin xóa nhầm)
+      if (kw.length > 0) adblockRulesCache.keywords = kw;
+      if (validRx.length > 0) {
+        adblockRulesCache.regexes = validRx;
+        adblockRulesCache.compiled = compiled;
+      }
+      adblockRulesCache.fetchedAt = Date.now();
+    } catch {}
+    return adblockRulesCache;
+  }
+
+  // Debug endpoint cho admin: xem rule server đang dùng (không cần đọc RTDB thủ công)
+  app.get("/api/adblock/rules", async (_req, res) => {
+    const rules = await getAdblockRules();
+    res.json({ keywords: rules.keywords, regexes: rules.regexes, cached: true });
+  });
+
   // 5a. M3U8 Ad-Clean Proxy - strips SSAI ad segments injected by upstream (opstream/phim1280)
   app.get("/api/proxy/m3u8", async (req, res) => {
     let rawUrl = (req.query.url as string) || "";
@@ -1509,14 +1563,29 @@ setTimeout(seedInitialCastIndex, 2000);
     }
     if (!rawUrl.startsWith("http")) return res.status(400).send("Invalid url");
 
+    // Rule động từ RTDB (cache 60s) + rule cứng fallback
+    const dynRules = await getAdblockRules().catch(() => adblockRulesCache);
+
     // heuristic: is this URI an ad segment?
     const isAdSegmentUri = (uri: string): boolean => {
       const l = uri.toLowerCase();
       // common ad markers injected by KKPhim/OPhim/opstream
-      if (l.includes("/ad") || l.includes("ad.") || l.includes("ads") || l.includes("quangcao") || l.includes("quang-cao") || l.includes("promo") || l.includes("preroll") || l.includes("midroll") || l.includes("banner") || l.includes("intro") || l.includes("advert")) return true;
+      if (l.includes("/ad") || l.includes("/ad.") || l.includes("_ad.") || l.includes("-ad.") || l.includes(".ad.") || l.includes("ads") || l.includes("quangcao") || l.includes("quang-cao") || l.includes("promo") || l.includes("preroll") || l.includes("midroll") || l.includes("banner") || l.includes("intro") || l.includes("advert")) return true;
       // Observed real ad paths for Doraemon & many KKPhim encodes: convertv8/ + /v8/ (SSAI injected)
-      if (l.includes("convertv8") || l.includes("/v8/") || l.includes("/convert")) return true;
+      // Update 2026: upstream switched to convertv7/ + /v7/<hash>/segment_*.ts (e.g. Khanh Khanh Nhat Thuong tap 01)
+      if (l.includes("convertv") || l.includes("/convert")) return true;
+      if (/\/v\d+\//.test(l)) return true;
+      if (l.includes("/segment_") || l.includes("segment_00")) return true;
       if (l.includes("adservice") || l.includes("doubleclick")) return true;
+      // Rule động do admin cấu hình trên RTDB system_cache/adblock
+      try {
+        for (const k of dynRules.keywords || []) {
+          if (k && l.includes(k)) return true;
+        }
+        for (const re of dynRules.compiled || []) {
+          if (re.test(l)) return true;
+        }
+      } catch {}
       return false;
     };
 

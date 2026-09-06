@@ -1,18 +1,33 @@
 // Client-side M3U8 ad-cleaner (same rules as server.ts /api/proxy/m3u8).
 // Runs in the browser so it uses the client's VN IP (works) instead of the
 // cloud server IP (blocked -> 502/404). Upstream sends CORS *, so fetch works.
+//
+// Rule cứng bên dưới là fallback offline. Rule động do admin cấu hình trên
+// RTDB `system_cache/adblock` (qua adblockService) được check thêm —
+// upstream đổi pattern chỉ cần sửa trên admin, không build lại app.
+import { adblockService } from '../services/adblockService';
 
 function isAdSegmentUri(uri: string): boolean {
   const l = (uri || '').toLowerCase();
   if (!l) return false;
   if (
-    l.includes('/ad') || l.includes('ad.') || l.includes('ads') ||
+    l.includes('/ad') || l.includes('/ad.') || l.includes('_ad.') || l.includes('-ad.') || l.includes('.ad.') || l.includes('ads') ||
     l.includes('quangcao') || l.includes('quang-cao') || l.includes('promo') ||
     l.includes('preroll') || l.includes('midroll') || l.includes('banner') ||
     l.includes('intro') || l.includes('advert')
   ) return true;
-  if (l.includes('convertv8') || l.includes('/v8/') || l.includes('/convert')) return true;
+  if (l.includes('convertv') || l.includes('/convert')) return true;
+  // SSAI injected ad path versioned: /v7/, /v8/, /v9/... + segment_*.ts
+  // Phim này (Khánh Khánh Nhật Thường tập 01): /v7/<hash>/segment_*.ts
+  if (/\/v\d+\//.test(l)) return true;
+  if (l.includes('/segment_') || l.includes('segment_00')) return true;
   if (l.includes('adservice') || l.includes('doubleclick')) return true;
+  // Rule động từ RTDB (admin thêm không cần build lại app)
+  try {
+    if (adblockService.matches(l)) return true;
+  } catch {
+    // ignore
+  }
   return false;
 }
 
@@ -87,6 +102,12 @@ export interface CleanedM3u8 {
 }
 export async function loadCleanedM3u8Url(rawUrl: string): Promise<CleanedM3u8 | null> {
   if (!rawUrl || !rawUrl.startsWith('http')) return null;
+  // Refresh rule chặn QC nền (không await để không chậm phát video)
+  try {
+    adblockService.refresh().catch(() => {});
+  } catch {
+    // ignore
+  }
   try {
     const content = await fetchText(rawUrl);
     if (content.includes('#EXT-X-STREAM-INF')) {

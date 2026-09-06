@@ -3,7 +3,8 @@ import { Account } from '../../types';
 import { systemApiService } from '../../services/systemApiService';
 import { AdminNotificationsTab } from './AdminNotificationsTab';
 import { AdminEcoSystemTab } from './AdminEcoSystemTab';
-import { Bell, LayoutGrid, Wrench, Trash2 } from 'lucide-react';
+import { AdminAdblockTab } from './AdminAdblockTab';
+import { Bell, LayoutGrid, Wrench, Trash2, ShieldCheck } from 'lucide-react';
 
 interface AdminSettingsTabProps {
   currentAccount: Account;
@@ -14,7 +15,7 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
   currentAccount,
   onShowToast,
 }) => {
-  const [openSection, setOpenSection] = useState<'notifications' | 'ecosystem' | 'maintenance'>('notifications');
+  const [openSection, setOpenSection] = useState<'notifications' | 'ecosystem' | 'adblock' | 'maintenance'>('notifications');
   const [cacheClearState, setCacheClearState] = useState<boolean>(false);
 
   const handleClearCache = async () => {
@@ -90,6 +91,7 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
   const sections = [
     { id: 'notifications' as const, label: 'Thông báo', icon: <Bell className="w-4 h-4 text-amber-400" /> },
     { id: 'ecosystem' as const, label: 'Ứng dụng', icon: <LayoutGrid className="w-4 h-4 text-indigo-400" /> },
+    { id: 'adblock' as const, label: 'Chặn QC', icon: <ShieldCheck className="w-4 h-4 text-emerald-400" /> },
     { id: 'maintenance' as const, label: 'Bảo trì', icon: <Wrench className="w-4 h-4 text-slate-300" /> },
   ];
 
@@ -118,6 +120,8 @@ export const AdminSettingsTab: React.FC<AdminSettingsTabProps> = ({
       {openSection === 'ecosystem' && (
         <AdminEcoSystemTab currentAccount={currentAccount} onShowToast={onShowToast} />
       )}
+
+      {openSection === 'adblock' && <AdminAdblockTab onShowToast={onShowToast} />}
 
       {openSection === 'maintenance' && (
         <div className="bg-[#0f172a] border border-blue-900/40 p-4 rounded-2xl shadow-lg space-y-2">

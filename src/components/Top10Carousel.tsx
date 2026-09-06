@@ -27,12 +27,18 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
   accentColor = "#2563EB",
   hideTitle = false,
 }) => {
+  // Native scroll cho: màn nhỏ (<1024) + MỌI thiết bị cảm ứng (pointer chính là coarse),
+  // không phân biệt cỡ màn hình — màn cảm ứng càng to càng phải vuốt tự do.
+  // Chỉ desktop chuột (pointer fine) mới dùng carousel transform + nút </>.
   const checkIsMobileOrTablet = () => {
     if (typeof window === "undefined") return false;
-    const isTouch =
-      "ontouchstart" in window ||
-      (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0);
-    return window.innerWidth < 1024 || (isTouch && window.innerWidth < 1366);
+    if (window.innerWidth < 1024) return true;
+    try {
+      if (window.matchMedia("(pointer: coarse)").matches) return true;
+    } catch {
+      // matchMedia không khả dụng -> coi như desktop chuột
+    }
+    return false;
   };
   const [isMobile, setIsMobile] = useState(checkIsMobileOrTablet);
   useEffect(() => {
@@ -337,6 +343,37 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
   };
   const onDesktopTouchEnd = () => onDesktopMouseUpOrLeave();
 
+  // DESKTOP: trackpad/chuột wheel ngang -> trượt track (wheel dọc vẫn cuộn trang bình thường)
+  const wheelSnapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (isMobile) return;
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const onWheel = (e: WheelEvent) => {
+      const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      if (!horizontal || e.deltaX === 0) return;
+      e.preventDefault();
+      const track = trackRef.current;
+      if (!track) return;
+      isDraggingRef.current = true;
+      hasMovedRef.current = true;
+      setIsDragging(true);
+      setDisableTransition(true);
+      const next = offsetRef.current + e.deltaX;
+      offsetRef.current = next;
+      track.style.transform = `translateX(-${next}px)`;
+      if (wheelSnapTimerRef.current) clearTimeout(wheelSnapTimerRef.current);
+      wheelSnapTimerRef.current = setTimeout(() => {
+        onDesktopMouseUpOrLeave();
+      }, 140);
+    };
+    vp.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      vp.removeEventListener("wheel", onWheel);
+      if (wheelSnapTimerRef.current) clearTimeout(wheelSnapTimerRef.current);
+    };
+  }, [isMobile, loopMovies]);
+
   if (!top10Movies.length) return null;
 
   if (isMobile) {
@@ -426,7 +463,7 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
         <button
           className={`absolute -left-2 sm:-left-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 ${
             isRed ? "hover:bg-red-600" : "hover:bg-blue-600"
-          } text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95`}
+          } text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 [@media(any-pointer:coarse)]:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95`}
           onClick={() => handleDesktopScrollBtn("left")}
           aria-label="Cuộn sang trái"
         >
@@ -511,7 +548,7 @@ export const Top10Carousel: React.FC<Top10CarouselProps> = ({
         <button
           className={`absolute -right-2 sm:-right-4 top-1/2 -translate-y-1/2 z-30 w-8 sm:w-9 h-14 sm:h-16 bg-[#0b1329]/85 ${
             isRed ? "hover:bg-red-600" : "hover:bg-blue-600"
-          } text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95`}
+          } text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 [@media(any-pointer:coarse)]:opacity-100 backdrop-blur-md rounded-full border border-slate-700/80 shadow-xl cursor-pointer hover:scale-105 active:scale-95`}
           onClick={() => handleDesktopScrollBtn("right")}
           aria-label="Cuộn sang phải"
         >
