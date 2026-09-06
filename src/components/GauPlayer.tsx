@@ -4,7 +4,7 @@ import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Settings, PictureInP
 import { EpisodeServer, Movie, MovieEpisode, Account, UserProfile } from '../types';
 import { getMirrorUrls } from '../utils/mirrorUrls';
 import { loadCleanedM3u8Url, revokeBlobUrl } from '../utils/m3u8Cleaner';
-import { getFullApiUrl } from '../services/apiConfig';
+import { getFullApiUrl, verifyBackendUrl } from '../services/apiConfig';
 import { TMDB_API_KEY, TMDB_BASE_URL } from '../services/movieApi';
 import { presenceService } from '../services/presenceService';
 import { Capacitor } from '@capacitor/core';
@@ -260,6 +260,9 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     };
     (async () => {
       try {
+        // Đảm bảo base backend còn sống (APK từng bake URL cũ đã chết) rồi mới fetch
+        try { await verifyBackendUrl(); } catch { /* dùng base hiện tại */ }
+        if (cancelled) return;
         const imdbId = await resolveImdbViaTmdb();
         if (cancelled) return;
         if (!imdbId) {

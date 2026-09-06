@@ -50,6 +50,83 @@ export const isNativeApp = (): boolean => {
 
 export const CLOUD_BACKEND_URL = 'https://quocthubay-movie.ai.studio';
 
+// --- Tự chữa backend chết (APK bake VITE_API_URL cũ mà không ai hay) ---
+// Thứ tự ưu tiên: custom (người dùng chỉ định) > session đã verify kỳ này >
+// verified đã lưu (kỳ trước chữa khỏi) > env baked-in > cloud mặc định.
+const VERIFIED_KEY = 'qtb_verified_backend_url';
+const VERIFIED_TTL_MS = 24 * 60 * 60 * 1000;
+let sessionBackendOverride: string | null = null;
+let verifyPromise: Promise<string> | null = null;
+
+function readPersistedVerified(): string | null {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return null;
+    const raw = localStorage.getItem(VERIFIED_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { url?: string; at?: number };
+    const url = (parsed?.url || '').trim().replace(/\/$/, '');
+    if (!url.startsWith('http') || !parsed?.at || Date.now() - parsed.at > VERIFIED_TTL_MS) return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+function persistVerified(url: string) {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    localStorage.setItem(VERIFIED_KEY, JSON.stringify({ url: url.replace(/\/$/, ''), at: Date.now() }));
+  } catch {
+    // ignore
+  }
+}
+
+async function checkBackendHealth(base: string, ms = 6000): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    const r = await fetch(`${base.replace(/\/$/, '')}/api/health`, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' },
+    });
+    clearTimeout(timer);
+    if (!r.ok) return false;
+    const j = await r.json().catch(() => null);
+    return !!(j && (j as any).status === 'ok');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Kiểm tra backend đang dùng còn sống không; chết thì đổi sang cloud cho kỳ này
+ * (và lưu lại để lần sau dùng ngay từ đầu, khỏi chờ fetch rớt mới biết).
+ * Web (relative URL) thì no-op. Luôn resolve, không bao giờ throw.
+ */
+export function verifyBackendUrl(): Promise<string> {
+  if (typeof window === 'undefined' || !isNativeApp()) {
+    return Promise.resolve(getApiBaseUrl());
+  }
+  if (!verifyPromise) {
+    verifyPromise = (async () => {
+      const current = getApiBaseUrl();
+      if (await checkBackendHealth(current)) {
+        sessionBackendOverride = current;
+        persistVerified(current);
+        return current;
+      }
+      if (current !== CLOUD_BACKEND_URL && (await checkBackendHealth(CLOUD_BACKEND_URL))) {
+        console.info(`[backend] ${current} unreachable, fallback to ${CLOUD_BACKEND_URL}`);
+        sessionBackendOverride = CLOUD_BACKEND_URL;
+        persistVerified(CLOUD_BACKEND_URL);
+        return CLOUD_BACKEND_URL;
+      }
+      return current;
+    })();
+  }
+  return verifyPromise;
+}
+
 export const getApiBaseUrl = (): string => {
   // 1. Check custom user/admin saved backend URL in localStorage
   if (typeof window !== 'undefined') {
@@ -59,6 +136,15 @@ export const getApiBaseUrl = (): string => {
         return customUrl.trim().replace(/\/$/, '');
       }
     } catch {}
+  }
+
+  // 1b. Session override / verified URL từ lần verify trước (xem verifyBackendUrl)
+  if (sessionBackendOverride && sessionBackendOverride.startsWith('http')) {
+    return sessionBackendOverride;
+  }
+  const persisted = readPersistedVerified();
+  if (persisted) {
+    return persisted;
   }
 
   // 2. ONLY for native mobile app (Capacitor Android APK), use absolute backend URL

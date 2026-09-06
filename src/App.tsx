@@ -17,6 +17,7 @@ import { firestoreStorage } from "./services/firestoreStorage";
 import { movieApi } from "./services/movieApi";
 import { presenceService } from "./services/presenceService";
 import { appConfigService } from "./services/appConfigService";
+import { verifyBackendUrl } from "./services/apiConfig";
 import { useTabScroll } from "./hooks/useTabScroll";
 import { LoginScreen } from "./components/LoginScreen";
 import { AdminDashboard } from "./components/AdminDashboard";
@@ -479,6 +480,8 @@ export default function App() {
     authService.bootstrapAdminAccount().catch((err) => {
       void 0;
     });
+    // Native app: kiểm tra backend còn sống, chết thì tự đổi sang cloud (tránh APK bake URL cũ)
+    verifyBackendUrl().catch(() => {});
   }, []);
 
   // Load profiles whenever currentAccount changes
