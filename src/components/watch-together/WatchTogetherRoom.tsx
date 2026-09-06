@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 import { getMirrorUrls } from '../../utils/mirrorUrls';
-import { getFullApiUrl } from '../../services/apiConfig';
+import { loadCleanedM3u8Url, revokeBlobUrl } from '../../utils/m3u8Cleaner';
+import { getFullApiUrl, verifyBackendUrl } from '../../services/apiConfig';
 function getAdCleanUrl(raw: string): string {
   if (!raw || raw.startsWith('blob:') || raw.startsWith('data:')) return raw;
   try { const b64 = btoa(unescape(encodeURIComponent(raw))); return getFullApiUrl(`/api/proxy/m3u8?url=${encodeURIComponent(b64)}`); } catch { return getFullApiUrl(`/api/proxy/m3u8?url=${encodeURIComponent(raw)}`); }
@@ -81,6 +82,7 @@ export const WatchTogetherRoom: React.FC<WatchTogetherRoomProps> = ({
   const [showControls, setShowControls] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
   const [screeningStarted, setScreeningStarted] = useState(false);
 
   const [members, setMembers] = useState<WatchRoomMember[]>([]);
@@ -170,8 +172,17 @@ export const WatchTogetherRoom: React.FC<WatchTogetherRoomProps> = ({
     setErrorMsg(null);
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
 
-    const candidates = getMirrorUrls(room.linkM3u8).map(getAdCleanUrl);
+    // Direct trước, proxy sau (giống GauPlayer): trước đây map 100% qua proxy nên
+    // APK bake backend cũ là toàn bộ candidates chết -> isLoading kẹt -> mất nút
+    // "Bắt đầu công chiếu" và khách không xem được.
+    const rawCandidates = getMirrorUrls(room.linkM3u8);
+    const candidates: string[] = [];
+    rawCandidates.forEach((u) => { if (u && !candidates.includes(u)) candidates.push(u); });
+    rawCandidates.forEach((u) => { if (u) { const p = getAdCleanUrl(u); if (p && !candidates.includes(p)) candidates.push(p); } });
     let candidateIndex = 0;
+    let blobUrl: string | null = null;
+    let extraBlobs: string[] = [];
+    let cancelled = false;
     const tryNext = (hls: Hls) => {
       candidateIndex++;
       if (candidateIndex < candidates.length) { hls.loadSource(candidates[candidateIndex]); hls.startLoad(); return; }
@@ -179,9 +190,26 @@ export const WatchTogetherRoom: React.FC<WatchTogetherRoomProps> = ({
     };
 
     if (Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true, backBufferLength: 30, maxBufferLength: 30, maxMaxBufferLength: 60, maxBufferSize: 30 * 1000 * 1000, startLevel: -1, capLevelToPlayerSize: true });
+      const hls = new Hls({ enableWorker: true, backBufferLength: 30, maxBufferLength: 30, maxMaxBufferLength: 60, maxBufferSize: 30 * 1000 * 1000, manifestLoadingTimeOut: 10000, levelLoadingTimeOut: 10000, fragLoadingTimeOut: 20000, startLevel: -1, capLevelToPlayerSize: true });
       hlsRef.current = hls;
-      hls.loadSource(candidates[0]);
+      // Lọc QC phía client trước (IP máy chạy được, IP cloud có thể bị chặn) + chờ backend sẵn sàng
+      (async () => {
+        try { await verifyBackendUrl(); } catch { /* dùng base hiện tại */ }
+        if (cancelled) return;
+        try {
+          const cleaned = await loadCleanedM3u8Url(rawCandidates[0]);
+          if (cancelled) { if (cleaned) revokeBlobUrl([cleaned.blobUrl, ...(cleaned.extraBlobs || [])]); return; }
+          if (cleaned) {
+            blobUrl = cleaned.blobUrl;
+            extraBlobs = [cleaned.blobUrl, ...(cleaned.extraBlobs || [])];
+            candidates.unshift(blobUrl);
+            candidateIndex = 0;
+            hls.loadSource(blobUrl);
+            return;
+          }
+        } catch { /* fall through */ }
+        if (!cancelled) { hls.loadSource(candidates[0]); }
+      })();
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => { setIsLoading(false); });
       let errorCount = 0;
@@ -196,13 +224,18 @@ export const WatchTogetherRoom: React.FC<WatchTogetherRoomProps> = ({
         }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = room.linkM3u8;
+      video.src = rawCandidates[0] || room.linkM3u8;
       video.addEventListener('loadedmetadata', () => { setIsLoading(false); }, { once: true });
+      video.addEventListener('error', () => { setErrorMsg('Không thể tải luồng phát.'); setIsLoading(false); }, { once: true });
     } else {
       setErrorMsg('Trình duyệt không hỗ trợ phát HLS.'); setIsLoading(false);
     }
-    return () => { if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; } };
-  }, [room.linkM3u8, room.roomId]);
+    return () => {
+      cancelled = true;
+      revokeBlobUrl([blobUrl, ...extraBlobs]);
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    };
+  }, [room.linkM3u8, room.roomId, retryKey]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -630,6 +663,12 @@ export const WatchTogetherRoom: React.FC<WatchTogetherRoomProps> = ({
                 <div className="text-center space-y-3 p-6">
                   <AlertCircle className="w-10 h-10 text-red-400 mx-auto" />
                   <p className="text-sm text-red-300">{errorMsg}</p>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setRetryKey((k) => k + 1); }}
+                    className="px-5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-sm font-bold cursor-pointer active:scale-95 transition"
+                  >
+                    Thử lại
+                  </button>
                 </div>
               </div>
             )}
