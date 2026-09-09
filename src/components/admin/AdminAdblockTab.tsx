@@ -15,7 +15,7 @@ export const AdminAdblockTab: React.FC<AdminAdblockTabProps> = ({ onShowToast })
   const [regexes, setRegexes] = useState<string[]>([...DEFAULT_ADBLOCK_REGEXES]);
   const [newKeyword, setNewKeyword] = useState('');
   const [newRegex, setNewRegex] = useState('');
-  const [testUri, setTestUri] = useState('/v9/abc123/segment_0001.ts');
+  const [testUri, setTestUri] = useState('https://cdn.example.com/videos/seg_quangcao_001.ts');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -169,7 +169,7 @@ export const AdminAdblockTab: React.FC<AdminAdblockTabProps> = ({ onShowToast })
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleAddKeyword();
             }}
-            placeholder="vd: /v9/, convertv10, seg-ad..."
+            placeholder="vd: seg_quangcao_001.ts, /promo/seg12.ts..."
             className="flex-1 px-3 py-2 rounded-xl text-xs bg-[#131f37] border border-slate-700 text-white placeholder:text-slate-500 outline-none focus:border-emerald-500"
           />
           <button

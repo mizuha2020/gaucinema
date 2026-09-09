@@ -51,7 +51,8 @@ interface SimplePlayerProps {
 
 import { getMirrorUrls } from '../utils/mirrorUrls';
 import { loadCleanedM3u8Url, revokeBlobUrl } from '../utils/m3u8Cleaner';
-import { getFullApiUrl } from '../services/apiConfig';
+import { getFullApiUrl, verifyBackendUrl } from '../services/apiConfig';
+import { resolveImdbId } from '../utils/introResolve';
 
 type IntroSegment = { start_sec: number; end_sec: number; start_ms: number; end_ms: number } | null;
 type SegmentsResponse = { imdb_id: string; season: number; episode: number; intro: IntroSegment; recap: IntroSegment; outro: IntroSegment };
@@ -686,10 +687,9 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     }, 3000);
   }, [isSettingsOpen, isServerMenuOpen, isEpisodesOpen]);
 
-  // IntroDB: single fetch per episode using movie.imdb.id, no cache
+  // IntroDB: single fetch per episode. 3-tier imdb resolve (direct -> tmdb external_ids -> TMDB title search)
+  // để phim thiếu cả tmdb_id/imdb_id (vd Hồ Tâm) vẫn có nút skip khi IntroDB đã có dữ liệu.
   useEffect(() => {
-    const imdbId = (movie as any)?.imdb?.id ? String((movie as any).imdb.id).trim() : '';
-    if (!imdbId || !/^tt\d{7,8}$/.test(imdbId)) { setSegments(null); setActiveSegment(null); return; }
     const season = Number((movie as any)?.tmdb?.season) > 0 ? Number((movie as any).tmdb.season) : 1;
     let epNum = NaN;
     const m = String(currentEpisode.name || '').match(/\d+/);
@@ -701,22 +701,56 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     if (epNum < 1) epNum = 1;
     let cancelled = false;
     setSegments(null); setActiveSegment(null);
-    const url = getFullApiUrl(`/api/intro/segments?imdb_id=${encodeURIComponent(imdbId)}&season=${season}&episode=${epNum}`);
-    // APK-safe timeout: AbortSignal.timeout() missing on old Android WebView -> would throw sync and kill segments
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => { try { controller.abort(); } catch {} }, 6000);
-    // cache:no-store -> server ETag could answer 304 with empty body (res.ok=false), killing segments
-    fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal as any, cache: 'no-store' as RequestCache })
-      .then(async r => {
-        if (r.status === 404) return { imdb_id: imdbId, season, episode: epNum, intro: null, recap: null, outro: null } as any;
-        if (!r.ok) throw new Error(String(r.status));
-        return r.json();
-      })
-      .then((data: SegmentsResponse) => { if (!cancelled) setSegments(normalizeSegments(data)); })
-      .catch(() => { if (!cancelled) setSegments(null); })
-      .finally(() => window.clearTimeout(timeoutId));
+    const timeoutId = window.setTimeout(() => { try { controller.abort(); } catch {} }, 12000);
+    (async () => {
+      try {
+        try { await verifyBackendUrl(); } catch { /* dùng base hiện tại */ }
+        if (cancelled) return;
+        const imdbId = await resolveImdbId(movie as any, controller.signal as any);
+        if (cancelled) return;
+        if (!imdbId) {
+          console.info(`[intro] skip: no imdb_id for ${(movie as any)?.slug || '?'}, ep ${epNum}`);
+          return;
+        }
+        const url = getFullApiUrl(`/api/intro/segments?imdb_id=${encodeURIComponent(imdbId)}&season=${season}&episode=${epNum}`);
+        // cache:no-store -> server ETag could answer 304 with empty body (res.ok=false), killing segments
+        let data: SegmentsResponse | null = null;
+        let lastErr = '';
+        for (let attempt = 0; attempt < 2 && !cancelled; attempt++) {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal as any, cache: 'no-store' as RequestCache });
+            if (r.status === 404) { data = { imdb_id: imdbId, season, episode: epNum, intro: null, recap: null, outro: null } as any; break; }
+            if (!r.ok) throw new Error(String(r.status));
+            // eslint-disable-next-line no-await-in-loop
+            data = await r.json();
+            break;
+          } catch (e: any) {
+            lastErr = e?.message || String(e);
+            if (attempt === 0 && !cancelled) {
+              // eslint-disable-next-line no-await-in-loop
+              await new Promise(res => setTimeout(res, 1500));
+            }
+          }
+        }
+        if (cancelled) return;
+        if (data) {
+          setSegments(normalizeSegments(data));
+          const n: any = normalizeSegments(data);
+          console.info(`[intro] ${imdbId} s${season}e${epNum}:`, n?.intro ? `intro ${n.intro.start_sec}-${n.intro.end_sec}s` : 'no intro');
+        } else {
+          console.info(`[intro] fetch failed ${imdbId} s${season}e${epNum}: ${lastErr}`);
+          setSegments(null);
+        }
+      } catch {
+        if (!cancelled) setSegments(null);
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+    })();
     return () => { cancelled = true; window.clearTimeout(timeoutId); try { controller.abort(); } catch {} };
-  }, [(movie as any)?.imdb?.id, (movie as any)?.tmdb?.season, currentEpisode.slug, currentEpisode.name, currentServer]);
+  }, [(movie as any)?.imdb?.id, (movie as any)?.tmdb?.id, (movie as any)?.tmdb?.season, (movie as any)?.slug, (movie as any)?.name, (movie as any)?.origin_name, (movie as any)?.year, currentEpisode.slug, currentEpisode.name, currentServer]);
 
   const handleSkipSegment = useCallback((type: 'intro' | 'recap' | 'outro') => {
     const v = videoRef.current;

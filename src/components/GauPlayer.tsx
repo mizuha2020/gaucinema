@@ -5,7 +5,7 @@ import { EpisodeServer, Movie, MovieEpisode, Account, UserProfile } from '../typ
 import { getMirrorUrls } from '../utils/mirrorUrls';
 import { loadCleanedM3u8Url, revokeBlobUrl } from '../utils/m3u8Cleaner';
 import { getFullApiUrl, verifyBackendUrl } from '../services/apiConfig';
-import { TMDB_API_KEY, TMDB_BASE_URL } from '../services/movieApi';
+import { resolveImdbId } from '../utils/introResolve';
 import { presenceService } from '../services/presenceService';
 import { Capacitor } from '@capacitor/core';
 import { enterNativePip, setNativeVideoPlaying, checkNativePipSupported, setImmersiveMode, isNativeAndroidApp } from '../utils/nativeVideoPlayer';
@@ -214,12 +214,13 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
       : null;
   }, [currentServer, episodeIndex]);
 
-  // single fetch per episode: imdb from movie detail (movie.imdb.id), season/episode parsed locally.
-  // Resilient chain (APK hay mất nút Bỏ qua intro vì 1 trong 2 khâu này):
-  // 1) thiếu movie.imdb.id (nguồn detail không có) -> resolve qua TMDB external_ids (TMDB CORS *, gọi trực tiếp được).
-  // 2) proxy backend cold-start 502/timeout -> retry 1 lần sau 1.5s rồi mới bỏ.
+  // single fetch per episode: imdb from movie detail, fallback TMDB search by title.
+  // Resilient chain (APK hay mất nút Bỏ qua intro vì 1 trong các khâu này):
+  // 1) movie.imdb.id trực tiếp
+  // 2) movie.tmdb.id -> TMDB external_ids
+  // 3) TMDB search theo origin_name/name (+year) -> external_ids (phim thiếu cả 2 id như Hồ Tâm)
+  // 4) proxy backend cold-start 502/timeout -> retry 1 lần sau 1.5s rồi mới bỏ.
   useEffect(() => {
-    const directImdb = (movie as any)?.imdb?.id ? String((movie as any).imdb.id).trim() : '';
     const season = Number((movie as any)?.tmdb?.season) > 0 ? Number((movie as any).tmdb.season) : 1;
     let epNum = NaN;
     const m = String(currentEpisode.name || '').match(/\d+/);
@@ -234,29 +235,11 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     // APK-safe: use backend proxy via getFullApiUrl so relative URL resolves to CLOUD_BACKEND_URL on native
     // APK-safe timeout: AbortSignal.timeout() missing on old Android WebView -> would throw sync and kill segments
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => { try { controller.abort(); } catch {} }, 6000);
+    const timeoutId = window.setTimeout(() => { try { controller.abort(); } catch {} }, 12000);
     const resolveImdbViaTmdb = async (): Promise<string> => {
       try {
-        if (/^tt\d{7,8}$/.test(directImdb)) return directImdb;
-        const tmdbId = (movie as any)?.tmdb?.id ? String((movie as any).tmdb.id).trim() : '';
-        if (!/^\d+$/.test(tmdbId)) return '';
-        const t = String((movie as any)?.tmdb?.type || '').toLowerCase();
-        const types = t === 'tv' ? ['tv'] : t === 'movie' ? ['movie'] : ['tv', 'movie'];
-        for (const ty of types) {
-          if (cancelled) return '';
-          try {
-            const r = await fetch(`${TMDB_BASE_URL}/${ty}/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`, {
-              headers: { Accept: 'application/json' },
-              signal: controller.signal as any,
-            });
-            if (!r.ok) continue;
-            const j = await r.json().catch(() => null);
-            const id = j?.imdb_id ? String(j.imdb_id).trim() : '';
-            if (/^tt\d{7,8}$/.test(id)) return id;
-          } catch { /* thử type còn lại */ }
-        }
-      } catch { /* ignore */ }
-      return '';
+        return await resolveImdbId(movie as any, controller.signal as any);
+      } catch { return ''; }
     };
     (async () => {
       try {
@@ -306,7 +289,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
       }
     })();
     return () => { cancelled = true; window.clearTimeout(timeoutId); try { controller.abort(); } catch {} };
-  }, [(movie as any)?.imdb?.id, (movie as any)?.tmdb?.id, (movie as any)?.tmdb?.season, currentEpisode.slug, currentEpisode.name, currentServer]);
+  }, [(movie as any)?.imdb?.id, (movie as any)?.tmdb?.id, (movie as any)?.tmdb?.season, (movie as any)?.slug, (movie as any)?.name, (movie as any)?.origin_name, (movie as any)?.year, currentEpisode.slug, currentEpisode.name, currentServer]);
 
   const handleSkipSegment = useCallback((type: 'intro' | 'recap' | 'outro') => {
     const v = videoRef.current;

@@ -1500,13 +1500,16 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // --- REMOTE ADBLOCK RULES (admin sửa trên RTDB system_cache/adblock, không cần build lại) ---
+  // Mặc định CHỈ giữ pattern độ tin cậy cao có delimiter. ĐÃ BỎ '/ad', 'ads',
+  // '/segment_', 'segment_00', regex \/v\d+\/ vì cắt nhầm nội dung thật
+  // (vd Hồ Tâm tập 12: QC chữ burned-in bị cắt mất đoạn phim phút thứ 3).
   const DEFAULT_ADBLOCK_KEYWORDS = [
-    "/ad", "/ad.", "_ad.", "-ad.", ".ad.", "ads",
-    "quangcao", "quang-cao", "promo", "preroll", "midroll", "banner",
-    "intro", "advert", "convertv", "/convert", "/segment_", "segment_00",
-    "adservice", "doubleclick",
+    "quangcao", "quang-cao", "preroll", "midroll",
+    "adservice", "doubleclick", "convertv", "/convert", "advert",
+    "/ads/", "/ad/", "_ad_", "-ad-", ".ad.",
+    "/promo", "_promo", "-promo", "/banner", "_banner", "-banner",
   ];
-  const DEFAULT_ADBLOCK_REGEXES = ["\\/v\\d+\\/"];
+  const DEFAULT_ADBLOCK_REGEXES: string[] = [];
   let adblockRulesCache: { keywords: string[]; regexes: string[]; compiled: RegExp[]; fetchedAt: number } = {
     keywords: [...DEFAULT_ADBLOCK_KEYWORDS],
     regexes: [...DEFAULT_ADBLOCK_REGEXES],
@@ -1566,18 +1569,28 @@ setTimeout(seedInitialCastIndex, 2000);
     // Rule động từ RTDB (cache 60s) + rule cứng fallback
     const dynRules = await getAdblockRules().catch(() => adblockRulesCache);
 
-    // heuristic: is this URI an ad segment?
-    const isAdSegmentUri = (uri: string): boolean => {
+    // heuristic: strong = ứng viên QC (không cần discontinuity); weak = cần kề DISCONTINUITY.
+    // ĐÃ VERIFY bằng frame thật (Hồ Tâm tập 12): cụm convertv7/<hash>.ts @2:59 là
+    // CẢNH PHIM có QC chữ burned-in (giữ), cụm /v7/<hash>/segment_NNNN.ts @14:59 là
+    // video QC cờ bạc (cắt). Vì vậy cụm flagged chỉ bị cắt khi "ngoại lai":
+    // khác cây thư mục nội dung, hoặc tên segment_NNNN nối tiếp, hoặc đổi KEY/MAP ở biên.
+    const STRONG = ["quangcao", "quang-cao", "preroll", "midroll", "adservice", "doubleclick", "convertv", "/convert", "advert"];
+    const WEAK = ["/ads/", "/ad/", "_ad_", "-ad-", ".ad.", "/promo", "_promo", "-promo", "/banner", "_banner", "-banner", "/intro/", "_intro", "-intro"];
+    // Path versioned kiểu SSAI (/v7/<hash>/...) từng là pattern QC thật nhưng CDN
+    // thường cũng dùng cho nội dung thật -> chỉ là tín hiệu yếu (cần discontinuity).
+    const WEAK_RE = [/\/v\d+\//i];
+    const isStrongAd = (uri: string): boolean => {
       const l = uri.toLowerCase();
-      // common ad markers injected by KKPhim/OPhim/opstream
-      if (l.includes("/ad") || l.includes("/ad.") || l.includes("_ad.") || l.includes("-ad.") || l.includes(".ad.") || l.includes("ads") || l.includes("quangcao") || l.includes("quang-cao") || l.includes("promo") || l.includes("preroll") || l.includes("midroll") || l.includes("banner") || l.includes("intro") || l.includes("advert")) return true;
-      // Observed real ad paths for Doraemon & many KKPhim encodes: convertv8/ + /v8/ (SSAI injected)
-      // Update 2026: upstream switched to convertv7/ + /v7/<hash>/segment_*.ts (e.g. Khanh Khanh Nhat Thuong tap 01)
-      if (l.includes("convertv") || l.includes("/convert")) return true;
-      if (/\/v\d+\//.test(l)) return true;
-      if (l.includes("/segment_") || l.includes("segment_00")) return true;
-      if (l.includes("adservice") || l.includes("doubleclick")) return true;
-      // Rule động do admin cấu hình trên RTDB system_cache/adblock
+      for (const k of STRONG) if (k && l.includes(k)) return true;
+      return false;
+    };
+    const isWeakAd = (uri: string): boolean => {
+      const l = uri.toLowerCase();
+      for (const k of WEAK) if (k && l.includes(k)) return true;
+      for (const re of WEAK_RE) {
+        try { if (re.test(l)) return true; } catch {}
+      }
+      // Rule động do admin cấu hình trên RTDB system_cache/adblock -> coi là yếu
       try {
         for (const k of dynRules.keywords || []) {
           if (k && l.includes(k)) return true;
@@ -1592,6 +1605,24 @@ setTimeout(seedInitialCastIndex, 2000);
     const resolveUrl = (base: string, relative: string): string => {
       try { return new URL(relative, base).toString(); } catch { return relative; }
     };
+    const dirOfUrl = (absoluteUrl: string): string => {
+      try {
+        const u = new URL(absoluteUrl);
+        const cut = u.pathname.lastIndexOf("/");
+        return `${u.origin}${cut > 0 ? u.pathname.slice(0, cut) : ""}`.toLowerCase();
+      } catch {
+        const s = absoluteUrl.toLowerCase();
+        const cut = s.lastIndexOf("/");
+        return cut > 0 ? s.slice(0, cut) : s;
+      }
+    };
+    const fileOfUrl = (absoluteUrl: string): string => {
+      try { return new URL(absoluteUrl).pathname.split("/").pop() || ""; } catch {
+        const s = absoluteUrl.split("?")[0];
+        return s.slice(s.lastIndexOf("/") + 1);
+      }
+    };
+    const isSeqAdName = (file: string): boolean => /segment[_-]?\d+\./i.test(file || "");
 
     const fetchText = async (url: string): Promise<string> => {
       const controller = new AbortController();
@@ -1618,6 +1649,135 @@ setTimeout(seedInitialCastIndex, 2000);
 
     const cleanMediaPlaylist = (content: string, baseUrl: string): string => {
       const lines = content.split(/\r?\n/);
+      // Pre-pass: vị trí segment + cờ discontinuity / KEY-MAP trước-sau
+      const segIdx: number[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        const t = lines[i].trim();
+        if (!t || t.startsWith("#")) continue;
+        segIdx.push(i);
+      }
+      if (segIdx.length === 0) return content;
+      const discBefore = new Array<boolean>(segIdx.length).fill(false);
+      const discAfter = new Array<boolean>(segIdx.length).fill(false);
+      const keyBefore = new Array<boolean>(segIdx.length).fill(false);
+      const keyAfter = new Array<boolean>(segIdx.length).fill(false);
+      const absUrls: string[] = new Array(segIdx.length);
+      for (let s = 0; s < segIdx.length; s++) {
+        const uri = lines[segIdx[s]].trim();
+        absUrls[s] = uri.startsWith("http") ? uri : resolveUrl(baseUrl, uri);
+      }
+      for (let s = 0; s < segIdx.length; s++) {
+        if (s > 0) {
+          for (let j = segIdx[s] - 1; j > segIdx[s - 1]; j--) {
+            const t = lines[j].trim();
+            if (t.startsWith("#EXT-X-DISCONTINUITY")) discBefore[s] = true;
+            else if (t.startsWith("#EXT-X-KEY") || t.startsWith("#EXT-X-MAP")) keyBefore[s] = true;
+          }
+        }
+        const end = s + 1 < segIdx.length ? segIdx[s + 1] : lines.length;
+        for (let j = segIdx[s] + 1; j < end; j++) {
+          const t = lines[j].trim();
+          if (!t) continue;
+          if (t.startsWith("#EXT-X-DISCONTINUITY")) { discAfter[s] = true; continue; }
+          if (t.startsWith("#EXT-X-KEY") || t.startsWith("#EXT-X-MAP")) { keyAfter[s] = true; continue; }
+          break;
+        }
+      }
+      // Flag theo URL rồi lan theo span (cụm liền mạch không bị DISCONTINUITY
+      // cắt ngang): SSAI chèn cả cụm ad giữa 2 disc, chỉ segment biên chạm disc.
+      const flagged = new Array<boolean>(segIdx.length).fill(false);
+      const segStrong = new Array<boolean>(segIdx.length).fill(false);
+      const segWeak = new Array<boolean>(segIdx.length).fill(false);
+      for (let s = 0; s < segIdx.length; s++) {
+        const uri = lines[segIdx[s]].trim();
+        if (isStrongAd(absUrls[s]) || isStrongAd(uri)) { segStrong[s] = true; continue; }
+        if (isWeakAd(absUrls[s]) || isWeakAd(uri)) segWeak[s] = true;
+      }
+      const spanId = new Array<number>(segIdx.length).fill(0);
+      {
+        let cur = 0;
+        for (let s = 0; s < segIdx.length; s++) {
+          if (s > 0 && (discAfter[s - 1] || discBefore[s])) cur++;
+          spanId[s] = cur;
+        }
+      }
+      const spanCount = segIdx.length > 0 ? spanId[segIdx.length - 1] + 1 : 0;
+      const spanFirst = new Array<number>(spanCount).fill(-1);
+      const spanLast = new Array<number>(spanCount).fill(-1);
+      for (let s = 0; s < segIdx.length; s++) {
+        if (spanFirst[spanId[s]] === -1) spanFirst[spanId[s]] = s;
+        spanLast[spanId[s]] = s;
+      }
+      for (let p = 0; p < spanCount; p++) {
+        const a = spanFirst[p];
+        const b = spanLast[p];
+        let strong = false;
+        let weak = false;
+        for (let k = a; k <= b; k++) {
+          if (segStrong[k]) { strong = true; break; }
+          if (segWeak[k]) weak = true;
+        }
+        if (!strong && !weak) continue;
+        const bracketed = discBefore[a] || discAfter[b];
+        if (strong || bracketed) {
+          for (let k = a; k <= b; k++) flagged[k] = true;
+        }
+      }
+      // Cây thư mục nội dung = dir phổ biến nhất của segment KHÔNG flagged
+      const dirCount = new Map<string, number>();
+      for (let s = 0; s < segIdx.length; s++) {
+        if (flagged[s]) continue;
+        const d = dirOfUrl(absUrls[s]);
+        dirCount.set(d, (dirCount.get(d) || 0) + 1);
+      }
+      let contentRoot = "";
+      let contentVotes = 0;
+      for (const [d, n] of dirCount) {
+        if (n > contentVotes) { contentVotes = n; contentRoot = d; }
+      }
+      const inSameTree = (absolute: string): boolean => {
+        if (!contentRoot) return false;
+        const d = dirOfUrl(absolute);
+        return d === contentRoot || d.startsWith(contentRoot + "/");
+      };
+      // Chỉ cắt cụm flagged "ngoại lai" (khác cây / tên nối tiếp / đổi KEY)
+      const drop = new Array<boolean>(segIdx.length).fill(false);
+      const segPos = new Map<number, number>();
+      segIdx.forEach((lineIdx, s) => segPos.set(lineIdx, s));
+      for (let s = 0; s < segIdx.length;) {
+        if (!flagged[s]) { s++; continue; }
+        let e = s;
+        while (e + 1 < segIdx.length && flagged[e + 1]) e++;
+        let sameTree = true;
+        let seqName = false;
+        for (let k = s; k <= e; k++) {
+          if (!inSameTree(absUrls[k])) sameTree = false;
+          if (isSeqAdName(fileOfUrl(absUrls[k]))) seqName = true;
+        }
+        let keyChange = keyBefore[s] || keyAfter[e];
+        for (let k = s; k <= e && !keyChange; k++) {
+          if (keyBefore[k] || keyAfter[k]) keyChange = true;
+        }
+        if (!sameTree || seqName || keyChange) {
+          for (let k = s; k <= e; k++) drop[k] = true;
+        } else {
+          console.log(`[m3u8-clean] keep ${e - s + 1} flagged-in-tree segment(s) (possible overlay film) at #${s} from ${baseUrl}`);
+        }
+        s = e + 1;
+      }
+      const removedCount = drop.filter(Boolean).length;
+      if (removedCount === 0) return content;
+      // Safety cap: cắt quá nhiều / 1 mạch dài -> nhận diện sai, giữ nguyên
+      let longestRun = 0;
+      let run = 0;
+      for (const d of drop) {
+        if (d) { run++; longestRun = Math.max(longestRun, run); }
+        else run = 0;
+      }
+      if (removedCount / segIdx.length > 0.35 || longestRun > 20) {
+        console.warn(`[m3u8-clean] abort: would remove ${removedCount}/${segIdx.length} (run ${longestRun}) from ${baseUrl} — keep original`);
+        return content;
+      }
       const out: string[] = [];
       let pendingExtInf: string | null = null;
       let pendingDiscontinuity = false;
@@ -1642,9 +1802,8 @@ setTimeout(seedInitialCastIndex, 2000);
           continue;
         }
         // segment URI
-        const uri = trimmed;
-        const absolute = uri.startsWith("http") ? uri : resolveUrl(baseUrl, uri);
-        if (isAdSegmentUri(absolute) || isAdSegmentUri(uri)) {
+        const s = segPos.get(i);
+        if (s !== undefined && drop[s]) {
           // drop this segment + its EXTINF + discontinuity
           pendingExtInf = null;
           pendingDiscontinuity = false;
@@ -1654,6 +1813,7 @@ setTimeout(seedInitialCastIndex, 2000);
         if (pendingExtInf) { out.push(pendingExtInf); pendingExtInf = null; }
         if (pendingDiscontinuity) { out.push("#EXT-X-DISCONTINUITY"); pendingDiscontinuity = false; }
         // rewrite to absolute to avoid relative resolution issues after filtering
+        const absolute = trimmed.startsWith("http") ? trimmed : resolveUrl(baseUrl, trimmed);
         out.push(absolute);
       }
       if (removed > 0) {

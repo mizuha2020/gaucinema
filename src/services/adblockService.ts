@@ -17,31 +17,38 @@ import { rtdb, sanitizeData } from './firebase';
 export const ADBLOCK_RTDB_PATH = 'system_cache/adblock';
 const LOCAL_CACHE_KEY = 'qtb_adblock_rules_v1';
 
-/** Rule cứng fallback khi offline / RTDB chưa có — phải đồng bộ với server.ts */
+/** Rule cứng fallback khi offline / RTDB chưa có — phải đồng bộ với server.ts
+ * CHỈ giữ pattern độ tin cậy cao, có delimiter để tránh cắt nhầm nội dung:
+ * - 'ads' trần từng match cả '/uploads/' (uplo-ads) -> phải dùng '/ads/' có delimiter
+ * - '/ad' trần từng match '/adult', '/address', '/admin' -> dùng '/ad/' có delimiter
+ * - ĐÃ BỎ: '/segment_', 'segment_00', regex \/v\d+\/ (trùng tên segment HLS chuẩn
+ *   và path CDN versioned — cắt là mất luôn đoạn phim thật, vd quảng cáo chữ
+ *   burned-in ở Hồ Tâm tập 12 không phải segment riêng nên không được cắt).
+ */
 export const DEFAULT_ADBLOCK_KEYWORDS: string[] = [
-  '/ad',
-  '/ad.',
-  '_ad.',
-  '-ad.',
-  '.ad.',
-  'ads',
   'quangcao',
   'quang-cao',
-  'promo',
   'preroll',
   'midroll',
-  'banner',
-  'intro',
-  'advert',
-  'convertv',
-  '/convert',
-  '/segment_',
-  'segment_00',
   'adservice',
   'doubleclick',
+  'convertv',
+  '/convert',
+  'advert',
+  '/ads/',
+  '/ad/',
+  '_ad_',
+  '-ad-',
+  '.ad.',
+  '/promo',
+  '_promo',
+  '-promo',
+  '/banner',
+  '_banner',
+  '-banner',
 ];
 
-export const DEFAULT_ADBLOCK_REGEXES: string[] = ['\\/v\\d+\\/'];
+export const DEFAULT_ADBLOCK_REGEXES: string[] = [];
 
 export interface AdblockRules {
   keywords: string[];
