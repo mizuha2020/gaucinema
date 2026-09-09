@@ -2054,7 +2054,7 @@ setTimeout(seedInitialCastIndex, 2000);
     { slug: "the-magnificent-seven", name: "Bảy Tay Súng Huyền Thoại", origin_name: "The Magnificent Seven", poster_url: "uploads/movies/202204/the-magnificent-seven-thumb.jpg", thumb_url: "uploads/movies/202204/the-magnificent-seven-poster.jpg", year: 2016, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
     { slug: "gohan", name: "Bảy Viên Ngọc Rồng", origin_name: "Dragon Ball Super: Super Hero", poster_url: "uploads/movies/202208/dragon-ball-super-super-hero-thumb.jpg", thumb_url: "uploads/movies/202208/dragon-ball-super-super-hero-poster.jpg", year: 2022, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
     { slug: "the-whisper-man", name: "Người Thì Thầm", origin_name: "The Whisper Man", poster_url: "uploads/movies/202411/the-whisper-man-thumb.jpg", thumb_url: "uploads/movies/202411/the-whisper-man-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "tho-oi", name: "Thỏ Ơi", origin_name: "Bunny!!", poster_url: "uploads/movies/202412/tho-oi-thumb.jpg", thumb_url: "uploads/movies/202412/tho-oi-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "tho-oi", name: "Thỏ Ơi!!", origin_name: "Bunny!!", poster_url: "https://phimimg.com/upload/vod/20260601-1/034afe4d9f1198904977bb7cd8297a56.jpg", thumb_url: "https://phimimg.com/upload/vod/20260601-1/a93bfd52980655de0571d55d9c9f2440.jpg", year: 2026, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
     { slug: "red-notice", name: "Lệnh Truy Nã Đỏ", origin_name: "Red Notice", poster_url: "uploads/movies/202111/lenh-truy-na-do-thumb.jpg", thumb_url: "uploads/movies/202111/lenh-truy-na-do-poster.jpg", year: 2021, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" }
   ];
 
@@ -2148,14 +2148,51 @@ setTimeout(seedInitialCastIndex, 2000);
         const searchPromises = rawTitles.slice(0, 10).map(async (title) => {
           try {
             const lowerTitle = title.toLowerCase().trim();
-            const searchQuery = titleSearchAlias[lowerTitle] || title.replace(/\s*\(.*?\)/, "").replace(/:\s*.*$/, "").trim();
+            const normLower = normHeroTitle(lowerTitle);
+            // FIX CỨNG: Bunny! / Bunny!! / Bunny / Thỏ Ơi -> slug tho-oi (bypass search dễ lỗi, poster hỏng)
+            if (normLower.includes("bunny") || lowerTitle.includes("thỏ ơi") || normLower.includes("tho oi")) {
+              try {
+                const detailRaw = await fetchWithTimeout(`https://phimapi.com/phim/tho-oi`, 3500).catch(() => null);
+                const d = detailRaw?.movie || detailRaw?.data?.item || null;
+                if (d && (d.slug || d.name)) {
+                  return {
+                    slug: "tho-oi",
+                    name: d.name || "Thỏ Ơi!!",
+                    origin_name: d.origin_name || "Bunny!!",
+                    poster_url: d.poster_url || d.thumb_url || "",
+                    thumb_url: d.thumb_url || d.poster_url || "",
+                    year: d.year || 2026,
+                    quality: d.quality || "FHD",
+                    lang: d.lang || "Vietsub",
+                    source: "kkphim",
+                    sourceLabel: "Netflix",
+                  };
+                }
+              } catch {}
+              // Fallback cứng với poster http đã verify (tránh uploads/... làm vỡ guard countGoodPosters)
+              return {
+                slug: "tho-oi",
+                name: "Thỏ Ơi!!",
+                origin_name: "Bunny!!",
+                poster_url: "https://phimimg.com/upload/vod/20260601-1/034afe4d9f1198904977bb7cd8297a56.jpg",
+                thumb_url: "https://phimimg.com/upload/vod/20260601-1/a93bfd52980655de0571d55d9c9f2440.jpg",
+                year: 2026,
+                quality: "FHD",
+                lang: "Vietsub",
+                source: "kkphim",
+                sourceLabel: "Netflix",
+              };
+            }
+            const baseTitle = title.replace(/\s*\(.*?\)/, "").replace(/:\s*.*$/, "").trim();
+            const searchQuery = titleSearchAlias[lowerTitle] || titleSearchAlias[baseTitle.toLowerCase()] || titleSearchAlias[normLower] || baseTitle;
             const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery || title)}&limit=10`;
             const searchRes = await fetchWithTimeout(searchUrl, 3500).catch(() => null);
             const foundItems = searchRes?.data?.items || searchRes?.items || [];
             if (foundItems.length > 0) {
               // Ưu tiên khớp tên/origin chính xác thay vì [0] mù quáng (phimapi sort theo modified).
               // Path này không có tmdbId (title scrape từ Tudum) nên dùng scoring + sanity chứa query.
-              let matchedItem = pickBestPhimapiMatch(foundItems, { title, originalTitle: title });
+              // Dùng searchQuery (đã map alias) để chấm điểm, tránh lệch khi Tudum là tên gốc còn phimapi là tên Việt
+              let matchedItem = pickBestPhimapiMatch(foundItems, { title: searchQuery || title, originalTitle: searchQuery || title });
               if (!matchedItem) {
                 const q = normHeroTitle(searchQuery || title);
                 const c0 = foundItems[0];
