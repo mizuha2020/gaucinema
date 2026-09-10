@@ -31,6 +31,7 @@ import { getFullApiUrl } from '../services/apiConfig';
 import { Movie } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { TvPairApproveModal } from './TvPairApproveModal';
+import { ApkDownloadSection } from './ApkDownloadSection';
 import appLogo from '../assets/images/app_logo.jpg';
 
 interface NavbarProps {
@@ -827,6 +828,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                       <span>Ghép đôi TV (nhập mã)</span>
                     </button>
                   )}
+
+                  <ApkDownloadSection compact />
 
                   {onLogout && (
                     <button
