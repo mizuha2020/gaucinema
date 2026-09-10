@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { authService } from '../services/authService';
 import { Account } from '../types';
-import { Lock, User, KeyRound, ShieldAlert, Sparkles, ShieldCheck } from 'lucide-react';
+import { Lock, User, KeyRound, ShieldAlert, Sparkles, ShieldCheck, Eye, EyeOff, Smartphone } from 'lucide-react';
 import { motion } from 'motion/react';
+import { TvPairCodePanel } from './TvPairCodePanel';
+import { useTvMode } from '../hooks/useTvMode';
 import appLogo from '../assets/images/app_logo.jpg';
 
 interface LoginScreenProps {
@@ -12,8 +14,12 @@ interface LoginScreenProps {
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [mode, setMode] = useState<'password' | 'code'>('password');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const isTv = useTvMode();
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -101,6 +107,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             </div>
           )}
 
+          {mode === 'code' ? (
+            <TvPairCodePanel onPaired={onLoginSuccess} onBackToPassword={() => setMode('password')} />
+          ) : (
+          <>
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Username */}
             <div>
@@ -119,9 +129,18 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                   autoCorrect="off"
                   spellCheck={false}
                   autoComplete="username"
+                  autoFocus={mode === 'password'}
+                  enterKeyHint="next"
                   placeholder="username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Remote TV: Enter ở ô username -> nhảy xuống ô mật khẩu, khỏi submit nhầm
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      passwordRef.current?.focus();
+                    }
+                  }}
                   style={{ fontSize: '16px' }}
                   className="w-full bg-[#131f37] border border-slate-700/80 hover:border-slate-600 focus:border-blue-500 rounded-2xl pl-10 pr-4 py-3 text-white text-base placeholder-slate-500 focus:outline-none transition-colors"
                 />
@@ -139,18 +158,30 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
                 </div>
                 <input
                   id="login-password-input"
-                  type="password"
+                  ref={passwordRef}
+                  type={showPassword ? 'text' : 'password'}
                   required
                   autoCapitalize="none"
                   autoCorrect="off"
                   spellCheck={false}
                   autoComplete="current-password"
+                  enterKeyHint="go"
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   style={{ fontSize: '16px' }}
-                  className="w-full bg-[#131f37] border border-slate-700/80 hover:border-slate-600 focus:border-blue-500 rounded-2xl pl-10 pr-4 py-3 text-white text-base placeholder-slate-500 focus:outline-none transition-colors"
+                  className="w-full bg-[#131f37] border border-slate-700/80 hover:border-slate-600 focus:border-blue-500 rounded-2xl pl-10 pr-11 py-3 text-white text-base placeholder-slate-500 focus:outline-none transition-colors"
                 />
+                <button
+                  type="button"
+                  id="login-password-toggle"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                  title={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                  className="absolute right-3 text-slate-400 hover:text-white p-1 cursor-pointer"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
@@ -174,6 +205,24 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
               )}
             </button>
           </form>
+
+          {/* Đăng nhập bằng điện thoại: khỏi gõ mật khẩu bằng remote TV */}
+          <div className="mt-4 flex items-center gap-3">
+            <div className="flex-1 h-px bg-slate-800" />
+            <span className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">hoặc</span>
+            <div className="flex-1 h-px bg-slate-800" />
+          </div>
+          <button
+            type="button"
+            id="login-pair-btn"
+            onClick={() => setMode('code')}
+            className="mt-4 w-full py-3.5 px-6 rounded-2xl bg-sky-950/60 hover:bg-sky-900/60 border border-sky-800/60 text-sky-200 font-bold text-sm tracking-wide transition-all cursor-pointer flex items-center justify-center gap-2"
+          >
+            <Smartphone className="w-4 h-4" />
+            <span>{isTv ? 'Đăng nhập bằng điện thoại (khỏi gõ)' : 'Đăng nhập bằng mã trên TV'}</span>
+          </button>
+          </>
+          )}
 
           {/* Private Policy Note */}
           <div className="mt-6 pt-4 border-t border-slate-800/80 text-center">

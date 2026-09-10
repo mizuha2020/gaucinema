@@ -49,6 +49,18 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
   const [pinPromptProfile, setPinPromptProfile] = useState<UserProfile | null>(null);
   const [enteredPin, setEnteredPin] = useState('');
   const [pinError, setPinError] = useState(false);
+  const pinFormRef = useRef<HTMLFormElement>(null);
+
+  // Remote TV: đủ 4 số là tự mở khóa, khỏi phải tìm nút submit
+  useEffect(() => {
+    if (!pinPromptProfile || enteredPin.length !== 4 || pinError) return;
+    const t = setTimeout(() => {
+      try {
+        pinFormRef.current?.requestSubmit();
+      } catch {}
+    }, 350);
+    return () => clearTimeout(t);
+  }, [enteredPin, pinPromptProfile, pinError]);
 
   // Transition state when user selects a profile
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
@@ -851,11 +863,14 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
               <h3 className="text-base sm:text-lg font-bold mb-1 text-sky-200">Nhập mã PIN</h3>
               <p className="text-xs text-slate-400 mb-4">Hồ sơ "{pinPromptProfile.name}" đã được khóa bảo vệ.</p>
 
-              <form onSubmit={handlePinSubmit} className="space-y-4">
+              <form ref={pinFormRef} onSubmit={handlePinSubmit} className="space-y-4">
                 <input
                   type="password"
                   maxLength={4}
                   autoFocus
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  enterKeyHint="go"
                   placeholder="••••"
                   value={enteredPin}
                   onChange={(e) => {

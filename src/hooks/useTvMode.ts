@@ -6,13 +6,31 @@ export function useTvMode(): boolean {
     try { return isTvDevice(); } catch { return false; }
   });
   useEffect(() => {
-    const onResize = () => {
-      setIsTv(isTvDevice());
-      applyTvClass();
+    const sync = () => {
+      try { setIsTv(applyTvClass()); } catch {}
     };
-    applyTvClass();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    sync();
+    window.addEventListener('resize', sync);
+    window.addEventListener('orientationchange', sync);
+    // Khi đổi ?tv= / localStorage ở tab khác thì sync lại
+    window.addEventListener('popstate', sync);
+    let mql: MediaQueryList | null = null;
+    let mql2: MediaQueryList | null = null;
+    try {
+      mql = window.matchMedia('(hover: hover)');
+      mql2 = window.matchMedia('(pointer: coarse)');
+      mql.addEventListener?.('change', sync);
+      mql2.addEventListener?.('change', sync);
+    } catch {}
+    return () => {
+      window.removeEventListener('resize', sync);
+      window.removeEventListener('orientationchange', sync);
+      window.removeEventListener('popstate', sync);
+      try {
+        mql?.removeEventListener?.('change', sync);
+        mql2?.removeEventListener?.('change', sync);
+      } catch {}
+    };
   }, []);
   return isTv;
 }

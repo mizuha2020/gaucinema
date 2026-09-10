@@ -57,6 +57,7 @@ import {
 import { FollowedRow } from "./components/FollowedRow";
 import { Capacitor } from "@capacitor/core";
 import { applyTvClass } from "./utils/tvDetect";
+import { useTvRemoteNav } from "./hooks/useTvRemote";
 import { App as CapApp } from "@capacitor/app";
 import { appNavigate } from "./routerNav";
 import { RouteSync } from "./components/RouteSync";
@@ -85,7 +86,8 @@ import {
 } from "lucide-react";
 
 export default function App() {
-  // Apply TV 10-foot class on mount
+  // Apply TV 10-foot class on mount + điều hướng remote D-pad
+  useTvRemoteNav();
   useEffect(() => {
     try {
       applyTvClass();
@@ -973,6 +975,19 @@ export default function App() {
     setShowAdminDashboard(false);
     setPlayingMovie(null);
     showToast("Đã đăng xuất khỏi tài khoản.");
+  };
+
+  // TV: session lưu localStorage nên restart app vẫn giữ login (nhớ lâu).
+  // Remote dễ bấm nhầm Đăng xuất -> hỏi confirm trước khi xóa session.
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState<boolean>(false);
+  const handleLogoutRequest = () => {
+    try {
+      if (document.documentElement.classList.contains("tv-mode")) {
+        setShowLogoutConfirm(true);
+        return;
+      }
+    } catch {}
+    handleLogout();
   };
 
   // Profile management handlers
@@ -1865,7 +1880,7 @@ export default function App() {
         onOpenAdminDashboard={
           currentAccount.role === "admin" ? openAdminDashboard : undefined
         }
-        onLogout={handleLogout}
+        onLogout={handleLogoutRequest}
       />
     );
   } else if (activeApp === "livetv") {
@@ -1880,7 +1895,7 @@ export default function App() {
         onOpenAdminDashboard={
           currentAccount.role === "admin" ? openAdminDashboard : undefined
         }
-        onLogout={handleLogout}
+        onLogout={handleLogoutRequest}
       />
     );
   } else {
@@ -1904,7 +1919,7 @@ export default function App() {
                 onUpdateProfiles={handleUpdateProfiles}
                 onAddProfile={handleAddProfile}
                 onDeleteProfile={handleDeleteProfile}
-                onLogout={handleLogout}
+                onLogout={handleLogoutRequest}
                 onOpenAdminDashboard={
                   currentAccount.role === "admin"
                     ? openAdminDashboard
@@ -1952,7 +1967,7 @@ export default function App() {
             onOpenAdminDashboard={
               currentAccount.role === "admin" ? openAdminDashboard : undefined
             }
-            onLogout={handleLogout}
+            onLogout={handleLogoutRequest}
             onSwitchApp={handleSwitchApp}
             onRefreshHome={fetchHomeData}
           />
@@ -2925,6 +2940,16 @@ export default function App() {
         confirmText="Thoát"
         cancelText="Ở lại"
         type="danger"
+      />
+      <ConfirmDialog
+        isOpen={showLogoutConfirm}
+        onClose={() => setShowLogoutConfirm(false)}
+        onConfirm={handleLogout}
+        title="Đăng xuất"
+        message="Đăng xuất sẽ phải đăng nhập lại (gõ mật khẩu hoặc ghép đôi). Bạn chắc chứ?"
+        confirmText="Đăng xuất"
+        cancelText="Ở lại"
+        type="warning"
       />
       <ToastContainer toasts={toasts} onRemove={() => {}} />
     </>
