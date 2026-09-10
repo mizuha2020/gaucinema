@@ -30,6 +30,8 @@ import { movieApi, getImageUrl, API_SOURCES } from '../services/movieApi';
 import { getFullApiUrl } from '../services/apiConfig';
 import { Movie } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
+import { TvPairApproveModal } from './TvPairApproveModal';
+import { ApkDownloadSection } from './ApkDownloadSection';
 import appLogo from '../assets/images/app_logo.jpg';
 
 interface NavbarProps {
@@ -73,11 +75,24 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isAppMenuOpen, setIsAppMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isPairModalOpen, setIsPairModalOpen] = useState(false);
 
   // Profile PIN prompt state
   const [pinPromptProfile, setPinPromptProfile] = useState<UserProfile | null>(null);
   const [enteredPin, setEnteredPin] = useState('');
   const [pinError, setPinError] = useState(false);
+  const pinFormRef = useRef<HTMLFormElement>(null);
+
+  // Remote TV: đủ 4 số là tự mở khóa
+  useEffect(() => {
+    if (!pinPromptProfile || enteredPin.length !== 4 || pinError) return;
+    const t = setTimeout(() => {
+      try {
+        pinFormRef.current?.requestSubmit();
+      } catch {}
+    }, 350);
+    return () => clearTimeout(t);
+  }, [enteredPin, pinPromptProfile, pinError]);
 
   // App Config (real-time)
   const [appConfig, setAppConfig] = useState<Record<string, { enabled: boolean }>>({});
@@ -800,6 +815,22 @@ export const Navbar: React.FC<NavbarProps> = ({
                     </button>
                   )}
 
+                  {currentAccount && (
+                    <button
+                      id="nav-pair-tv-btn"
+                      onClick={() => {
+                        setIsPairModalOpen(true);
+                        setIsProfileMenuOpen(false);
+                      }}
+                      className="w-full flex items-center gap-2.5 p-2 rounded-xl text-sm text-sky-300 hover:bg-sky-950/40 hover:text-sky-200 transition-colors cursor-pointer border border-sky-900/40"
+                    >
+                      <Tv className="w-4 h-4 text-sky-400" />
+                      <span>Ghép đôi TV (nhập mã)</span>
+                    </button>
+                  )}
+
+                  <ApkDownloadSection compact />
+
                   {onLogout && (
                     <button
                       id="navbar-logout-btn"
@@ -990,11 +1021,14 @@ export const Navbar: React.FC<NavbarProps> = ({
                 Hồ sơ "{pinPromptProfile.name}" đã được khóa bảo vệ.
               </p>
 
-              <form onSubmit={handlePinSubmit} className="space-y-4">
+              <form ref={pinFormRef} onSubmit={handlePinSubmit} className="space-y-4">
                 <input
                   type="password"
                   maxLength={4}
                   autoFocus
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  enterKeyHint="go"
                   placeholder="••••"
                   value={enteredPin}
                   onChange={(e) => {
@@ -1034,6 +1068,11 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         )}
       </AnimatePresence>
+
+      {/* Ghép đôi TV: nhập mã đang hiện trên TV */}
+      {isPairModalOpen && currentAccount && (
+        <TvPairApproveModal account={currentAccount} onClose={() => setIsPairModalOpen(false)} />
+      )}
     </header>
   );
 };

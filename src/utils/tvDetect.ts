@@ -1,34 +1,72 @@
+// TV 10-foot detection — UA-first, hover chỉ là gợi ý phụ.
+// Lý do rewrite: bản cũ gate theo `hover:hover` nên WebView trên TV box
+// (báo hover được / cắm chuột) bị rớt khỏi tv-mode.
+
+const TV_UA_RE =
+  /googletv|smarttv|smart-tv|appletv|appletv\+|hbbtv|pov_tv|netcast|web0s|tizen|roku|viera|bravia|aftt|aftm|firetv|leanback|ouya|nvidia shield|mi tv|mitv|android tv/i;
+
+const TV_FORCE_KEY = 'gau_tv_mode'; // localStorage: '1' | '0'
+
+function getUrlOverride(): boolean | null {
+  try {
+    const v = new URLSearchParams(window.location.search).get('tv');
+    if (v === '1') return true;
+    if (v === '0') return false;
+  } catch {}
+  return null;
+}
+
+function getStoredOverride(): boolean | null {
+  try {
+    const v = localStorage.getItem(TV_FORCE_KEY);
+    if (v === '1') return true;
+    if (v === '0') return false;
+  } catch {}
+  return null;
+}
+
+export function setTvModeOverride(v: boolean | null) {
+  try {
+    if (v === null) localStorage.removeItem(TV_FORCE_KEY);
+    else localStorage.setItem(TV_FORCE_KEY, v ? '1' : '0');
+  } catch {}
+  applyTvClass();
+}
+
 export function isTvDevice(): boolean {
   if (typeof window === 'undefined') return false;
-  const ua = navigator.userAgent.toLowerCase();
-  const tvUA = /smarttv|smart-tv|googletv|appletv|hbbtv|pov_tv|netcast|web0s|tizen| Roku|tv.+chrome/i.test(navigator.userAgent);
-  const isLargeScreen = window.innerWidth >= 1280 && window.innerHeight >= 720;
-  const hasCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
-  const isTvUA = tvUA || ua.includes('tv') && ua.includes('android');
-  // Consider TV if large + (coarse or tv UA) or width >= 1920 (10-foot)
-  // NOTE: desktop màn hình >= 1920px có chuột (hover) KHÔNG tính là TV (từng gây lỗi dots hero + nút carousel)
-  if (window.innerWidth >= 1920) {
-    const canHover = window.matchMedia('(hover: hover)').matches;
-    if (!canHover) return true;
-    return isTvUA;
-  }
-  if (isLargeScreen && (tvUA || hasCoarsePointer && window.innerWidth >= 1280)) {
-    // Avoid false positive for desktop large monitor with mouse: check hover capability
-    const canHover = window.matchMedia('(hover: hover)').matches;
-    if (!canHover) return true;
-    // For testing: allow force via ?tv=1
-    if (new URLSearchParams(window.location.search).get('tv') === '1') return true;
-    return isTvUA;
-  }
 
-  // 4. Default: Desktop browsers and regular displays are not 10-foot TV mode
+  // 1. Override thủ công luôn thắng (test ?tv=1, setting trong app)
+  const urlOv = getUrlOverride();
+  if (urlOv !== null) return urlOv;
+  const storedOv = getStoredOverride();
+  if (storedOv !== null) return storedOv;
+
+  // 2. UA là nguồn đáng tin nhất trên TV box / Google TV
+  try {
+    if (TV_UA_RE.test(navigator.userAgent)) return true;
+  } catch {}
+
+  // 3. Heuristic màn hình lớn + không hover + pointer thô.
+  // Không gate cứng theo hover nữa: UA đã return ở trên, ở đây chỉ tránh
+  // false-positive desktop có chuột.
+  try {
+    const w = window.innerWidth || 0;
+    const canHover = window.matchMedia('(hover: hover)').matches;
+    const coarse = window.matchMedia('(pointer: coarse)').matches;
+    if (w >= 1920 && !canHover) return true;
+    if (w >= 1280 && !canHover && coarse) return true;
+  } catch {}
   return false;
 }
 
 export function applyTvClass() {
-  if (typeof document === 'undefined') return;
+  if (typeof document === 'undefined') return false;
   const isTv = isTvDevice();
-  if (isTv) document.documentElement.classList.add('tv-mode');
-  else document.documentElement.classList.remove('tv-mode');
+  document.documentElement.classList.toggle('tv-mode', isTv);
+  try {
+    if (isTv) document.documentElement.dataset.tv = '1';
+    else delete document.documentElement.dataset.tv;
+  } catch {}
   return isTv;
 }

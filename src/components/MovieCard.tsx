@@ -81,6 +81,7 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
       ref={cardRef}
       id={`movie-card-${movie.slug || movie._id}`}
       tabIndex={0}
+      data-tv-card={movie.slug || movie._id}
       className={`relative group shrink-0 select-none transition-all duration-300 focus:outline-none focus:ring-4 focus:ring-blue-500 focus:z-10 ${isTv ? 'focus:scale-110 focus:ring-[6px]' : 'focus:scale-105'} ${
         isTop10 ? 'w-44 sm:w-56 h-64 sm:h-80' : 'w-36 sm:w-48 md:w-52'
       }`}
@@ -89,21 +90,12 @@ export const MovieCard: React.FC<MovieCardProps> = React.memo(({
       onFocus={() => { updatePosition(); setIsHovered(true); }}
       onBlur={() => setIsHovered(false)}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' || e.key === 'NumpadEnter' || e.key === ' ') {
           e.preventDefault();
           handleOpenDetail();
         }
-        if (isTv && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
-          e.preventDefault();
-          const row = cardRef.current?.parentElement?.parentElement as HTMLElement | null;
-          if (row) {
-            const cards = Array.from(row.querySelectorAll('[id^="movie-card-"]')) as HTMLElement[];
-            const idx = cards.indexOf(cardRef.current as HTMLElement);
-            const nextIdx = e.key === 'ArrowRight' ? Math.min(cards.length - 1, idx + 1) : Math.max(0, idx - 1);
-            cards[nextIdx]?.focus();
-            cards[nextIdx]?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-          }
-        }
+        // Trái/Phải/Trên/Dưới do spatial-nav toàn app (tvRemote) xử lý,
+        // không xử lý cục bộ để tránh double-focus với bản loop 3x.
       }}
     >
       {isTop10 && rank !== undefined && (

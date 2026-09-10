@@ -9,6 +9,8 @@ import { resolveImdbId } from '../utils/introResolve';
 import { presenceService } from '../services/presenceService';
 import { Capacitor } from '@capacitor/core';
 import { enterNativePip, setNativeVideoPlaying, checkNativePipSupported, setImmersiveMode, isNativeAndroidApp } from '../utils/nativeVideoPlayer';
+import { focusNearest, isTvModeActive } from '../utils/tvRemote';
+import { useTvMode } from '../hooks/useTvMode';
 
 function isNativeAndroid(): boolean {
   try { return isNativeAndroidApp(); } catch { return false; }
@@ -82,6 +84,9 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const isTv = useTvMode();
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
 
   // ui state
   const [isPlaying, setIsPlaying] = useState(false);
@@ -1091,6 +1096,17 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     resetControlsTimer();
   }, [resetControlsTimer]);
 
+  // TV: mở player là focus ngay nút play để remote bấm OK phát/dừng được
+  useEffect(() => {
+    if (!isTv) return;
+    const t = window.setTimeout(() => {
+      try {
+        containerRef.current?.querySelector<HTMLButtonElement>('[data-tv-play]')?.focus();
+      } catch {}
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [isTv]);
+
   // APK: đồng bộ trạng thái phát để bấm Home tự vào PiP (native auto-enter)
   useEffect(() => {
     if (!isNativeAndroid()) return;
@@ -1214,10 +1230,68 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+      if ((e.target as HTMLElement)?.tagName === 'INPUT' && e.key !== 'Escape') return;
+      const tv = isTvModeActive();
+      const k = e.key;
+      const kc = (e as any).keyCode;
+      // Nút Back của remote TV (browser): Escape / GoBack / Tizen 10009 / LG 461
+      if (tv && (k === 'GoBack' || k === 'BrowserBack' || kc === 10009 || kc === 461)) {
+        e.preventDefault();
+        onBackRef.current();
+        return;
+      }
+      // Media keys remote
+      if (k === 'MediaPlayPause' || k === 'Play' || k === 'Pause' || kc === 179) {
+        e.preventDefault(); togglePlay(); return;
+      }
+      if (k === 'MediaRewind') { e.preventDefault(); skip(-10); return; }
+      if (k === 'MediaFastForward') { e.preventDefault(); skip(10); return; }
+      if (tv) {
+        // Focus đang nằm trên cụm controls -> arrows điều hướng focus, KHÔNG seek
+        const active = document.activeElement as HTMLElement | null;
+        const inControls = !!active?.closest?.(
+          '.tv-player-bottom, .tv-player-top, .player-menu-panel, .group\\/center-skip, .group\\/center-play',
+        );
+        const isBtn = active?.tagName === 'BUTTON';
+        if (k === 'ArrowLeft' || k === 'ArrowRight' || k === 'ArrowUp' || k === 'ArrowDown') {
+          if (inControls || isBtn) {
+            // Up đầu tiên khi controls ẩn: hiện controls rồi focus nút play
+            if (!showControlsRef.current && (k === 'ArrowUp' || k === 'ArrowDown')) {
+              e.preventDefault();
+              resetControlsTimer();
+              window.setTimeout(() => {
+                const play = containerRef.current?.querySelector<HTMLButtonElement>(
+                  '[data-tv-play]',
+                );
+                play?.focus();
+              }, 60);
+              return;
+            }
+            e.preventDefault();
+            const dir = k === 'ArrowLeft' ? 'left' as const : k === 'ArrowRight' ? 'right' as const : k === 'ArrowUp' ? 'up' as const : 'down' as const;
+            focusNearest(dir);
+            resetControlsTimer();
+            return;
+          }
+          // Focus ngoài controls (video-area): Up/Down hiện controls, Left/Right seek
+          if (k === 'ArrowUp' || k === 'ArrowDown') {
+            e.preventDefault();
+            resetControlsTimer();
+            window.setTimeout(() => {
+              const play = containerRef.current?.querySelector<HTMLButtonElement>('[data-tv-play]');
+              play?.focus();
+            }, 60);
+            return;
+          }
+          e.preventDefault();
+          skip(k === 'ArrowLeft' ? -10 : 10);
+          resetControlsTimer();
+          return;
+        }
+      }
       if (e.key === ' ') { e.preventDefault(); togglePlay(); }
-      if (e.key === 'ArrowLeft') { e.preventDefault(); skip(-10); }
-      if (e.key === 'ArrowRight') { e.preventDefault(); skip(10); }
+      if (!tv && e.key === 'ArrowLeft') { e.preventDefault(); skip(-10); }
+      if (!tv && e.key === 'ArrowRight') { e.preventDefault(); skip(10); }
       if (e.key === 'f') toggleFullscreen();
       if (e.key === 'm') toggleMute();
       if (e.key.toLowerCase() === 's' && activeSegment) { e.preventDefault(); handleSkipSegment(activeSegment); }
@@ -1235,6 +1309,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   return (
     <div
       ref={containerRef}
+      id="gau-player-root"
       className="fixed inset-0 z-[70] bg-black flex flex-col select-none"
       onMouseMove={isTouchDevice ? undefined : resetControlsTimer}
       onClick={isTouchDevice ? undefined : resetControlsTimer}
@@ -1411,7 +1486,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
 
         {/* Center controls kiểu Netflix CHỈ trên mobile: -10s | play/pause | +10s khi controls hiện.
             Desktop không dùng nút giữa màn hình (play + tua đã có ở hàng bottom). */}
-        {isTouchDevice ? (
+        {(isTouchDevice || isTv) ? (
           !isLocked && showControls && !isLoading && !errorMsg && (
             <div
               className="absolute inset-0 flex items-center justify-center gap-14 sm:gap-12 pointer-events-none z-20"
@@ -1516,6 +1591,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
                 <button
                   onClick={() => { togglePlay(); resetControlsTimer(); }}
                   aria-label={isPlaying ? 'Tạm dừng' : 'Phát'}
+                  data-tv-play
                   title={isPlaying ? 'Tạm dừng (Space)' : 'Phát (Space)'}
                   className="hidden sm:flex rounded-full bg-white text-black items-center justify-center hover:bg-white/90 active:scale-95 transition w-9 h-9 shrink-0"
                 >
@@ -1528,7 +1604,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
                   onClick={() => { skip(-10); resetControlsTimer(); }}
                   aria-label="Tua lại 10 giây"
                   title="Tua lại 10 giây (←)"
-                  className="hidden pointer-fine:flex rounded-full hover:bg-white/10 active:scale-95 items-center justify-center text-white w-9 h-9 shrink-0 transition"
+                  className="hidden pointer-fine:flex tv-seek-btn rounded-full hover:bg-white/10 active:scale-95 items-center justify-center text-white w-9 h-9 shrink-0 transition"
                 >
                   <span className="relative flex items-center justify-center">
                     <RotateCcw className="w-5 h-5 shrink-0" strokeWidth={1.75} />
@@ -1540,7 +1616,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
                   onClick={() => { skip(10); resetControlsTimer(); }}
                   aria-label="Tua tới 10 giây"
                   title="Tua tới 10 giây (→)"
-                  className="hidden pointer-fine:flex rounded-full hover:bg-white/10 active:scale-95 items-center justify-center text-white w-9 h-9 shrink-0 transition"
+                  className="hidden pointer-fine:flex tv-seek-btn rounded-full hover:bg-white/10 active:scale-95 items-center justify-center text-white w-9 h-9 shrink-0 transition"
                 >
                   <span className="relative flex items-center justify-center">
                     <RotateCw className="w-5 h-5 shrink-0" strokeWidth={1.75} />
