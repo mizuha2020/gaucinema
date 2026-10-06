@@ -1326,6 +1326,13 @@ export default function App() {
   };
 
   const openDetailModal = (movie: Movie) => {
+    // Thẻ Top10 chưa resolve được slug (đúng title/poster từ TMDB nhưng nguồn
+    // phim chưa có): search theo tên thay vì mở detail hỏng.
+    if (!movie?.slug) {
+      showToast(`"${movie?.name || "Phim"}" chưa có trên nguồn phim. Đang tìm theo tên...`);
+      handleSearchSubmit(movie?.name || movie?.origin_name || "");
+      return;
+    }
     if (!selectedMovieForDetail) {
       // Nhớ chỗ đang đứng để nút Đóng/X quay về (đi trong app); deep-link vào thẳng thì ref đã là tab
       detailReturnRef.current =

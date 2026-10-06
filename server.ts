@@ -8,6 +8,7 @@ import fs from "fs";
 import { initializeApp as initAdminApp, cert as adminCert } from "firebase-admin/app";
 import { getAuth as getAdminAuth } from "firebase-admin/auth";
 import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
+import { getDatabase as getAdminDatabase } from "firebase-admin/database";
 import { createServer as createViteServer } from "vite";
 
 // Force IPv4 resolution first to prevent ConnectTimeoutError on Cloudflare IPv6
@@ -318,32 +319,20 @@ async function startServer() {
   });
 
   // --- FIREBASE REALTIME DATABASE SYNC & PRE-COMPUTED CACHE HELPERS ---
-  // NOTE: phải trỏ đúng project đang dùng (đổi project thì đổi URL này theo
-  // databaseURL trong firebase-applet-config.json).
-  const RTDB_URL = "https://gaucinema-98e55-default-rtdb.asia-southeast1.firebasedatabase.app";
-  
+  // Dùng Admin SDK (bypass rules đúng cách). REST không kèm auth đã chết từ
+  // khi RTDB bị khóa — mọi sync/fetch im lặng thất bại, batch chạy mà DB
+  // không nhảy. Giữ nguyên chữ ký để không phải sửa 20+ chỗ gọi.
+  const adminDb = getAdminDatabase();
+
   async function syncToRtdb(endpointPath: string, payload: any, retries = 3): Promise<boolean> {
     const cleanPath = endpointPath.replace(/^\/+/, "").replace(/\.json$/, "");
-    const url = `${RTDB_URL}/${cleanPath}.json`;
     let attempt = 0;
     let delay = 1000;
 
     while (attempt < retries) {
       try {
-        const res = await fetch(url, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(20000), // Highly generous timeout to survive database cold starts
-        });
-        if (res.ok) {
-          return true;
-        }
-        attempt++;
-        if (attempt < retries) {
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          delay *= 2;
-        }
+        await adminDb.ref(cleanPath).set(payload);
+        return true;
       } catch (err: any) {
         attempt++;
         if (attempt >= retries) {
@@ -359,24 +348,16 @@ async function startServer() {
 
   async function fetchFromRtdb(endpointPath: string, retries = 2): Promise<any | null> {
     const cleanPath = endpointPath.replace(/^\/+/, "").replace(/\.json$/, "");
-    const url = `${RTDB_URL}/${cleanPath}.json`;
     let attempt = 0;
     let delay = 800;
 
     while (attempt < retries) {
       try {
-        const res = await fetch(url, {
-          signal: AbortSignal.timeout(15000), // Highly generous timeout to survive cold database requests
-          headers: { Accept: "application/json" },
-        });
-        if (res.ok) {
-          return await res.json();
+        const snap = await adminDb.ref(cleanPath).get();
+        if (snap.exists()) {
+          return snap.val();
         }
-        attempt++;
-        if (attempt < retries) {
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          delay *= 2;
-        }
+        return null;
       } catch (err: any) {
         attempt++;
         if (attempt >= retries) {
@@ -847,7 +828,7 @@ async function startServer() {
   // Chọn kết quả phimapi khớp nhất với TMDB; trả null nếu không đủ tin cậy (thà bỏ qua còn hơn gắn nhầm)
   // Ưu tiên 1: khớp tmdb.id chính xác (phimapi search đã trả kèm tmdb.id) — vd 1339713 -> Ám Ảnh/Obsession, không lấy nhầm Bạch Dạ 292435.
   // Fallback: chấm điểm tên/năm/loại khi thiếu tmdb.id.
-  function pickBestPhimapiMatch(foundItems: any[], opts: { title: string; originalTitle: string; year?: number; tmdbId?: string }): any | null {
+  function pickBestPhimapiMatch(foundItems: any[], opts: { title: string; originalTitle: string; altTitle?: string; year?: number; tmdbId?: string }): any | null {
     if (!Array.isArray(foundItems) || foundItems.length === 0) return null;
     const wantId = opts.tmdbId ? String(opts.tmdbId).trim() : '';
     if (wantId) {
@@ -858,6 +839,10 @@ async function startServer() {
     const ot = normHeroTitle(opts.originalTitle);
     const tFlat = normHeroTitle(stripHeroDiacritics(opts.title));
     const otFlat = normHeroTitle(stripHeroDiacritics(opts.originalTitle));
+    // Tên Việt từ TMDB (vd Tudum "The 4 Rascals" <-> TMDB "Bộ Tứ Báo Thủ"
+    // <-> phimapi name "Bộ Tứ Báo Thủ"). Chỉ khớp CHÍNH XÁC.
+    const at = normHeroTitle(opts.altTitle || "");
+    const atFlat = normHeroTitle(stripHeroDiacritics(opts.altTitle || ""));
     let best: any = null;
     let bestScore = -Infinity;
     for (const c of foundItems) {
@@ -873,6 +858,10 @@ async function startServer() {
       if (cOrigin && ot && cOrigin === ot) score += 8;
       else if (cOriginFlat && otFlat && cOriginFlat === otFlat) score += 6;
       else if (cOrigin && t && cOrigin === t) score += 4;
+      // Cầu Anh-Việt qua tên Việt chính chủ của TMDB (chỉ chính xác tuyệt đối)
+      if (cName && at && cName === at) score += 10;
+      else if (cNameFlat && atFlat && cNameFlat === atFlat) score += 8;
+      else if (cOrigin && at && cOrigin === at) score += 6;
       if (opts.year && Number(c.year) === Number(opts.year)) score += 3;
       // discover/movie là phim lẻ -> ưu tiên single, phạt series (case Ám Ảnh movie vs Bạch Dạ series)
       if (c.type === "single") score += 4;
@@ -2294,29 +2283,29 @@ setTimeout(seedInitialCastIndex, 2000);
 
   // Initial seed data to guarantee 10 movies and 10 TV series instantly on first load
   const initialSeedNetflixMovies: any[] = [
-    { slug: "anora", name: "Anora", origin_name: "Anora", poster_url: "uploads/movies/202410/anora-thumb.jpg", thumb_url: "uploads/movies/202410/anora-poster.jpg", year: 2024, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "2012", name: "2012", origin_name: "2012", poster_url: "uploads/movies/202203/2012-thumb.jpg", thumb_url: "uploads/movies/202203/2012-poster.jpg", year: 2009, quality: "FHD", lang: "Thuyết Minh", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "safe", name: "Safe", origin_name: "Safe", poster_url: "uploads/movies/202204/safe-thumb.jpg", thumb_url: "uploads/movies/202204/safe-poster.jpg", year: 2012, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "oceans-eleven", name: "11 Tên Cướp Thế Kỷ", origin_name: "Ocean's Eleven", poster_url: "uploads/movies/202205/oceans-eleven-thumb.jpg", thumb_url: "uploads/movies/202205/oceans-eleven-poster.jpg", year: 2001, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "wolf-man", name: "Người Sói", origin_name: "Wolf Man", poster_url: "uploads/movies/202501/wolf-man-thumb.jpg", thumb_url: "uploads/movies/202501/wolf-man-poster.jpg", year: 2025, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "the-magnificent-seven", name: "Bảy Tay Súng Huyền Thoại", origin_name: "The Magnificent Seven", poster_url: "uploads/movies/202204/the-magnificent-seven-thumb.jpg", thumb_url: "uploads/movies/202204/the-magnificent-seven-poster.jpg", year: 2016, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "gohan", name: "Bảy Viên Ngọc Rồng", origin_name: "Dragon Ball Super: Super Hero", poster_url: "uploads/movies/202208/dragon-ball-super-super-hero-thumb.jpg", thumb_url: "uploads/movies/202208/dragon-ball-super-super-hero-poster.jpg", year: 2022, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "the-whisper-man", name: "Người Thì Thầm", origin_name: "The Whisper Man", poster_url: "uploads/movies/202411/the-whisper-man-thumb.jpg", thumb_url: "uploads/movies/202411/the-whisper-man-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "anora", name: "Anora", origin_name: "Anora", poster_url: "https://image.tmdb.org/t/p/w500/cgXk2tNYhJZLXdBDO5DidAVzQ82.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/cgXk2tNYhJZLXdBDO5DidAVzQ82.jpg", year: 2024, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "2012", name: "2012", origin_name: "2012", poster_url: "https://image.tmdb.org/t/p/w500/q1jhf6lrIzrmerudhSsUVFHo8GD.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/q1jhf6lrIzrmerudhSsUVFHo8GD.jpg", year: 2009, quality: "FHD", lang: "Thuyết Minh", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "safe", name: "Safe", origin_name: "Safe", poster_url: "https://image.tmdb.org/t/p/w500/tZj0CTDzyh08I3ZkF1d9swrGVdk.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/tZj0CTDzyh08I3ZkF1d9swrGVdk.jpg", year: 2012, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "oceans-eleven", name: "11 Tên Cướp Thế Kỷ", origin_name: "Ocean's Eleven", poster_url: "https://image.tmdb.org/t/p/w500/hQQCdZrsHtZyR6NbKH2YyCqd2fR.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/hQQCdZrsHtZyR6NbKH2YyCqd2fR.jpg", year: 2001, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "wolf-man", name: "Người Sói", origin_name: "Wolf Man", poster_url: "https://image.tmdb.org/t/p/w500/h7cxTMzWgEjzQGNVc96Iig1NtW1.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/h7cxTMzWgEjzQGNVc96Iig1NtW1.jpg", year: 2025, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "the-magnificent-seven", name: "Bảy Tay Súng Huyền Thoại", origin_name: "The Magnificent Seven", poster_url: "https://image.tmdb.org/t/p/w500/e5ToxOyJwuZD4VOfI0qEn5uIjeJ.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/e5ToxOyJwuZD4VOfI0qEn5uIjeJ.jpg", year: 2016, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "gohan", name: "Bảy Viên Ngọc Rồng", origin_name: "Dragon Ball Super: Super Hero", poster_url: "https://image.tmdb.org/t/p/w500/1TIl7hssPbhfUXqAL3geaiE4gNT.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/1TIl7hssPbhfUXqAL3geaiE4gNT.jpg", year: 2022, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "the-whisper-man", name: "Người Thì Thầm", origin_name: "The Whisper Man", poster_url: "https://image.tmdb.org/t/p/w500/ndRs5lADYm0PeVjuOxaMcInY0o2.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/ndRs5lADYm0PeVjuOxaMcInY0o2.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
     { slug: "tho-oi", name: "Thỏ Ơi!!", origin_name: "Bunny!!", poster_url: "https://phimimg.com/upload/vod/20260601-1/034afe4d9f1198904977bb7cd8297a56.jpg", thumb_url: "https://phimimg.com/upload/vod/20260601-1/a93bfd52980655de0571d55d9c9f2440.jpg", year: 2026, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "red-notice", name: "Lệnh Truy Nã Đỏ", origin_name: "Red Notice", poster_url: "uploads/movies/202111/lenh-truy-na-do-thumb.jpg", thumb_url: "uploads/movies/202111/lenh-truy-na-do-poster.jpg", year: 2021, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" }
+    { slug: "red-notice", name: "Lệnh Truy Nã Đỏ", origin_name: "Red Notice", poster_url: "https://image.tmdb.org/t/p/w500/cnDtt2WzRAekxbE2Qmt0LnoVb3W.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/cnDtt2WzRAekxbE2Qmt0LnoVb3W.jpg", year: 2021, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" }
   ];
 
   const initialSeedNetflixTv: any[] = [
-    { slug: "agent-kim-reactivated", name: "Đặc Vụ Kim Tái Xuất", origin_name: "Agent Kim Reactivated", poster_url: "uploads/movies/202501/agent-kim-thumb.jpg", thumb_url: "uploads/movies/202501/agent-kim-poster.jpg", year: 2025, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "spooky-in-love", name: "Yêu Em Ma Quỷ", origin_name: "Spooky in Love", poster_url: "uploads/movies/202501/spooky-in-love-thumb.jpg", thumb_url: "uploads/movies/202501/spooky-in-love-poster.jpg", year: 2025, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "mousetrap", name: "Bẫy Chuột", origin_name: "Mousetrap", poster_url: "uploads/movies/202412/mousetrap-thumb.jpg", thumb_url: "uploads/movies/202412/mousetrap-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "the-early-spring", name: "Đầu Xuân", origin_name: "The Early Spring", poster_url: "uploads/movies/202501/the-early-spring-thumb.jpg", thumb_url: "uploads/movies/202501/the-early-spring-poster.jpg", year: 2025, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "our-sticky-love", name: "Tình Yêu Gắn Kết", origin_name: "Our Sticky Love", poster_url: "uploads/movies/202501/our-sticky-love-thumb.jpg", thumb_url: "uploads/movies/202501/our-sticky-love-poster.jpg", year: 2025, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "the-east-palace", name: "Đông Cung", origin_name: "The East Palace", poster_url: "uploads/movies/202411/the-east-palace-thumb.jpg", thumb_url: "uploads/movies/202411/the-east-palace-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "can-this-love-be-translated", name: "Tình Yêu Này Có Thể Dịch Không?", origin_name: "Can This Love Be Translated?", poster_url: "uploads/movies/202501/can-this-love-be-translated-thumb.jpg", thumb_url: "uploads/movies/202501/can-this-love-be-translated-poster.jpg", year: 2025, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "teach-you-a-lesson", name: "Dạy Cho Bài Học", origin_name: "Teach You a Lesson", poster_url: "uploads/movies/202412/teach-you-a-lesson-thumb.jpg", thumb_url: "uploads/movies/202412/teach-you-a-lesson-poster.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "squid-game-season-2", name: "Trò Chơi Con Mực: Mùa 2", origin_name: "Squid Game: Season 2", poster_url: "uploads/movies/202412/squid-game-season-2-thumb.jpg", thumb_url: "uploads/movies/202412/squid-game-season-2-poster.jpg", year: 2024, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
-    { slug: "sweet-home-season-3", name: "Thế Giới Ma Quái: Mùa 3", origin_name: "Sweet Home: Season 3", poster_url: "uploads/movies/202407/sweet-home-season-3-thumb.jpg", thumb_url: "uploads/movies/202407/sweet-home-season-3-poster.jpg", year: 2024, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" }
+    { slug: "agent-kim-reactivated", name: "Đặc Vụ Kim Tái Xuất", origin_name: "Agent Kim Reactivated", poster_url: "https://image.tmdb.org/t/p/w500/2jHNTdH9taElayuc1iLnI7cP36C.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/2jHNTdH9taElayuc1iLnI7cP36C.jpg", year: 2025, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "spooky-in-love", name: "Yêu Em Ma Quỷ", origin_name: "Spooky in Love", poster_url: "https://image.tmdb.org/t/p/w500/fMM8IdzpHPTKdUwOeYZcS6SYhtW.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/fMM8IdzpHPTKdUwOeYZcS6SYhtW.jpg", year: 2025, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "mousetrap", name: "Bẫy Chuột", origin_name: "Mousetrap", poster_url: "https://image.tmdb.org/t/p/w500/z1xv9CKt7HmXgS6azNB563mU2FB.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/z1xv9CKt7HmXgS6azNB563mU2FB.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "the-early-spring", name: "Đầu Xuân", origin_name: "The Early Spring", poster_url: "https://image.tmdb.org/t/p/w500/uCpDUdogzpqzFKVPtoPLGCLyXbj.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/uCpDUdogzpqzFKVPtoPLGCLyXbj.jpg", year: 2025, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "our-sticky-love", name: "Tình Yêu Gắn Kết", origin_name: "Our Sticky Love", poster_url: "https://image.tmdb.org/t/p/w500/ny8zYj40mWGTgKJi1a8hjNFUj9n.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/ny8zYj40mWGTgKJi1a8hjNFUj9n.jpg", year: 2025, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "the-east-palace", name: "Đông Cung", origin_name: "The East Palace", poster_url: "https://image.tmdb.org/t/p/w500/kdpKjpWmT7piPht4RXj7UPnVJMe.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/kdpKjpWmT7piPht4RXj7UPnVJMe.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "can-this-love-be-translated", name: "Tình Yêu Này Có Thể Dịch Không?", origin_name: "Can This Love Be Translated?", poster_url: "https://image.tmdb.org/t/p/w500/xvlfY1XjZ2kKdaCCDvZLPTB65JG.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/xvlfY1XjZ2kKdaCCDvZLPTB65JG.jpg", year: 2025, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "teach-you-a-lesson", name: "Dạy Cho Bài Học", origin_name: "Teach You a Lesson", poster_url: "https://image.tmdb.org/t/p/w500/mbO0o1cRqoPehYFfHSbxHgLOc1I.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/mbO0o1cRqoPehYFfHSbxHgLOc1I.jpg", year: 2024, quality: "HD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "squid-game-season-2", name: "Trò Chơi Con Mực: Mùa 2", origin_name: "Squid Game: Season 2", poster_url: "https://image.tmdb.org/t/p/w500/54qPSleZ59VjPBBl2HDcCueXZpC.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/54qPSleZ59VjPBBl2HDcCueXZpC.jpg", year: 2024, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" },
+    { slug: "sweet-home-season-3", name: "Thế Giới Ma Quái: Mùa 3", origin_name: "Sweet Home: Season 3", poster_url: "https://image.tmdb.org/t/p/w500/sMgWZR6wwLjyz3mEWVu0TGdISAE.jpg", thumb_url: "https://image.tmdb.org/t/p/w500/sMgWZR6wwLjyz3mEWVu0TGdISAE.jpg", year: 2024, quality: "FHD", lang: "Vietsub", source: "kkphim", sourceLabel: "Netflix" }
   ];
 
   let netflixTop10Cache: NetflixTop10Cache = {
@@ -2357,10 +2346,90 @@ setTimeout(seedInitialCastIndex, 2000);
     }
   }
 
+  // Slugify tên phim kiểu phimapi (vd "Mai" -> "mai"). Dùng để đoán URL
+  // detail trực tiếp khi search keyword không trả về đúng phim.
+  function slugifyHeroTitle(s: any): string {
+    try {
+      return String(s || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .replace(/[^a-z0-9\s-]/g, "")
+        .trim()
+        .replace(/[\s_]+/g, "-")
+        .replace(/-+/g, "-");
+    } catch {
+      return "";
+    }
+  }
   let isUpdatingNetflixTop10 = false;
+  // Tra cứu TMDB theo tên (làm trọng tài identity cho title Tudum chỉ có text).
+  // Trả về { id, title, originalTitle, poster, year } hoặc null.
+  async function lookupTmdbTitle(title: string, isTv: boolean): Promise<{ id: string; title: string; originalTitle: string; poster: string; year?: number } | null> {
+    const q = String(title || "").trim();
+    if (!q) return null;
+    const bearer = process.env.TMDB_BEARER_TOKEN || process.env.TMDB_READ_TOKEN || "";
+    const apiKey = process.env.TMDB_API_KEY || "";
+    if (!bearer && !apiKey) return null;
+    const headers: Record<string, string> = { Accept: "application/json", "User-Agent": "GauCinema/1.0" };
+    if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
+    // Đúng loại trước (movie/tv theo trang Tudum), sai loại sau.
+    const kinds = isTv ? ["tv", "movie"] : ["movie", "tv"];
+    for (const kind of kinds) {
+      const urls: string[] = [];
+      if (bearer) urls.push(`https://api.themoviedb.org/3/search/${kind}?query=${encodeURIComponent(q)}&language=vi-VN&page=1`);
+      if (apiKey) urls.push(`https://api.themoviedb.org/3/search/${kind}?query=${encodeURIComponent(q)}&language=vi-VN&page=1&api_key=${apiKey}`);
+      for (const u of urls) {
+        try {
+          const controller = new AbortController();
+          const t = setTimeout(() => controller.abort(), 4000);
+          const r = await fetch(u, { headers, signal: controller.signal });
+          clearTimeout(t);
+          if (!r.ok) continue;
+          const data: any = await r.json().catch(() => null);
+          if (!data?.results?.length) continue;
+          // Cổng liên quan: chỉ xét các kết quả KHỚP CHÍNH XÁC tên, rồi chọn
+          // phim hot nhất (popularity cao nhất) trong số đó — vd "Mai" có
+          // nhiều phim trùng tên (2017/2024/2025...), lấy [0] mù quáng là sai.
+          const qN = normHeroTitle(q);
+          const qF = normHeroTitle(stripHeroDiacritics(q));
+          const exactHits = (data.results || []).filter((r: any) => {
+            if (!r?.id) return false;
+            const rT = normHeroTitle(r.title || r.name);
+            const rO = normHeroTitle(r.original_title || r.original_name);
+            const rTf = normHeroTitle(stripHeroDiacritics(r.title || r.name));
+            const rOf = normHeroTitle(stripHeroDiacritics(r.original_title || r.original_name));
+            return rT === qN || rO === qN || rTf === qF || rOf === qF;
+          });
+          if (exactHits.length === 0) continue;
+          exactHits.sort((a: any, b: any) => Number(b.popularity || 0) - Number(a.popularity || 0));
+          const first = exactHits[0];
+          const dateStr = String(first.release_date || first.first_air_date || "");
+          const year = dateStr ? Number(dateStr.slice(0, 4)) : undefined;
+          return {
+            id: String(first.id),
+            title: String(first.title || first.name || q),
+            originalTitle: String(first.original_title || first.original_name || q),
+            poster: first.poster_path ? `https://image.tmdb.org/t/p/w500${first.poster_path}` : "",
+            year: Number.isFinite(year) ? year : undefined,
+          };
+        } catch { /* thử URL tiếp theo */ }
+      }
+      // Có kết quả ở đúng loại thì dừng, không lan sang loại kia.
+      // (vòng lặp kinds chỉ tiếp tục khi loại trước không trả về gì)
+    }
+    return null;
+  }
   async function updateNetflixTop10Cache() {
     if (isUpdatingNetflixTop10) return;
     isUpdatingNetflixTop10 = true;
+    // Chẩn đoán nhanh: không có TMDB keys thì lookup identity chết, resolve rớt hàng loạt.
+    try {
+      const hasBearer = !!(process.env.TMDB_BEARER_TOKEN || process.env.TMDB_READ_TOKEN);
+      const hasKey = !!process.env.TMDB_API_KEY;
+      console.log(`[Batch] TMDB creds: bearer=${hasBearer ? "yes" : "NO"} apiKey=${hasKey ? "yes" : "NO"}`);
+    } catch { /* ignore */ }
     try {
       // 1. Live scrape dynamically from official Netflix Tudum Top 10 Vietnam
       const [scrapedMovieTitles, scrapedTvTitles] = await Promise.all([
@@ -2431,39 +2500,167 @@ setTimeout(seedInitialCastIndex, 2000);
                 sourceLabel: "Netflix",
               };
             }
-            const baseTitle = title.replace(/\s*\(.*?\)/, "").replace(/:\s*.*$/, "").trim();
-            const searchQuery = titleSearchAlias[lowerTitle] || titleSearchAlias[baseTitle.toLowerCase()] || titleSearchAlias[normLower] || baseTitle;
-            const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery || title)}&limit=10`;
-            const searchRes = await fetchWithTimeout(searchUrl, 3500).catch(() => null);
-            const foundItems = searchRes?.data?.items || searchRes?.items || [];
-            if (foundItems.length > 0) {
-              // Ưu tiên khớp tên/origin chính xác thay vì [0] mù quáng (phimapi sort theo modified).
-              // Path này không có tmdbId (title scrape từ Tudum) nên dùng scoring + sanity chứa query.
-              // Dùng searchQuery (đã map alias) để chấm điểm, tránh lệch khi Tudum là tên gốc còn phimapi là tên Việt
-              let matchedItem = pickBestPhimapiMatch(foundItems, { title: searchQuery || title, originalTitle: searchQuery || title });
-              if (!matchedItem) {
-                const q = normHeroTitle(searchQuery || title);
-                const c0 = foundItems[0];
-                const n0 = normHeroTitle(c0?.name);
-                const o0 = normHeroTitle(c0?.origin_name);
-                if (c0?.slug && q.length >= 4 && (n0.includes(q) || q.includes(n0) || o0.includes(q) || q.includes(o0))) {
-                  matchedItem = c0;
+            // Resolve chuẩn: TMDB làm trọng tài identity trước, phimapi theo sau.
+            // 1) lookup TMDB lấy id/năm/poster chính chủ.
+            // 2) search phimapi bằng FULL title trước, baseTitle (cắt "...: ...") sau.
+            // 3) Chấm bằng pickBest với tmdbId+năm (khớp id là chắc chắn).
+            // 4) KHÔNG bao giờ chấp nhận khớp chứa-chuỗi lỏng (đó là đường "Monster Eater").
+            const tmdbRef = await lookupTmdbTitle(title, isTv).catch(() => null);
+            // FIX CỨNG: "Mousetrap: Limited Series" (chart truyền hình) là bản
+            // series slug bay-chuot-phan-1, không phải phim lẻ "The Mouse Trap".
+            // Trùng tên 3 bên nên không để scoring tự đoán (bài học Monster Eater).
+            if (normLower === "mousetrap") {
+              try {
+                const detailRaw = await fetchWithTimeout(`https://phimapi.com/phim/bay-chuot-phan-1`, 3500).catch(() => null);
+                const d = detailRaw?.movie || detailRaw?.data?.item || null;
+                if (d && d.slug === "bay-chuot-phan-1") {
+                  return {
+                    slug: "bay-chuot-phan-1",
+                    name: d.name || "Bẫy Chuột (Phần 1)",
+                    origin_name: d.origin_name || "Mousetrap (Season 1)",
+                    poster_url: d.poster_url || d.thumb_url || tmdbRef?.poster || "",
+                    thumb_url: d.thumb_url || d.poster_url || tmdbRef?.poster || "",
+                    year: d.year || 2026,
+                    quality: d.quality || "FHD",
+                    lang: d.lang || "Vietsub",
+                    source: "kkphim",
+                    sourceLabel: "Netflix",
+                  };
                 }
+              } catch {}
+            }
+            const baseTitle = title.replace(/\s*\(.*?\)/, "").replace(/:\s*.*$/, "").trim();
+            const queries: string[] = [];
+            for (const q of [
+              title,
+              baseTitle,
+              titleSearchAlias[lowerTitle],
+              titleSearchAlias[baseTitle.toLowerCase()],
+              titleSearchAlias[normLower],
+              tmdbRef?.title,
+              tmdbRef?.originalTitle,
+            ]) {
+              const qq = String(q || "").trim();
+              if (qq && !queries.some((x) => normHeroTitle(x) === normHeroTitle(qq))) queries.push(qq);
+            }
+            let matchedItem: any = null;
+            // 1b) Đoán slug detail trực tiếp (vd Mai 2024 nằm ở slug mai-2024
+            // trong khi slug "mai" là phim khác, search keyword không bao giờ
+            // trả về đúng). Verify chéo: tên khớp chính xác + năm lệch ≤1 +
+            // tmdb.id khớp khi cả 2 bên đều có. Rớt cái nào là bỏ ngay.
+            const slugGuesses: string[] = [];
+            for (const s of [title, baseTitle, tmdbRef?.title, tmdbRef?.originalTitle]) {
+              const base = slugifyHeroTitle(s);
+              if (!base || slugGuesses.includes(base)) continue;
+              slugGuesses.push(base);
+              if (tmdbRef?.year) {
+                const withYear = `${base}-${tmdbRef.year}`;
+                if (!slugGuesses.includes(withYear)) slugGuesses.push(withYear);
               }
-              if (matchedItem && matchedItem.slug) {
-                return {
-                  slug: matchedItem.slug,
-                  name: matchedItem.name || title,
-                  origin_name: matchedItem.origin_name || title,
-                  poster_url: matchedItem.poster_url || matchedItem.thumb_url || "",
-                  thumb_url: matchedItem.thumb_url || matchedItem.poster_url || "",
-                  year: matchedItem.year || new Date().getFullYear(),
-                  quality: matchedItem.quality || "HD",
-                  lang: matchedItem.lang || "Vietsub",
-                  source: "kkphim",
-                  sourceLabel: "Netflix",
-                };
+            }
+            const tN = normHeroTitle(title);
+            for (const g of slugGuesses.slice(0, 8)) {
+              try {
+                const r = await fetchWithTimeout(`https://phimapi.com/phim/${g}`, 3500).catch(() => null);
+                const d = (r as any)?.movie || (r as any)?.data?.item || null;
+                if (!d?.slug) continue;
+                const n = normHeroTitle(d.name);
+                const o = normHeroTitle(d.origin_name);
+                if (!(n === tN || o === tN)) continue;
+                const dYear = Number(d.year);
+                if (tmdbRef?.year && Number.isFinite(dYear) && Math.abs(dYear - tmdbRef.year) > 1) continue;
+                const dTmdb = String(d?.tmdb?.id || "").trim();
+                if (tmdbRef?.id && dTmdb && dTmdb !== tmdbRef.id) continue;
+                matchedItem = d;
+                break;
+              } catch { /* thử slug tiếp theo */ }
+            }
+            // Vòng search chỉ chạy khi đoán slug chưa trúng (tránh ghi đè kết quả probe).
+            if (!matchedItem) {
+              for (const searchQuery of queries) {
+              try {
+                const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(searchQuery)}&limit=10`;
+                const searchRes = await fetchWithTimeout(searchUrl, 3500).catch(() => null);
+                const foundItems = searchRes?.data?.items || searchRes?.items || [];
+                if (foundItems.length === 0) continue;
+                // Chấm trên FULL title Tudum (giữ ": ..."), kèm tmdbId/năm làm trọng tài.
+                matchedItem = pickBestPhimapiMatch(foundItems, {
+                  title,
+                  originalTitle: tmdbRef?.originalTitle || title,
+                  altTitle: tmdbRef?.title,
+                  year: tmdbRef?.year,
+                  tmdbId: tmdbRef?.id,
+                });
+                if (matchedItem?.slug) break;
+                matchedItem = null;
+              } catch { /* thử query tiếp theo */ }
               }
+            }
+            // Sanity cuối: chỉ chấp nhận KHỚP CHÍNH XÁC tên (2 dạng dấu), không
+            // giới hạn độ dài (title ngắn như "Mai" vẫn khớp được).
+            if (!matchedItem) {
+              try {
+                const searchUrl = `https://phimapi.com/v1/api/tim-kiem?keyword=${encodeURIComponent(queries[0] || title)}&limit=10`;
+                const searchRes = await fetchWithTimeout(searchUrl, 3500).catch(() => null);
+                const foundItems = searchRes?.data?.items || searchRes?.items || [];
+                const q = normHeroTitle(title);
+                const qF = normHeroTitle(stripHeroDiacritics(title));
+                const c0 = foundItems.find((c: any) => {
+                  if (!c?.slug) return false;
+                  const n = normHeroTitle(c.name);
+                  const o = normHeroTitle(c.origin_name);
+                  const nF = normHeroTitle(stripHeroDiacritics(c.name));
+                  const oF = normHeroTitle(stripHeroDiacritics(c.origin_name));
+                  return n === q || o === q || nF === qF || oF === qF;
+                });
+                if (c0) matchedItem = c0;
+              } catch {}
+            }
+            if (matchedItem && matchedItem.slug) {
+              if (process.env.BATCH_DEBUG) {
+                console.log(`[Batch][resolved] "${title}" -> slug=${matchedItem.slug} tmdb=${tmdbRef?.id || "-"}`);
+              }
+              let poster = matchedItem.poster_url || matchedItem.thumb_url || "";
+              if ((!poster || !String(poster).startsWith("http")) && tmdbRef?.poster) {
+                poster = tmdbRef.poster;
+              }
+              let thumb = matchedItem.thumb_url || matchedItem.poster_url || "";
+              if ((!thumb || !String(thumb).startsWith("http")) && tmdbRef?.poster) {
+                thumb = tmdbRef.poster;
+              }
+              return {
+                slug: matchedItem.slug,
+                name: matchedItem.name || tmdbRef?.title || title,
+                origin_name: matchedItem.origin_name || tmdbRef?.originalTitle || title,
+                poster_url: poster,
+                thumb_url: thumb,
+                year: matchedItem.year || tmdbRef?.year || new Date().getFullYear(),
+                quality: matchedItem.quality || "HD",
+                lang: matchedItem.lang || "Vietsub",
+                source: "kkphim",
+                sourceLabel: "Netflix",
+              };
+            }
+            // Không resolve được slug nhưng TMDB biết phim này: giữ thẻ đúng
+            // title+poster (bấm vào sẽ search thay vì mở detail hỏng). Thà hiện
+            // đúng còn hơn nhét nhầm phim khác hoặc filler.
+            if (tmdbRef) {
+              if (process.env.BATCH_DEBUG) {
+                console.log(`[Batch][unresolved] "${title}" tmdb=${tmdbRef.id} year=${tmdbRef.year} poster=${tmdbRef.poster ? "yes" : "NO"}`);
+              }
+              return {
+                slug: "",
+                name: tmdbRef.title || title,
+                origin_name: tmdbRef.originalTitle || title,
+                poster_url: tmdbRef.poster || "",
+                thumb_url: tmdbRef.poster || "",
+                year: tmdbRef.year || new Date().getFullYear(),
+                quality: "HD",
+                lang: "Vietsub",
+                source: "tmdb",
+                sourceLabel: "Netflix",
+                unresolvable: true,
+              };
             }
           } catch {}
           return null;
@@ -2471,8 +2668,12 @@ setTimeout(seedInitialCastIndex, 2000);
 
         const settled = await Promise.allSettled(searchPromises);
         for (const res of settled) {
-          if (res.status === "fulfilled" && res.value && !usedSlugs.has(res.value.slug)) {
-            usedSlugs.add(res.value.slug);
+          // Thẻ unresolved có slug rỗng nên dedup theo tên, tránh nuốt nhau.
+          const key = res.status === "fulfilled" && res.value
+            ? (res.value.slug || `tudum:${normHeroTitle(res.value.name)}`)
+            : "";
+          if (res.status === "fulfilled" && res.value && key && !usedSlugs.has(key)) {
+            usedSlugs.add(key);
             items.push(res.value);
             if (items.length >= 10) break;
           }
