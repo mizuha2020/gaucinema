@@ -118,7 +118,6 @@ class UserAnalyticsService {
               existing.watchSeconds += s.watchSeconds || 0;
               existing.mediaSeconds.movie = (existing.mediaSeconds.movie || 0) + (s.mediaSeconds?.movie || 0);
               existing.mediaSeconds.manga = (existing.mediaSeconds.manga || 0) + (s.mediaSeconds?.manga || 0);
-              existing.mediaSeconds.livetv = (existing.mediaSeconds.livetv || 0) + (s.mediaSeconds?.livetv || 0);
               existing.mediaSeconds.youtube = (existing.mediaSeconds.youtube || 0) + (s.mediaSeconds?.youtube || 0);
               if (s.lastActiveItem) existing.lastActiveItem = s.lastActiveItem;
             } else {
@@ -158,7 +157,7 @@ class UserAnalyticsService {
       accountDisplayName,
       onlineSeconds: 0,
       watchSeconds: 0,
-      mediaSeconds: { movie: 0, manga: 0, livetv: 0, youtube: 0, browsing: 0, anime: 0 },
+      mediaSeconds: { movie: 0, manga: 0, youtube: 0, browsing: 0, anime: 0 },
       lastTimestamp: now,
     };
 
@@ -259,9 +258,6 @@ class UserAnalyticsService {
         if (stat.mediaSeconds.manga > 0) {
           updatePayload['watchSecondsByMedia.manga'] = increment(stat.mediaSeconds.manga);
         }
-        if (stat.mediaSeconds.livetv > 0) {
-          updatePayload['watchSecondsByMedia.livetv'] = increment(stat.mediaSeconds.livetv);
-        }
         if (stat.mediaSeconds.youtube > 0) {
           updatePayload['watchSecondsByMedia.youtube'] = increment(stat.mediaSeconds.youtube);
         }
@@ -322,14 +318,13 @@ class UserAnalyticsService {
           const media = data.watchSecondsByMedia || {};
           const movie = typeof media.movie === 'number' ? media.movie : 0;
           const manga = typeof media.manga === 'number' ? media.manga : 0;
-          const livetv = typeof media.livetv === 'number' ? media.livetv : 0;
           const youtube = typeof media.youtube === 'number' ? media.youtube : 0;
-          const mediaTotal = movie + manga + livetv + youtube;
+          const mediaTotal = movie + manga + youtube;
 
           const fixedData: Record<string, any> = {
             totalOnlineSeconds: (typeof data.totalOnlineSeconds === 'number' ? data.totalOnlineSeconds : 0) || (mediaTotal > 0 ? mediaTotal + 300 : 0),
             totalWatchSeconds: (typeof data.totalWatchSeconds === 'number' ? data.totalWatchSeconds : 0) || mediaTotal,
-            watchSecondsByMedia: { movie, manga, livetv, youtube },
+            watchSecondsByMedia: { movie, manga, youtube },
           };
 
           batch.set(doc(db, 'userStats', d.id), fixedData, { merge: true });
@@ -399,7 +394,6 @@ class UserAnalyticsService {
           watchSecondsByMedia: {
             movie: 0,
             manga: 0,
-            livetv: 0,
             youtube: 0,
           },
           totalSessions: 1,
@@ -596,7 +590,6 @@ class UserAnalyticsService {
       totalWatchSeconds: number;
       movieSec: number;
       mangaSec: number;
-      livetvSec: number;
       youtubeSec: number;
       lastWatched: number;
       lastItem?: { mediaType: MediaActivityType; title: string; subtitle?: string };
@@ -614,7 +607,6 @@ class UserAnalyticsService {
           totalWatchSeconds: 0,
           movieSec: 0,
           mangaSec: 0,
-          livetvSec: 0,
           youtubeSec: 0,
           lastWatched: 0,
         };
@@ -623,7 +615,6 @@ class UserAnalyticsService {
         current.totalWatchSeconds += sec;
         if (record.mediaType === 'movie') current.movieSec += sec;
         else if (record.mediaType === 'manga') current.mangaSec += sec;
-        else if (record.mediaType === 'livetv') current.livetvSec += sec;
         else if (record.mediaType === 'youtube') current.youtubeSec += sec;
 
         if (record.lastWatchedAt > current.lastWatched) {
@@ -651,7 +642,6 @@ class UserAnalyticsService {
           watchSecondsByMedia: {
             movie: data.movieSec,
             manga: data.mangaSec,
-            livetv: data.livetvSec,
             youtube: data.youtubeSec,
           },
           lastActiveAt: data.lastWatched,
@@ -741,9 +731,9 @@ export function formatRelativeTime(timestamp?: number): string {
   return `${Math.floor(diffDay / 30)} tháng trước`;
 }
 
-function getMediaTotal(stat: { watchSecondsByMedia?: { movie?: number; manga?: number; livetv?: number; youtube?: number } }): number {
+function getMediaTotal(stat: { watchSecondsByMedia?: { movie?: number; manga?: number; youtube?: number } }): number {
   const m = stat.watchSecondsByMedia;
-  return (m?.movie || 0) + (m?.manga || 0) + (m?.livetv || 0) + (m?.youtube || 0);
+  return (m?.movie || 0) + (m?.manga || 0) + (m?.youtube || 0);
 }
 
 export function getEffectiveTotalOnline(stat: UserStats): number {

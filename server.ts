@@ -2,8 +2,12 @@ import "dotenv/config";
 import express from "express";
 import path from "path";
 import dns from "node:dns";
+import net from "node:net";
 import cors from "cors";
 import fs from "fs";
+import { initializeApp as initAdminApp, cert as adminCert } from "firebase-admin/app";
+import { getAuth as getAdminAuth } from "firebase-admin/auth";
+import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import { createServer as createViteServer } from "vite";
 
 // Force IPv4 resolution first to prevent ConnectTimeoutError on Cloudflare IPv6
@@ -92,10 +96,204 @@ async function fetchWithTimeout(url: string, timeoutMs = 12000): Promise<any> {
   }
 }
 
+// ---- SSRF guard cho /api/proxy/generic (Prompt 3 BƯỚC 5) ----
+function ipToBigInt(ip: string): bigint | null {
+  try {
+    if (net.isIPv4(ip)) {
+      const p = ip.split(".").map(Number);
+      return (BigInt(p[0]) << 24n) | (BigInt(p[1]) << 16n) | (BigInt(p[2]) << 8n) | BigInt(p[3]);
+    }
+    if (net.isIPv6(ip)) {
+      // Expand :: shorthand
+      const halves = ip.split("::");
+      let head: string[] = halves[0] ? halves[0].split(":") : [];
+      let tail: string[] = halves.length > 1 && halves[1] ? halves[1].split(":") : [];
+      // Handle embedded IPv4 (e.g. ::ffff:127.0.0.1)
+      const tail4 = tail.length > 0 && tail[tail.length - 1].includes(".") ? tail.pop() as string : null;
+      const missing = 8 - head.length - tail.length - (tail4 ? 2 : 0);
+      const groups = [...head, ...Array(Math.max(0, missing)).fill("0"), ...tail];
+      let out = 0n;
+      for (const g of groups) out = (out << 16n) | BigInt(parseInt(g || "0", 16));
+      if (tail4) {
+        const q = tail4.split(".").map(Number);
+        out = (out << 32n) | (BigInt(q[0]) << 24n) | (BigInt(q[1]) << 16n) | (BigInt(q[2]) << 8n) | BigInt(q[3]);
+      }
+      return out;
+    }
+  } catch { /* fall through */ }
+  return null;
+}
+
+function isBlockedIp(ip: string): boolean {
+  const lower = ip.toLowerCase();
+  if (lower === "metadata.google.internal") return true;
+  const v = ipToBigInt(ip);
+  if (v === null) return true; // không parse được thì chặn cho chắc
+  if (net.isIPv4(ip)) {
+    const n = Number(v);
+    const inCidr = (base: string, bits: number) => {
+      const b = Number(ipToBigInt(base));
+      const mask = bits === 0 ? 0 : (~0 >>> (32 - bits)) << (32 - bits);
+      return (n & mask) === (b & mask);
+    };
+    return (
+      inCidr("127.0.0.0", 8) ||
+      inCidr("10.0.0.0", 8) ||
+      inCidr("172.16.0.0", 12) ||
+      inCidr("192.168.0.0", 16) ||
+      inCidr("169.254.0.0", 16)
+    );
+  }
+  // IPv6: ::1 và fc00::/7 (unique local)
+  if (v === 1n) return true;
+  const top7 = Number((v >> 121n) & 0x7fn);
+  if (top7 === 0x7e) return true; // fc00::/7
+  return false;
+}
+
+async function assertPublicHttpUrl(raw: string): Promise<URL> {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error("Invalid url");
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") {
+    throw new Error("Only http/https allowed");
+  }
+  const host = u.hostname.toLowerCase();
+  if (host === "metadata.google.internal" || host === "metadata.google.internal.") {
+    throw new Error("Blocked host");
+  }
+  // Phân giải hostname ra IP rồi chặn dải nội bộ (chống DNS rebinding cơ bản).
+  let addrs: string[] = [];
+  try {
+    if (net.isIP(host)) {
+      addrs = [host];
+    } else {
+      const resolved = await dns.promises.lookup(host, { all: true });
+      addrs = resolved.map((r) => r.address);
+    }
+  } catch {
+    throw new Error("DNS resolve failed");
+  }
+  if (addrs.length === 0 || addrs.some(isBlockedIp)) {
+    throw new Error("Blocked internal address");
+  }
+  return u;
+}
+
+// Fetch cứng: redirect manual (kiểm tra lại IP sau MỖI lần redirect),
+// TUYỆT ĐỐI không chuyển tiếp header của client.
+async function fetchGenericHardened(startUrl: string, timeoutMs = 60000): Promise<any> {
+  let current = startUrl;
+  for (let hop = 0; hop < 6; hop++) {
+    const u = await assertPublicHttpUrl(current);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let res: Response;
+    try {
+      res = await fetch(u.href, {
+        method: "GET",
+        redirect: "manual",
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept: "application/json, text/plain, */*",
+        },
+      });
+    } catch (e: any) {
+      clearTimeout(timer);
+      throw e;
+    }
+    clearTimeout(timer);
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("location");
+      if (!loc) throw new Error(`Redirect ${res.status} without location`);
+      try {
+        current = new URL(loc, u.href).href;
+      } catch {
+        throw new Error("Invalid redirect location");
+      }
+      await res.arrayBuffer().catch(() => null);
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`HTTP error ${res.status}`);
+    }
+    return await res.json();
+  }
+  throw new Error("Too many redirects");
+}
+
 async function startServer() {
   const app = express();
   const isProd = process.env.NODE_ENV === "production";
   const PORT = Number(process.env.PORT) || (isProd ? 8080 : 3000);
+
+  // ---- Firebase Admin: BẮT BUỘC, fail-fast (Prompt 3) ----
+  // Service account là bí mật thật sự (bypass toàn bộ rules). Chỉ đặt qua biến
+  // môi trường, TUYỆT ĐỐI không commit vào source. Thiếu là từ chối khởi động,
+  // không bao giờ chạy tiếp ở chế độ không xác thực.
+  const svcJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (!svcJson) {
+    console.error(
+      "[FATAL] Missing FIREBASE_SERVICE_ACCOUNT_JSON. Server refuses to start without authentication. " +
+      "Generate a new private key at Firebase Console > Project settings > Service accounts, " +
+      "then set it as env var FIREBASE_SERVICE_ACCOUNT_JSON."
+    );
+    process.exit(1);
+  }
+  let serviceAccount: any;
+  try {
+    serviceAccount = JSON.parse(svcJson);
+  } catch {
+    console.error("[FATAL] FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON. Refusing to start.");
+    process.exit(1);
+  }
+  try {
+    initAdminApp({
+      credential: adminCert(serviceAccount),
+      databaseURL: "https://gaucinema-98e55-default-rtdb.asia-southeast1.firebasedatabase.app",
+    });
+    console.log("[auth] firebase-admin initialized for project:", serviceAccount.project_id || "(unknown)");
+  } catch (e: any) {
+    console.error("[FATAL] firebase-admin init failed:", e?.message || e);
+    process.exit(1);
+  }
+
+  // ---- Middleware xác thực (Prompt 3) ----
+  function getBearerToken(req: any): string | null {
+    const h = req.headers?.authorization;
+    if (typeof h !== "string") return null;
+    const m = h.match(/^Bearer\s+(.+)$/i);
+    return m ? m[1].trim() : null;
+  }
+
+  async function requireAuth(req: any, res: any, next: any) {
+    const token = getBearerToken(req);
+    if (!token) return res.status(401).json({ error: "UNAUTHORIZED" });
+    try {
+      const decoded = await getAdminAuth().verifyIdToken(token);
+      req.user = decoded;
+      return next();
+    } catch {
+      return res.status(401).json({ error: "UNAUTHORIZED" });
+    }
+  }
+
+  async function requireAdmin(req: any, res: any, next: any) {
+    try {
+      const uid = req.user?.uid;
+      if (!uid) return res.status(401).json({ error: "UNAUTHORIZED" });
+      const snap = await getAdminFirestore().doc(`accounts/${uid}`).get();
+      const role = snap.exists ? (snap.data() as any)?.role : null;
+      if (role !== "admin") return res.status(403).json({ error: "FORBIDDEN" });
+      return next();
+    } catch {
+      return res.status(403).json({ error: "FORBIDDEN" });
+    }
+  }
 
   // Enable CORS for Android app and other origins
   app.use(cors({
@@ -120,7 +318,9 @@ async function startServer() {
   });
 
   // --- FIREBASE REALTIME DATABASE SYNC & PRE-COMPUTED CACHE HELPERS ---
-  const RTDB_URL = "https://gaucinema-default-rtdb.asia-southeast1.firebasedatabase.app";
+  // NOTE: phải trỏ đúng project đang dùng (đổi project thì đổi URL này theo
+  // databaseURL trong firebase-applet-config.json).
+  const RTDB_URL = "https://gaucinema-98e55-default-rtdb.asia-southeast1.firebasedatabase.app";
   
   async function syncToRtdb(endpointPath: string, payload: any, retries = 3): Promise<boolean> {
     const cleanPath = endpointPath.replace(/^\/+/, "").replace(/\.json$/, "");
@@ -497,7 +697,7 @@ async function startServer() {
   }
 
   // IntroDB proxy - APK-safe (no cache, single fetch per episode). Handles CORS for native WebView.
-  app.get("/api/intro/segments", async (req, res) => {
+  app.get("/api/intro/segments", requireAuth, async (req, res) => {
     // Never allow browser/proxy caching here: Express ETag would answer 304
     // with empty body, and FE fetch (res.ok=false on 304) would drop segments.
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -532,7 +732,7 @@ async function startServer() {
   });
 
   // TMDB Backdrop + Logo proxy (like chophim.app) - returns original backdrop/logotype for hero banner
-  app.get("/api/tmdb/backdrop/:tmdbId", async (req, res) => {
+  app.get("/api/tmdb/backdrop/:tmdbId", requireAuth, async (req, res) => {
     const tmdbId = String(req.params.tmdbId || "").trim();
     if (!tmdbId || !/^\d+$/.test(tmdbId)) return res.status(400).json({ error: "Invalid tmdbId" });
     const force = req.query.force === "true" || req.query.force === "1";
@@ -544,7 +744,7 @@ async function startServer() {
   // TMDB Generic Proxy - expose toàn bộ TMDb v3 endpoints bạn liệt kê qua Bearer server-side
   // Base: /api/tmdb/v3/*  -> https://api.themoviedb.org/3/*
   const tmdbGenericCache = new LRUCache<string, { data: any; timestamp: number }>(200);
-  app.use("/api/tmdb/v3", async (req: any, res, next) => {
+  app.use("/api/tmdb/v3", requireAuth, async (req: any, res, next) => {
     if (req.method !== "GET") return next();
     const fullPath = req.originalUrl || req.url || "";
     // extract subPath after /api/tmdb/v3/
@@ -590,7 +790,7 @@ async function startServer() {
 
   // TMDB Trending (hot) - like chophim: lấy phim đang hot quốc tế làm fallback hero
   const tmdbTrendingCache = new LRUCache<string, { data: any; timestamp: number }>(10);
-  app.get("/api/tmdb/trending", async (req, res) => {
+  app.get("/api/tmdb/trending", requireAuth, async (req, res) => {
     const cacheKey = "trending:movie:day:vi";
     const cached = tmdbTrendingCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < 10 * 60 * 1000) {
@@ -896,7 +1096,7 @@ async function startServer() {
     return payload;
   }
 
-  app.get("/api/tmdb/hero-popular", async (req, res) => {
+  app.get("/api/tmdb/hero-popular", requireAuth, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
@@ -931,7 +1131,7 @@ async function startServer() {
   });
 
   // Comprehensive System API Health Check & Ping Tester (Backend-based to prevent CORS & accurately measure latency)
-  app.post("/api/system/apis/ping", async (req, res) => {
+  app.post("/api/system/apis/ping", requireAuth, requireAdmin, async (req, res) => {
     let { url, timeoutMs = 8000 } = req.body || {};
     if (!url || typeof url !== "string" || !url.startsWith("http")) {
       return res.status(400).json({
@@ -1322,7 +1522,7 @@ setTimeout(seedInitialCastIndex, 2000);
 // --- END SMART ACTOR & DIRECTOR SEARCH ENGINE ---
 
   // 1. KKPhim Dedicated Proxy (https://phimapi.com)
-  app.get("/api/proxy/kkphim/*", async (req, res) => {
+  app.get("/api/proxy/kkphim/*", requireAuth, async (req, res) => {
     const endpoint = req.params[0];
     const query = new URLSearchParams(req.query as Record<string, string>).toString();
     const cacheKey = `kkphim:${endpoint}?${query}`;
@@ -1347,7 +1547,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // 2. OPhim Dedicated Proxy (https://ophim1.com)
-  app.get("/api/proxy/ophim/*", async (req, res) => {
+  app.get("/api/proxy/ophim/*", requireAuth, async (req, res) => {
     const endpoint = req.params[0];
     const query = new URLSearchParams(req.query as Record<string, string>).toString();
     const cacheKey = `ophim:${endpoint}?${query}`;
@@ -1383,7 +1583,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // 3. NguonC Dedicated Proxy (https://phim.nguonc.com)
-  app.get("/api/proxy/nguonc/*", async (req, res) => {
+  app.get("/api/proxy/nguonc/*", requireAuth, async (req, res) => {
     const endpoint = req.params[0];
     const query = new URLSearchParams(req.query as Record<string, string>).toString();
     const cacheKey = `nguonc:${endpoint}?${query}`;
@@ -1410,7 +1610,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // 4. Multi-Source Search Aggregator with Smart Cast & Actor Matching
-  app.get("/api/proxy/search-all", async (req, res) => {
+  app.get("/api/proxy/search-all", requireAuth, async (req, res) => {
     const keyword = String(req.query.keyword || "").trim();
     if (!keyword) {
       return res.json({ status: true, items: [] });
@@ -1551,13 +1751,13 @@ setTimeout(seedInitialCastIndex, 2000);
   }
 
   // Debug endpoint cho admin: xem rule server đang dùng (không cần đọc RTDB thủ công)
-  app.get("/api/adblock/rules", async (_req, res) => {
+  app.get("/api/adblock/rules", requireAuth, async (_req, res) => {
     const rules = await getAdblockRules();
     res.json({ keywords: rules.keywords, regexes: rules.regexes, cached: true });
   });
 
   // 5a. M3U8 Ad-Clean Proxy - strips SSAI ad segments injected by upstream (opstream/phim1280)
-  app.get("/api/proxy/m3u8", async (req, res) => {
+  app.get("/api/proxy/m3u8", requireAuth, async (req, res) => {
     let rawUrl = (req.query.url as string) || "";
     if (!rawUrl) return res.status(400).send("Missing url");
     // support base64 or plain
@@ -1874,7 +2074,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // 5. Generic proxy for CORS issues (e.g. Manga Chapter APIs)
-  app.get("/api/proxy/generic", async (req, res) => {
+  app.get("/api/proxy/generic", requireAuth, async (req, res) => {
     const b64url = req.query.url as string;
     if (!b64url) return res.status(400).json({ error: "Missing url" });
     
@@ -1888,7 +2088,7 @@ setTimeout(seedInitialCastIndex, 2000);
     if (!url.startsWith("http")) {
       return res.status(400).json({ error: "Invalid url scheme" });
     }
-    
+
     const cacheKey = `generic:${url}`;
     const cached = proxyCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
@@ -1896,13 +2096,16 @@ setTimeout(seedInitialCastIndex, 2000);
     }
 
     try {
-      const data = await fetchWithTimeout(url, 60000);
+      const data = await fetchGenericHardened(url, 60000);
       proxyCache.set(cacheKey, { data, timestamp: Date.now() });
       return res.json(data);
     } catch (err: any) {
       if (err.message && err.message.includes('404')) {
         console.warn(`[Proxy 404] Upstream not found for ${url}`);
         return res.status(404).json({ error: "Upstream not found", status: 404 });
+      }
+      if (err.message && /Blocked|Only http/.test(err.message)) {
+        return res.status(403).json({ error: "URL not allowed" });
       }
       console.warn(`[Proxy Warning] ${url}:`, err.message);
       if (cached) return res.json(cached.data);
@@ -1928,6 +2131,47 @@ setTimeout(seedInitialCastIndex, 2000);
 
     if (!imageUrl.startsWith("http")) {
       return res.status(400).send("Invalid image URL scheme");
+    }
+
+    // Prompt 3 BƯỚC 4: endpoint này gắn vào thuộc tính src của thẻ <img> nên
+    // KHÔNG áp requireAuth (thẻ img không gửi được header Authorization).
+    // Thay vào đó chỉ cho phép domain upstream cố định, domain khác -> 403.
+    let imageHost = "";
+    try {
+      imageHost = new URL(imageUrl).hostname.toLowerCase();
+    } catch {
+      return res.status(400).send("Invalid image URL");
+    }
+    const IMAGE_ALLOW_SUFFIX = [
+      "uploads.mangadex.org",
+      "mangadex.network",
+      "hinhhinh.com",
+      "truyenvua.com",
+      "tintruyen.com",
+      "tintruyen.net",
+      "truyenqqko.com",
+      "truyenqqgo.com",
+      "truyenqqno.com",
+      "truyenqqto.com",
+      "otruyenapi.com",
+      "otruyen.cc",
+      "otruyencdn.com",
+      "cuutruyen.net",
+      "image.tmdb.org",
+      "phimimg.com",
+      "phimapi.com",
+      "ophim1.com",
+      "phim.nguonc.com",
+    ];
+    const imageFamily =
+      imageHost.includes("truyenqq") ||
+      imageHost.includes("hinhhinh") ||
+      imageHost.includes("truyenvua") ||
+      imageHost.includes("tintruyen");
+    const imageAllowed =
+      imageFamily || IMAGE_ALLOW_SUFFIX.some((d) => imageHost === d || imageHost.endsWith("." + d));
+    if (!imageAllowed) {
+      return res.status(403).send("Image domain not allowed");
     }
 
     // Image cache storage in memory
@@ -2014,6 +2258,10 @@ setTimeout(seedInitialCastIndex, 2000);
 
           if (upstream.ok) {
             const contentType = upstream.headers.get("content-type") || "image/jpeg";
+            // Prompt 3 BƯỚC 4: chỉ trả về nội dung thật sự là ảnh.
+            if (!contentType.toLowerCase().startsWith("image/")) {
+              continue;
+            }
             const arrayBuffer = await upstream.arrayBuffer();
             const buffer = Buffer.from(arrayBuffer);
 
@@ -2494,7 +2742,7 @@ setTimeout(seedInitialCastIndex, 2000);
   scheduleNextVietnamBatch();
 
   // Admin Batch Management Endpoints
-  app.post("/api/system/batch-sync", async (req, res) => {
+  app.post("/api/system/batch-sync", requireAuth, requireAdmin, async (req, res) => {
     try {
       const stats = await runFullSystemBatch(true);
       return res.json({ success: true, message: "Đã kích hoạt đồng bộ dữ liệu Batch & RTDB thành công", stats });
@@ -2503,7 +2751,7 @@ setTimeout(seedInitialCastIndex, 2000);
     }
   });
 
-  app.get("/api/system/batch-status", (req, res) => {
+  app.get("/api/system/batch-status", requireAuth, (req, res) => {
     return res.json({
       success: true,
       stats: systemBatchStats,
@@ -2517,7 +2765,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // Admin Hero Banner Assets Listing & Selection
-  app.get("/api/hero/admin/list", async (req, res) => {
+  app.get("/api/hero/admin/list", requireAuth, requireAdmin, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
@@ -2542,7 +2790,7 @@ setTimeout(seedInitialCastIndex, 2000);
     }
   });
 
-  app.post("/api/hero/select-asset", async (req, res) => {
+  app.post("/api/hero/select-asset", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { slug, assetType, selectedUrl } = req.body || {};
       if (!slug || !selectedUrl || (assetType !== "backdrop" && assetType !== "logo")) {
@@ -2653,7 +2901,7 @@ setTimeout(seedInitialCastIndex, 2000);
     }
   });
 
-  app.get("/api/top10/netflix-vn", async (req, res) => {
+  app.get("/api/top10/netflix-vn", requireAuth, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
@@ -2999,7 +3247,7 @@ setTimeout(seedInitialCastIndex, 2000);
   }
 
   // TruyenQQ API Endpoints with Automatic Backup Failover to OTruyen
-  app.get("/api/proxy/truyenqq/list", async (req, res) => {
+  app.get("/api/proxy/truyenqq/list", requireAuth, async (req, res) => {
     const page = parseInt(String(req.query.page || "1"), 10) || 1;
     const cacheKey = `truyenqq:list:page:${page}`;
     const cached = proxyCache.get(cacheKey);
@@ -3047,7 +3295,7 @@ setTimeout(seedInitialCastIndex, 2000);
     return res.json({ items: [], totalPages: 1 });
   });
 
-  app.get("/api/proxy/truyenqq/search", async (req, res) => {
+  app.get("/api/proxy/truyenqq/search", requireAuth, async (req, res) => {
     const query = String(req.query.q || req.query.keyword || "").trim();
     if (!query) {
       return res.json({ items: [], totalPages: 1 });
@@ -3096,7 +3344,7 @@ setTimeout(seedInitialCastIndex, 2000);
     return res.json({ items: [], totalPages: 1 });
   });
 
-  app.get("/api/proxy/truyenqq/detail", async (req, res) => {
+  app.get("/api/proxy/truyenqq/detail", requireAuth, async (req, res) => {
     const slug = String(req.query.slug || req.query.id || "").trim();
     if (!slug) {
       return res.status(400).json({ error: "Missing manga slug/id" });
@@ -3263,7 +3511,7 @@ setTimeout(seedInitialCastIndex, 2000);
     return res.status(404).json({ error: "Manga detail not found" });
   });
 
-  app.get("/api/proxy/truyenqq/chapter", async (req, res) => {
+  app.get("/api/proxy/truyenqq/chapter", requireAuth, async (req, res) => {
     const slug = String(req.query.slug || req.query.url || req.query.id || "").trim();
     if (!slug) {
       return res.status(400).json({ error: "Missing chapter slug/url" });
@@ -3310,7 +3558,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // MangaDex Proxy Endpoint (Bypasses CORS and rate limits with backend caching)
-  app.get("/api/proxy/mangadex/*", async (req, res) => {
+  app.get("/api/proxy/mangadex/*", requireAuth, async (req, res) => {
     const rawEndpoint = req.params[0] || "";
     const cleanEndpoint = rawEndpoint.split("?")[0];
     const rawQuery = req.url.includes("?") ? req.url.substring(req.url.indexOf("?") + 1) : "";
@@ -3334,7 +3582,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // OTruyen Proxy Endpoint
-  app.get("/api/proxy/otruyen/*", async (req, res) => {
+  app.get("/api/proxy/otruyen/*", requireAuth, async (req, res) => {
     const rawEndpoint = req.params[0] || "";
     const cleanEndpoint = rawEndpoint.split("?")[0];
     const rawQuery = req.url.includes("?") ? req.url.substring(req.url.indexOf("?") + 1) : "";
@@ -3358,7 +3606,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // CuuTruyen Proxy Endpoint (v2)
-  app.get("/api/proxy/cuutruyen/*", async (req, res) => {
+  app.get("/api/proxy/cuutruyen/*", requireAuth, async (req, res) => {
     let rawEndpoint = req.params[0] || "";
     let cleanEndpoint = rawEndpoint.split("?")[0];
     if (cleanEndpoint === "mangas" || cleanEndpoint === "mangas/") {
@@ -3385,7 +3633,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // 6. Default General Proxy with resilient multi-source failover and caching
-  app.get("/api/proxy/movie/*", async (req, res) => {
+  app.get("/api/proxy/movie/*", requireAuth, async (req, res) => {
     const endpoint = req.params[0];
     const query = new URLSearchParams(req.query as Record<string, string>).toString();
     const cacheKey = `movie:${endpoint}?${query}`;
@@ -3449,527 +3697,6 @@ setTimeout(seedInitialCastIndex, 2000);
       items: [],
       data: { items: [], params: { pagination: { totalItems: 0, totalItemsPerPage: 24, currentPage: 1, totalPages: 1 } } },
     });
-  });
-
-  // 3. TV & Sports M3U Playlist Parser Endpoint & Stream Proxy
-  app.get("/api/tv/channels", async (req, res) => {
-    try {
-      const requestedUrl = req.query.url as string;
-      const candidateUrls: string[] = [];
-      if (requestedUrl) {
-        candidateUrls.push(requestedUrl);
-        if (requestedUrl.includes("vmttv.duckdns.org") || requestedUrl.includes("vmttv")) {
-          candidateUrls.push(
-            "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/main/vmttv",
-            "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/main/tv.m3u"
-          );
-        }
-      } else {
-        candidateUrls.push(
-          "https://raw.githubusercontent.com/vuminhthanh12/vuminhthanh12/main/vmttv"
-        );
-      }
-
-      const allChannels: Array<{
-        name: string;
-        logo: string;
-        group: string;
-        url: string;
-        drmKey?: string;
-        licenseType?: string;
-        userAgent?: string;
-      }> = [];
-
-      // Helper to parse JSON format (e.g. HQClick mon.json)
-      const parseJsonChannels = (data: any) => {
-        const list: typeof allChannels = [];
-        if (!data) return list;
-
-        // Case 1: Simple array data.channels
-        if (data.channels && Array.isArray(data.channels)) {
-          for (const ch of data.channels) {
-            if (ch.url) {
-              list.push({
-                name: ch.name || "Kênh TV",
-                logo: ch.logo || ch.image?.url || "",
-                group: ch.group || "Truyền Hình",
-                url: ch.url,
-                drmKey: ch.drmKey,
-                licenseType: ch.licenseType,
-                userAgent: ch.userAgent || ch.http_user_agent,
-              });
-            }
-          }
-        }
-
-        // Case 2: Grouped channels like HQClick (data.groups -> channels -> sources/streams)
-        if (data.groups && Array.isArray(data.groups)) {
-          for (const grp of data.groups) {
-            const groupName = grp.name || "Kênh TV";
-            if (grp.channels && Array.isArray(grp.channels)) {
-              for (const ch of grp.channels) {
-                const chName = ch.name || "Kênh TV";
-                const logo = ch.image?.url || ch.logo || "";
-                const chUA = ch.userAgent || ch.http_user_agent || ch.headers?.['User-Agent'];
-
-                // Find stream links recursively
-                const findStreamUrls = (obj: any): string[] => {
-                  let found: string[] = [];
-                  if (!obj) return found;
-                  if (typeof obj === "string" && (obj.startsWith("http://") || obj.startsWith("https://"))) {
-                    return [obj];
-                  }
-                  if (Array.isArray(obj)) {
-                    for (const item of obj) found = found.concat(findStreamUrls(item));
-                    return found;
-                  }
-                  if (typeof obj === "object") {
-                    if (obj.url && typeof obj.url === "string" && (obj.url.startsWith("http://") || obj.url.startsWith("https://"))) {
-                      found.push(obj.url);
-                    }
-                    if (obj.stream_links && Array.isArray(obj.stream_links)) {
-                      for (const sl of obj.stream_links) {
-                        if (sl.url) found.push(sl.url);
-                      }
-                    }
-                    for (const k of Object.keys(obj)) {
-                      if (k !== "url" && k !== "image") {
-                        found = found.concat(findStreamUrls(obj[k]));
-                      }
-                    }
-                  }
-                  return Array.from(new Set(found));
-                };
-
-                const streamUrls = findStreamUrls(ch.sources || ch);
-                for (const streamUrl of streamUrls) {
-                  if (streamUrl) {
-                    list.push({
-                      name: chName,
-                      logo: logo || "https://images.unsplash.com/photo-1593784991095-a205069470b6?w=100&auto=format&fit=crop&q=60",
-                      group: groupName,
-                      url: streamUrl,
-                      drmKey: ch.drmKey || ch.license_key,
-                      licenseType: ch.licenseType || ch.license_type,
-                      userAgent: chUA,
-                    });
-                    break; // Take primary stream link
-                  }
-                }
-              }
-            }
-          }
-        }
-        return list;
-      };
-
-      // Helper to parse HTML with embedded #EXTINF (e.g. Quidni blogspot)
-      const parseHtmlExtinfChannels = (html: string) => {
-        const cleanText = html
-          .replace(/<br\s*\/?>/gi, "\n")
-          .replace(/<\/p>/gi, "\n")
-          .replace(/<\/div>/gi, "\n")
-          .replace(/&quot;/g, '"')
-          .replace(/&amp;/g, "&");
-
-        const list: typeof allChannels = [];
-        const regex = /#EXTINF:([^\n\r]+)[\r\n\s]*([^\n\r<#]+)/gi;
-        let match;
-        while ((match = regex.exec(cleanText)) !== null) {
-          const extinfLine = match[1];
-          let streamUrl = match[2].trim();
-
-          const urlMatch = streamUrl.match(/(https?:\/\/[^\s"'<>]+)/i);
-          if (urlMatch) {
-            streamUrl = urlMatch[1];
-          } else {
-            continue;
-          }
-
-          const groupMatch = extinfLine.match(/group-title="([^"]*)"/i);
-          const group = groupMatch ? groupMatch[1] : "Truyền Hình";
-
-          const logoMatch = extinfLine.match(/tvg-logo="([^"]*)"/i);
-          const logo = logoMatch ? logoMatch[1] : "";
-
-          const commaIndex = extinfLine.lastIndexOf(",");
-          const name = commaIndex !== -1 ? extinfLine.substring(commaIndex + 1).trim() : "Kênh TV";
-
-          list.push({
-            name,
-            logo: logo || "https://images.unsplash.com/photo-1593784991095-a205069470b6?w=100&auto=format&fit=crop&q=60",
-            group,
-            url: streamUrl,
-          });
-        }
-        return list;
-      };
-
-      // Helper to parse standard M3U with Kodi DRM tags and VLC User-Agent tags
-      const parseM3uChannels = (text: string) => {
-        const list: typeof allChannels = [];
-        const lines = text.split(/\r?\n/);
-        let currentGroup = "Truyền Hình";
-        let currentLogo = "";
-        let currentName = "";
-        let currentKey = "";
-        let currentLicenseType = "";
-        let currentUserAgent = "";
-
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (line.startsWith("#EXTINF:")) {
-            const groupMatch = line.match(/group-title="([^"]*)"/i);
-            if (groupMatch) {
-              currentGroup = groupMatch[1];
-            }
-            const logoMatch = line.match(/tvg-logo="([^"]*)"/i);
-            if (logoMatch) {
-              currentLogo = logoMatch[1];
-            }
-            const uaMatch = line.match(/(?:http-)?user-agent="([^"]*)"/i);
-            if (uaMatch) {
-              currentUserAgent = uaMatch[1];
-            }
-            const commaIndex = line.lastIndexOf(",");
-            if (commaIndex !== -1) {
-              currentName = line.substring(commaIndex + 1).trim();
-            }
-          } else if (line.match(/(?:#KODIPROP:)?(?:inputstream\.adaptive\.)?license_key\s*=\s*(.+)/i)) {
-            const keyMatch = line.match(/(?:#KODIPROP:)?(?:inputstream\.adaptive\.)?license_key\s*=\s*(.+)/i);
-            if (keyMatch) {
-              currentKey = keyMatch[1].trim();
-            }
-          } else if (line.match(/(?:#KODIPROP:)?(?:inputstream\.adaptive\.)?license_type\s*=\s*(.+)/i)) {
-            const typeMatch = line.match(/(?:#KODIPROP:)?(?:inputstream\.adaptive\.)?license_type\s*=\s*(.+)/i);
-            if (typeMatch) {
-              currentLicenseType = typeMatch[1].trim();
-            }
-          } else if (line.match(/(?:#EXTVLCOPT:)?(?:http-user-agent|user-agent)\s*=\s*(.+)/i)) {
-            const uaMatch = line.match(/(?:#EXTVLCOPT:)?(?:http-user-agent|user-agent)\s*=\s*(.+)/i);
-            if (uaMatch) {
-              currentUserAgent = uaMatch[1].trim();
-            }
-          } else if (line.startsWith("#EXTHTTP:")) {
-            try {
-              const obj = JSON.parse(line.replace("#EXTHTTP:", "").trim());
-              if (obj["User-Agent"]) currentUserAgent = obj["User-Agent"];
-            } catch {}
-          } else if (line && !line.startsWith("#") && (line.startsWith("http://") || line.startsWith("https://") || line.startsWith("/"))) {
-            if (currentName || line) {
-              list.push({
-                name: currentName || "Kênh LiveTV",
-                logo: currentLogo || "https://images.unsplash.com/photo-1593784991095-a205069470b6?w=100&auto=format&fit=crop&q=60",
-                group: currentGroup,
-                url: line,
-                drmKey: currentKey || undefined,
-                licenseType: currentLicenseType || undefined,
-                userAgent: currentUserAgent || undefined,
-              });
-            }
-            currentName = "";
-            currentLogo = "";
-            currentKey = "";
-            currentLicenseType = "";
-            currentUserAgent = "";
-          }
-        }
-        return list;
-      };
-
-      for (const url of candidateUrls) {
-        try {
-          const resp = await fetch(url, {
-            headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            },
-            redirect: "follow",
-          });
-
-          if (resp.ok) {
-            const content = await resp.text();
-            const trimmed = content.trim();
-
-            let parsed: typeof allChannels = [];
-            if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-              try {
-                parsed = parseJsonChannels(JSON.parse(trimmed));
-              } catch (e) {}
-            }
-
-            if (parsed.length === 0 && (content.includes("<!DOCTYPE") || content.includes("<html") || content.includes("<div"))) {
-              parsed = parseHtmlExtinfChannels(content);
-            }
-
-            if (parsed.length === 0) {
-              parsed = parseM3uChannels(content);
-            }
-
-            allChannels.push(...parsed);
-
-            // If user specifically requested one URL, break early
-            if (requestedUrl && parsed.length > 0) {
-              break;
-            }
-          }
-        } catch (e) {
-          // Continue
-        }
-      }
-
-      // Deduplicate channels by URL or name
-      const uniqueChannels: typeof allChannels = [];
-      const seen = new Set<string>();
-      for (const ch of allChannels) {
-        const key = `${ch.name}_${ch.url}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          uniqueChannels.push(ch);
-        }
-      }
-
-      res.json({ success: true, count: uniqueChannels.length, channels: uniqueChannels });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // Stream proxy endpoint to bypass CORS, Mixed Content, and enforce custom User-Agent (e.g. Dalvik/2.1.0)
-  app.all("/api/tv/stream-proxy", async (req, res) => {
-    // Handle CORS preflight
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range, User-Agent, X-Custom-UA, Authorization, Accept");
-    res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Type");
-
-    if (req.method === "OPTIONS") {
-      return res.sendStatus(204);
-    }
-
-    try {
-      const targetUrl = req.query.url as string;
-      const customUA =
-        (req.query.ua as string) ||
-        (req.headers["x-custom-ua"] as string) ||
-        "Dalvik/2.1.0 (Linux; U; Android 10; Build/QP1A.190711.020)";
-
-      if (!targetUrl || !targetUrl.startsWith("http")) {
-        return res.status(400).send("Invalid stream URL");
-      }
-
-      const forwardHeaders: Record<string, string> = {
-        "User-Agent": customUA,
-        "Accept": "*/*",
-      };
-
-      if (req.headers.range) {
-        forwardHeaders["Range"] = req.headers.range;
-      }
-
-      if (targetUrl.includes("fptplay") || targetUrl.includes("vips-livecdn") || targetUrl.includes("seenow.vn")) {
-        forwardHeaders["Origin"] = "https://fptplay.vn";
-        forwardHeaders["Referer"] = "https://fptplay.vn/";
-        forwardHeaders["X_ID"] = "Dalvik";
-      }
-
-      const upstreamRes = await fetch(targetUrl, {
-        method: req.method === "HEAD" ? "HEAD" : "GET",
-        headers: forwardHeaders,
-        redirect: "follow",
-      });
-
-      if (!upstreamRes.ok && upstreamRes.status !== 206) {
-        return res
-          .status(upstreamRes.status)
-          .send(`Upstream stream error (${upstreamRes.status})`);
-      }
-
-      let contentType = upstreamRes.headers.get("content-type") || "application/octet-stream";
-      if (targetUrl.includes(".mpd") && !contentType.includes("xml")) {
-        contentType = "application/dash+xml";
-      } else if (targetUrl.includes(".m3u8") && !contentType.includes("mpegurl")) {
-        contentType = "application/vnd.apple.mpegurl";
-      }
-
-      res.setHeader("Content-Type", contentType);
-
-      if (upstreamRes.headers.get("accept-ranges")) {
-        res.setHeader("Accept-Ranges", upstreamRes.headers.get("accept-ranges")!);
-      }
-      if (upstreamRes.headers.get("content-range")) {
-        res.setHeader("Content-Range", upstreamRes.headers.get("content-range")!);
-      }
-      if (upstreamRes.headers.get("content-length")) {
-        res.setHeader("Content-Length", upstreamRes.headers.get("content-length")!);
-      }
-
-      res.status(upstreamRes.status);
-
-      // Handle M3U8 Playlist rewriting so nested segment URLs pass through proxy with custom UA
-      if (contentType.includes("mpegurl") || targetUrl.includes(".m3u8")) {
-        const playlistText = await upstreamRes.text();
-        const baseUrl = new URL(targetUrl);
-        const lines = playlistText.split(/\r?\n/);
-        const rewritten = lines.map((line) => {
-          const trimmed = line.trim();
-          if (trimmed && !trimmed.startsWith("#")) {
-            try {
-              const absoluteSegmentUrl = new URL(trimmed, baseUrl.href).href;
-              return `/api/tv/stream-proxy?url=${encodeURIComponent(absoluteSegmentUrl)}&ua=${encodeURIComponent(customUA)}`;
-            } catch (e) {
-              return line;
-            }
-          }
-          return line;
-        });
-
-        return res.send(rewritten.join("\n"));
-      }
-
-      // Handle MPD XML manifest: inject <BaseURL> so DASH players properly resolve relative segment paths
-      if (contentType.includes("dash+xml") || contentType.includes("xml") || targetUrl.includes(".mpd")) {
-        const mpdText = await upstreamRes.text();
-        if (mpdText.includes("<MPD") && !mpdText.includes("<BaseURL>http")) {
-          const baseUrlStr = targetUrl.substring(0, targetUrl.lastIndexOf("/") + 1);
-          const injectedMpd = mpdText.replace(
-            /(<MPD[^>]*>)/i,
-            `$1\n  <BaseURL>${baseUrlStr}</BaseURL>`
-          );
-          return res.send(injectedMpd);
-        }
-        return res.send(mpdText);
-      }
-
-      // Stream binary data for DASH MPD segments (m4s/mp4), TS, AAC
-      const arrayBuffer = await upstreamRes.arrayBuffer();
-      return res.send(Buffer.from(arrayBuffer));
-    } catch (err: any) {
-      return res.status(500).send(`Stream Proxy Error: ${err.message}`);
-    }
-  });
-
-  // 4. ClearKey DRM Dynamic License Proxy & Key Resolver
-  app.all("/api/tv/clearkey-license", async (req, res) => {
-    // CORS headers for Web EME / Shaka Player
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Range, Accept, X-License-Url");
-    res.setHeader("Access-Control-Expose-Headers", "Content-Type");
-
-    if (req.method === "OPTIONS") {
-      return res.sendStatus(204);
-    }
-
-    try {
-      const targetUrl =
-        (req.query.url as string) ||
-        (req.headers["x-license-url"] as string) ||
-        "https://vmttv.dpdns.org/AutoKey/";
-
-      let rawBody = req.body;
-      let bodyText = "";
-      if (Buffer.isBuffer(rawBody)) {
-        bodyText = rawBody.toString("utf-8");
-      } else if (typeof rawBody === "object") {
-        bodyText = JSON.stringify(rawBody);
-      } else if (typeof rawBody === "string") {
-        bodyText = rawBody;
-      }
-
-      // If requested via GET with ?kid=... or query params
-      if (!bodyText && req.query.kid) {
-        bodyText = JSON.stringify({
-          kids: [req.query.kid],
-          type: "temporary",
-        });
-      }
-
-      // 1. Forward request to target license server with Dalvik UA
-      const upstreamRes = await fetch(targetUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 10; Build/QP1A.190711.020)",
-          Accept: "application/json, text/plain, */*",
-          Origin: "https://fptplay.vn",
-          Referer: "https://fptplay.vn/",
-        },
-        body: bodyText || undefined,
-      });
-
-      const responseText = await upstreamRes.text();
-      res.setHeader("Content-Type", "application/json");
-
-      if (upstreamRes.ok) {
-        try {
-          const parsed = JSON.parse(responseText);
-          // Standard W3C JWK ClearKey payload: {"keys": [...]}
-          if (parsed && Array.isArray(parsed.keys) && parsed.keys.length > 0) {
-            for (const keyItem of parsed.keys) {
-              if (keyItem.kid) {
-                keyItem.kid = keyItem.kid.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-              }
-              if (keyItem.k) {
-                keyItem.k = keyItem.k.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-              }
-            }
-            return res.json(parsed);
-          }
-        } catch (e) {
-          // not valid json
-        }
-      }
-
-      // Fallback: If target server returned empty keys or failed, try alternative formats
-      try {
-        if (bodyText) {
-          const reqObj = JSON.parse(bodyText);
-          if (reqObj && Array.isArray(reqObj.kids) && reqObj.kids.length > 0) {
-            const originalKid = reqObj.kids[0];
-            let altKid = "";
-            if (originalKid.length < 32) {
-              // base64url to hex
-              const clean = originalKid.replace(/-/g, "+").replace(/_/g, "/");
-              const buf = Buffer.from(clean, "base64");
-              altKid = buf.toString("hex");
-            } else if (originalKid.length === 32) {
-              // hex to base64url
-              const buf = Buffer.from(originalKid, "hex");
-              altKid = buf.toString("base64url");
-            }
-
-            if (altKid) {
-              const altBody = JSON.stringify({ kids: [altKid], type: "temporary" });
-              const retryRes = await fetch(targetUrl, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "User-Agent": "Dalvik/2.1.0",
-                  Origin: "https://fptplay.vn",
-                  Referer: "https://fptplay.vn/",
-                },
-                body: altBody,
-              });
-              if (retryRes.ok) {
-                const retryText = await retryRes.text();
-                const retryParsed = JSON.parse(retryText);
-                if (retryParsed && Array.isArray(retryParsed.keys) && retryParsed.keys.length > 0) {
-                  return res.json(retryParsed);
-                }
-              }
-            }
-          }
-        }
-      } catch (err2) {
-        // Continue
-      }
-
-      return res
-        .status(upstreamRes.status || 200)
-        .send(responseText || JSON.stringify({ keys: [] }));
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message, keys: [] });
-    }
   });
 
   // Direct InnerTube POST Client for Node.js backend
@@ -4968,7 +4695,7 @@ setTimeout(seedInitialCastIndex, 2000);
   }
 
   // 7. YouTube Real Search API Endpoint (Direct YouTube Live Extraction)
-  app.get("/api/youtube/search", async (req, res) => {
+  app.get("/api/youtube/search", requireAuth, async (req, res) => {
     // Continuation page request (infinite scroll)
     const contToken = String(req.query.token || "").trim();
     if (contToken) {
@@ -5141,7 +4868,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // 8. YouTube Channel Details & Channel Search Endpoint
-  app.get("/api/youtube/channel", async (req, res) => {
+  app.get("/api/youtube/channel", requireAuth, async (req, res) => {
     const channelId = String(req.query.id || "").trim();
     const channelName = String(req.query.name || "").trim();
     const query = String(req.query.q || req.query.query || "").trim();
@@ -5166,7 +4893,7 @@ setTimeout(seedInitialCastIndex, 2000);
     }
   });
 
-  app.get("/api/youtube/trending", async (req, res) => {
+  app.get("/api/youtube/trending", requireAuth, async (req, res) => {
     // Continuation page request (infinite scroll)
     const token = String(req.query.token || "").trim();
     const category = String(req.query.category || "all").trim();
@@ -5252,7 +4979,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // Autocomplete suggestions for YouTube search
-  app.get("/api/youtube/suggest", async (req, res) => {
+  app.get("/api/youtube/suggest", requireAuth, async (req, res) => {
     try {
       const query = String(req.query.q || "").trim();
       if (!query) {

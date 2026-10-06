@@ -1,6 +1,6 @@
 import { NavTab } from '../types';
 import { systemApiService } from './systemApiService';
-import { getFullApiUrl, isNativeApp } from './apiConfig';
+import { getFullApiUrl, apiFetch, isNativeApp } from './apiConfig';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 export type MangaSource = 'truyenqq' | 'otruyen' | 'mangadex' | 'cuutruyen';
@@ -275,7 +275,7 @@ async function fetchMangaApi(url: string): Promise<any> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12000);
-    const res = await fetch(fullUrl, {
+    const res = await apiFetch(fullUrl, {
       signal: controller.signal,
       headers: {
         'Accept': 'application/json, text/plain, */*',
@@ -347,7 +347,7 @@ async function fetchMangaApi(url: string): Promise<any> {
       const proxyUrl = getFullApiUrl(`/api/proxy/generic?url=${b64}`);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 12000);
-      const res = await fetch(proxyUrl, { signal: controller.signal });
+      const res = await apiFetch(proxyUrl, { signal: controller.signal });
       clearTimeout(timer);
       if (res.ok) {
         const data = await parseJsonResponseSafe(res);

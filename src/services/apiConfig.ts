@@ -1,4 +1,6 @@
 import { Capacitor } from '@capacitor/core';
+import { auth } from './firebase';
+import { signOut } from 'firebase/auth';
 
 export const isNativeApp = (): boolean => {
   if (typeof window === 'undefined') return false;
@@ -226,6 +228,161 @@ export async function safeFetchJson<T = any>(
     return data as T;
   } catch {
     clearTimeout(timer);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Authenticated backend fetch (Prompt 3 BƯỚC 6)
+// Helper dùng chung cho MỌI lời gọi tới /api/*: gắn ID token vào header
+// Authorization. Token CHỈ gắn khi gọi đúng backend của mình, không bao giờ
+// gắn vào request đi domain bên thứ ba.
+// 401 -> refresh token 1 lần -> vẫn 401 -> signOut + về màn hình đăng nhập.
+// ---------------------------------------------------------------------------
+
+let cachedIdToken: string | null = null;
+let cachedIdTokenAt = 0;
+const TOKEN_CACHE_MS = 10 * 60 * 1000;
+
+/** Lấy (và cache 10 phút) Firebase ID token của user hiện tại. */
+export async function getBackendToken(forceRefresh = false): Promise<string | null> {
+  try {
+    const user = auth.currentUser;
+    if (!user) {
+      // Hết phiên (logout/bị đá): xóa token cũ để request ẩn danh sau đó
+      // không đính token chết gây 401 → reload oan.
+      cachedIdToken = null;
+      cachedIdTokenAt = 0;
+      return null;
+    }
+    if (!forceRefresh && cachedIdToken && Date.now() - cachedIdTokenAt < TOKEN_CACHE_MS) {
+      return cachedIdToken;
+    }
+    cachedIdToken = await user.getIdToken(forceRefresh);
+    cachedIdTokenAt = Date.now();
+    return cachedIdToken;
+  } catch {
+    return cachedIdToken;
+  }
+}
+
+/** xhrSetup cho Hls.js: Hls tự tải /api/proxy/m3u8 bằng XHR nên phải gắn
+ *  Authorization tại đây (thẻ video/fetch thường không chen vào được).
+ *  Bỏ sót là phim không phát được (401). */
+export function hlsXhrSetup(xhr: XMLHttpRequest, _url: string): void {
+  try {
+    if (cachedIdToken) {
+      xhr.setRequestHeader('Authorization', `Bearer ${cachedIdToken}`);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function isBackendUrl(url: string): boolean {
+  if (url.startsWith('/api/')) return true;
+  try {
+    if (typeof window !== 'undefined') {
+      const base = getApiBaseUrl();
+      if (base && url.startsWith(base + '/api/')) return true;
+      const origin = window.location.origin;
+      if (origin && url.startsWith(origin + '/api/')) return true;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+function handleSessionExpired(): void {
+  try {
+    cachedIdToken = null;
+    cachedIdTokenAt = 0;
+    signOut(auth).catch(() => {});
+  } catch {
+    // ignore
+  } finally {
+    try {
+      window.location.reload();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export interface ApiFetchOptions {
+  /** Thời gian chờ (ms). Mặc định không tự timeout (giữ hành vi fetch cũ). */
+  timeoutMs?: number;
+  /** Tự refresh token 1 lần khi gặp 401. Mặc định true. */
+  retry401?: boolean;
+}
+
+export async function apiFetch(
+  pathOrUrl: string,
+  init: RequestInit = {},
+  opts: ApiFetchOptions = {}
+): Promise<Response> {
+  const url = pathOrUrl.startsWith('/api/') ? getFullApiUrl(pathOrUrl) : pathOrUrl;
+  const backend = isBackendUrl(url);
+  const { timeoutMs, retry401 = true } = opts;
+
+  const doFetch = async (token: string | null, signal?: AbortSignal): Promise<Response> => {
+    const headers = new Headers(init.headers || {});
+    if (backend && token && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+    return fetch(url, { ...init, headers, ...(signal ? { signal } : {}) });
+  };
+
+  const runWithTimeout = async (token: string | null, ms?: number): Promise<Response> => {
+    if (!ms) return doFetch(token);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    try {
+      if (init.signal) {
+        if (init.signal.aborted) controller.abort();
+        else init.signal.addEventListener('abort', () => controller.abort(), { once: true });
+      }
+      return await doFetch(token, controller.signal);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  let res = await runWithTimeout(backend ? await getBackendToken() : null, timeoutMs);
+  if (res.status === 401 && backend && retry401) {
+    const fresh = await getBackendToken(true);
+    res = await runWithTimeout(fresh, timeoutMs);
+    if (res.status === 401) {
+      // Chỉ đá về login khi request CÓ gửi token mà vẫn bị từ chối (= phiên thật
+      // sự hết hạn). Request ẩn danh (chưa login) ăn 401 là bình thường — trả
+      // response để caller đi fallback, TUYỆT ĐỐI không reload (reload ở đây
+      // gây vòng lặp vô hạn vì fetchHomeData chạy ngay khi mở app).
+      const sentToken = !!(fresh || cachedIdToken);
+      if (sentToken) {
+        handleSessionExpired();
+        throw new Error('Phiên đăng nhập đã hết. Đang đưa về màn hình đăng nhập...');
+      }
+    }
+  }
+  return res;
+}
+
+/** apiFetch + parse JSON. Trả null khi !ok (trừ 401 đã xử lý: đá về login). */
+export async function apiFetchJson<T = any>(
+  pathOrUrl: string,
+  init: RequestInit = {},
+  timeoutMs = 8000
+): Promise<T | null> {
+  try {
+    const res = await apiFetch(pathOrUrl, init, { timeoutMs });
+    if (!res.ok) return null;
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
+      return null;
+    }
+    return (await res.json().catch(() => null)) as T | null;
+  } catch {
     return null;
   }
 }

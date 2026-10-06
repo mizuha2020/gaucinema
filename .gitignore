@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+# Service account keys — TUYỆT ĐỐI không commit
+*-firebase-adminsdk-*.json
+firebase-adminsdk-*.json
+service-account*.json

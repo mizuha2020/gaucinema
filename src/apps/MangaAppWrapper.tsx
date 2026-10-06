@@ -7,7 +7,7 @@ interface MangaAppWrapperProps {
   activeProfile: UserProfile | null;
   profiles: UserProfile[];
   onSelectProfile: (profile: UserProfile) => void;
-  onSwitchApp: (app: 'cinema' | 'manga' | 'livetv' | 'youtube' | 'anime') => void;
+  onSwitchApp: (app: 'cinema' | 'manga' | 'youtube' | 'anime') => void;
   onSwitchProfileScreen: () => void;
   onOpenAdminDashboard?: () => void;
   onLogout?: () => void;

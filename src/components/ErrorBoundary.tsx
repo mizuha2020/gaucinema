@@ -1,5 +1,6 @@
 import React, { Component, ReactNode, ErrorInfo } from 'react';
 import { RefreshCw, AlertTriangle } from 'lucide-react';
+import { authService } from '../services/authService';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -29,7 +30,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   private handleReset = () => {
     try {
-      localStorage.removeItem('qtb_logged_in_account_v1');
+      // Firebase Auth lưu phiên trong IndexedDB — phải signOut mới hết phiên.
+      authService.logout().catch(() => {});
       localStorage.removeItem('qtb_current_active_profile_v1');
     } catch {
       // ignore

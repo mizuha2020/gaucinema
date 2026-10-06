@@ -51,7 +51,7 @@ interface SimplePlayerProps {
 
 import { getMirrorUrls } from '../utils/mirrorUrls';
 import { loadCleanedM3u8Url, revokeBlobUrl } from '../utils/m3u8Cleaner';
-import { getFullApiUrl, verifyBackendUrl } from '../services/apiConfig';
+import { getFullApiUrl, apiFetch, getBackendToken, hlsXhrSetup, verifyBackendUrl } from '../services/apiConfig';
 import { resolveImdbId } from '../utils/introResolve';
 
 type IntroSegment = { start_sec: number; end_sec: number; start_ms: number; end_ms: number } | null;
@@ -720,7 +720,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
         for (let attempt = 0; attempt < 2 && !cancelled; attempt++) {
           try {
             // eslint-disable-next-line no-await-in-loop
-            const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal as any, cache: 'no-store' as RequestCache });
+            const r = await apiFetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal as any, cache: 'no-store' as RequestCache });
             if (r.status === 404) { data = { imdb_id: imdbId, season, episode: epNum, intro: null, recap: null, outro: null } as any; break; }
             if (!r.ok) throw new Error(String(r.status));
             // eslint-disable-next-line no-await-in-loop
@@ -824,6 +824,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
       const isLocalHls = localVideoUrl.includes('.m3u8');
       if (isLocalHls && Hls.isSupported()) {
+        void getBackendToken(); // prewarm ID token cho hlsXhrSetup
         const hls = new Hls({
           enableWorker: true,
           backBufferLength: 30,
@@ -835,6 +836,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
           fragLoadingTimeOut: 20000,
           startLevel: -1,
           capLevelToPlayerSize: true,
+          xhrSetup: hlsXhrSetup,
         });
         hlsRef.current = hls;
         hls.loadSource(localVideoUrl);
@@ -907,6 +909,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     };
 
     if (Hls.isSupported()) {
+      void getBackendToken(); // prewarm ID token cho hlsXhrSetup
       const hls = new Hls({
         enableWorker: true,
         backBufferLength: 30,
@@ -918,6 +921,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
         fragLoadingTimeOut: 20000,
         startLevel: -1,
         capLevelToPlayerSize: true,
+        xhrSetup: hlsXhrSetup,
       });
       hlsRef.current = hls;
 
@@ -1021,6 +1025,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
     const attachPreview = (src: string) => {
       if (cancelled) return;
       if (Hls.isSupported()) {
+        void getBackendToken(); // prewarm ID token cho hlsXhrSetup
         const hls = new Hls({
           enableWorker: true,
           backBufferLength: 10,
@@ -1032,6 +1037,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
           fragLoadingTimeOut: 15000,
           startLevel: 0, // lowest quality for fast preview
           capLevelToPlayerSize: true,
+          xhrSetup: hlsXhrSetup,
         });
         previewHlsRef.current = hls;
         hls.loadSource(src);

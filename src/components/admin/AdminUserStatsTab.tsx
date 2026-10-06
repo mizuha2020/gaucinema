@@ -13,7 +13,6 @@ import {
   Clock,
   Film,
   BookOpen,
-  Tv,
   Youtube,
   Search,
   RefreshCw,
@@ -150,7 +149,7 @@ export const AdminUserStatsTab: React.FC<AdminUserStatsTabProps> = ({
             </div>
           </div>
           <p className="text-[11px] text-slate-400 mt-4 pt-3 border-t border-slate-800/60">
-            Phim, Manga, LiveTV và YouTube
+            Phim, Manga và YouTube
           </p>
         </div>
 
@@ -249,7 +248,6 @@ export const AdminUserStatsTab: React.FC<AdminUserStatsTabProps> = ({
           {filteredUsers.map((user) => {
             const movieSec = user.watchSecondsByMedia?.movie || 0;
             const mangaSec = user.watchSecondsByMedia?.manga || 0;
-            const tvSec = user.watchSecondsByMedia?.livetv || 0;
             const ytSec = user.watchSecondsByMedia?.youtube || 0;
             const totalWatchSec = getEffectiveTotalWatch(user);
 
@@ -316,7 +314,7 @@ export const AdminUserStatsTab: React.FC<AdminUserStatsTabProps> = ({
                       <span className="font-mono text-slate-300">{user.totalSessions || 1} phiên</span>
                     </div>
 
-                    <div className="grid grid-cols-4 gap-1.5 text-center">
+                    <div className="grid grid-cols-3 gap-1.5 text-center">
                       <div className="bg-[#131f37] border border-sky-900/30 rounded-lg p-1.5">
                         <p className="text-[10px] text-sky-400 font-bold flex items-center justify-center gap-0.5">
                           <Film className="w-2.5 h-2.5" /> Phim
@@ -332,15 +330,6 @@ export const AdminUserStatsTab: React.FC<AdminUserStatsTabProps> = ({
                         </p>
                         <p className="text-[10px] text-white font-bold truncate mt-0.5">
                           {formatDurationText(mangaSec)}
-                        </p>
-                      </div>
-
-                      <div className="bg-[#131f37] border border-amber-900/30 rounded-lg p-1.5">
-                        <p className="text-[10px] text-amber-400 font-bold flex items-center justify-center gap-0.5">
-                          <Tv className="w-2.5 h-2.5" /> TV
-                        </p>
-                        <p className="text-[10px] text-white font-bold truncate mt-0.5">
-                          {formatDurationText(tvSec)}
                         </p>
                       </div>
 

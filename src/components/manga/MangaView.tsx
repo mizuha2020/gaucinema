@@ -48,7 +48,7 @@ interface MangaViewProps {
   profiles?: UserProfile[];
   onSelectProfile?: (profile: UserProfile) => void;
   onSwitchApp?: (
-    app: "cinema" | "manga" | "livetv" | "youtube" | "anime",
+    app: "cinema" | "manga" | "youtube" | "anime",
   ) => void;
   onSwitchProfileScreen?: () => void;
   onOpenAdminDashboard?: () => void;

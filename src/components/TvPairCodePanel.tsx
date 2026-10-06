@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Smartphone, RefreshCw, X, CheckCircle2, Loader2 } from 'lucide-react';
 import { tvPairService, TV_PAIR_TTL_MS, type TvPairDoc } from '../services/tvPairService';
-import { authService } from '../services/authService';
 import type { Account } from '../types';
 
 interface TvPairCodePanelProps {
@@ -77,7 +76,6 @@ export const TvPairCodePanel: React.FC<TvPairCodePanelProps> = ({ onPaired, onBa
         setPhase('fetching');
         try {
           const acc = await tvPairService.consumeApproved(pair.code);
-          authService.saveSessionAccount(acc);
           onPaired(acc);
         } catch (e: any) {
           doneRef.current = false;

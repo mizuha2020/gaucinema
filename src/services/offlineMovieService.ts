@@ -1,5 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
+import { apiFetch } from './apiConfig';
 import { Movie, MovieEpisode, EpisodeServer } from '../types';
 
 // Thời gian lưu: 7 ngày
@@ -136,7 +137,8 @@ async function downloadFileWithProgress(
     }
   }
   // Fallback: fetch + writeFile (may OOM for large files, but ok for demo)
-  const res = await fetch(url);
+  // apiFetch chỉ gắn token khi tải qua backend /api/*, URL CDN ngoài giữ nguyên.
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error(`Fetch failed ${res.status}`);
   const total = Number(res.headers.get('content-length') || 0);
   const reader = res.body?.getReader();
@@ -197,7 +199,7 @@ async function downloadHls(
   onProgress?: (pct: number) => void
 ): Promise<string> {
   await ensureDir(dirPath);
-  const m3u8Text = await fetch(hlsUrl).then(r => {
+  const m3u8Text = await apiFetch(hlsUrl).then(r => {
     if (!r.ok) throw new Error(`m3u8 fetch failed ${r.status}`);
     return r.text();
   });

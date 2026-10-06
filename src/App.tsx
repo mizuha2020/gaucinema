@@ -17,7 +17,7 @@ import { firestoreStorage } from "./services/firestoreStorage";
 import { movieApi } from "./services/movieApi";
 import { presenceService } from "./services/presenceService";
 import { appConfigService } from "./services/appConfigService";
-import { verifyBackendUrl } from "./services/apiConfig";
+import { verifyBackendUrl, getBackendToken } from "./services/apiConfig";
 import { useTabScroll } from "./hooks/useTabScroll";
 import { LoginScreen } from "./components/LoginScreen";
 import { AdminDashboard } from "./components/AdminDashboard";
@@ -36,7 +36,6 @@ import { MyListView } from "./components/MyListView";
 import { HistoryView } from "./components/HistoryView";
 import { OfflineSavedView } from "./components/OfflineSavedView";
 import { MangaAppWrapper } from "./apps/MangaAppWrapper";
-import { LiveTvAppWrapper } from "./apps/LiveTvAppWrapper";
 import { AppSwitcherLoading } from "./components/AppSwitcherLoading";
 import { ProfileSwitchLoader } from "./components/ProfileSwitchLoader";
 import { MobileBottomNav } from "./components/MobileBottomNav";
@@ -97,10 +96,26 @@ export default function App() {
     } catch {}
   }, []);
   // Gatekeeper state...
-  const [currentAccount, setCurrentAccount] = useState<Account | null>(() =>
-    authService.getSessionAccount(),
-  );
+  // Nguồn sự thật duy nhất của phiên đăng nhập là Firebase Auth
+  // (onAuthStateChanged). Không còn session JSON trong localStorage.
+  const [currentAccount, setCurrentAccount] = useState<Account | null>(null);
+  const [authReady, setAuthReady] = useState<boolean>(false);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [showAdminDashboard, setShowAdminDashboard] = useState<boolean>(false);
+
+  useEffect(() => {
+    const unsub = authService.subscribeAuth((account, notice) => {
+      setCurrentAccount(account);
+      setAuthNotice(notice || null);
+      setAuthReady(true);
+      if (!account) {
+        setShowAdminDashboard(false);
+      } else {
+        try { void getBackendToken(); } catch { /* ignore */ }
+      }
+    });
+    return unsub;
+  }, []);
 
   // App Switcher State
   const [activeApp, setActiveApp] = useState<ActiveApp>(() => {
@@ -108,8 +123,7 @@ export default function App() {
       const savedApp = localStorage.getItem("gau_active_app");
       if (
         savedApp === "cinema" ||
-        savedApp === "manga" ||
-        savedApp === "livetv"
+        savedApp === "manga"
       ) {
         return savedApp as ActiveApp;
       }
@@ -156,11 +170,12 @@ export default function App() {
   >({});
 
   useEffect(() => {
+    if (!currentAccount) return;
     const unsub = appConfigService.subscribe((cfg) => {
       setAppConfig(cfg);
     });
     return unsub;
-  }, []);
+  }, [currentAccount]);
 
   // Auto-redirect when active app is disabled by admin
   const maintenanceTimerRef = React.useRef<ReturnType<
@@ -187,8 +202,6 @@ export default function App() {
       const label =
         activeApp === "manga"
           ? "Gấu Manga"
-          : activeApp === "livetv"
-          ? "Gấu LiveTV"
           : activeApp;
       setMaintenanceMessage(
         `${label} đang được bảo trì. Bạn sẽ được chuyển về Cinema sau 5 phút.`,
@@ -477,11 +490,10 @@ export default function App() {
     setDialog(null);
   };
 
-  // Bootstrap admin on initial start
+  // Bootstrap on initial start
+  // NOTE: Không còn tự tạo admin trong code — tài khoản admin đầu tiên được tạo
+  // tay trên Firebase Console (xem runbook Bước 8). Document id PHẢI là Auth uid.
   useEffect(() => {
-    authService.bootstrapAdminAccount().catch((err) => {
-      void 0;
-    });
     // Native app: kiểm tra backend còn sống, chết thì tự đổi sang cloud (tránh APK bake URL cũ)
     verifyBackendUrl().catch(() => {});
   }, []);
@@ -490,7 +502,7 @@ export default function App() {
   const loadAccountProfiles = useCallback(async (account: Account) => {
     setIsLoadingProfiles(true);
     try {
-      const profs = await firestoreStorage.getProfiles(account.id);
+      const profs = await firestoreStorage.getProfiles(account.id, account.displayName || account.username);
       setProfiles(profs);
 
       const savedActiveId = firestoreStorage.getActiveProfileId(account.id);
@@ -593,7 +605,7 @@ export default function App() {
     return unsub;
   }, [currentAccount?.id, activeProfile?.id]);
 
-  // Navigate to cinema tab from sub-apps (manga/livetv profile menu)
+  // Navigate to cinema tab from sub-apps (manga profile menu)
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail as NavTab;
@@ -921,11 +933,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Chưa đăng nhập thì không gọi backend (tránh 401 + tốn lượt đọc vô ích).
+    if (!currentAccount) return;
     fetchHomeData();
-  }, [fetchHomeData]);
+  }, [fetchHomeData, currentAccount]);
 
   // Hero Banner: lấy từ TMDB Popular (en-US, region VN) đã validate tồn tại trong API phim hiện tại + subscribe RTDB realtime
   useEffect(() => {
+    if (!currentAccount) return;
     movieApi.getTmdbHeroPopular().then((items) => {
       if (items && items.length) setHeroTmdbMovies(items);
     }).catch(() => {});
@@ -939,10 +954,11 @@ export default function App() {
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [currentAccount]);
 
   // Netflix Top 10: Subscribe RTDB realtime để luôn cập nhật dữ liệu mới nhất
   useEffect(() => {
+    if (!currentAccount) return;
     const unsubscribe = movieApi.subscribeNetflixTop10((res) => {
       if (res?.movies?.length) {
         setMovieCollection("netflixTop10Movies", res.movies);
@@ -955,12 +971,15 @@ export default function App() {
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [currentAccount]);
 
   // Auth Handlers
   const handleLoginSuccess = (account: Account) => {
     setCurrentAccount(account);
+    setAuthNotice(null);
     setShowAdminDashboard(false);
+    // Prewarm ID token để lần gọi /api/* và Hls đầu tiên có sẵn token
+    try { void getBackendToken(); } catch { /* ignore */ }
     showToast(`Chào mừng @${account.username} đến với Gấu Cinema!`);
   };
 
@@ -968,8 +987,9 @@ export default function App() {
     if (currentAccount) {
       firestoreStorage.clearActiveProfileId(currentAccount.id);
     }
-    authService.logout();
+    authService.logout().catch(() => {});
     setCurrentAccount(null);
+    setAuthNotice(null);
     setActiveProfile(null);
     setShowProfileSelector(true);
     setShowAdminDashboard(false);
@@ -1190,7 +1210,7 @@ export default function App() {
       } else if (showProfileSelector && currentAccount && activeProfile) {
         setShowProfileSelector(false);
       } else if (!e.state) {
-        // Don't show exit when in manga/livetv app; MangaView handles its own back stack
+        // Don't show exit when in manga app; MangaView handles its own back stack
         if (activeApp !== "cinema") {
           return;
         }
@@ -1220,7 +1240,7 @@ export default function App() {
             window.history.back();
             return;
           }
-          // When not in cinema app, don't show cinema exit popup; manga/livetv handle their own back
+          // When not in cinema app, don't show cinema exit popup; manga handles its own back
           if (activeApp !== "cinema") {
             // If manga has no overlay, let browser handle or do nothing; avoid showing cinema exit
             if (!curState || !curState.mangaView) return;
@@ -1832,9 +1852,19 @@ export default function App() {
     ],
   );
 
+  // 0. Đang khôi phục phiên Firebase Auth -> chờ, không flash màn hình login
+  if (!authReady) {
+    return (
+      <div className="min-h-screen w-full bg-[#070b16] flex flex-col items-center justify-center gap-3">
+        <div className="w-10 h-10 rounded-full border-2 border-sky-500/30 border-t-sky-400 animate-spin" />
+        <p className="text-xs text-slate-400 font-medium">Đang khôi phục phiên đăng nhập...</p>
+      </div>
+    );
+  }
+
   // 1. GATEKEEPER: Not Logged In -> Show LoginScreen Only
   if (!currentAccount) {
-    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+    return <LoginScreen onLoginSuccess={handleLoginSuccess} authNotice={authNotice} />;
   }
 
   // 2. ADMIN DASHBOARD SCREEN
@@ -1849,6 +1879,15 @@ export default function App() {
   }
 
   let appContent = null;
+
+  // Banner cảnh báo khi tài khoản còn dưới 7 ngày sử dụng
+  const expiryInfo = authService.getExpiryInfo(currentAccount);
+  const expiryBanner = expiryInfo.expiringSoon ? (
+    <div className="mx-3 mt-3 mb-1 p-3 rounded-2xl bg-amber-950/80 border border-amber-700/60 text-amber-200 text-xs font-medium text-center shadow-lg">
+      Tài khoản của bạn sẽ hết hạn vào ngày {expiryInfo.dateStr} (còn {expiryInfo.daysLeft} ngày). Liên hệ quản trị
+      viên để gia hạn.
+    </div>
+  ) : null;
 
   const {
     newUpdated,
@@ -1870,7 +1909,9 @@ export default function App() {
 
   if (activeApp === "manga") {
     appContent = (
-      <MangaAppWrapper
+      <>
+        {expiryBanner}
+        <MangaAppWrapper
         currentAccount={currentAccount}
         activeProfile={activeProfile}
         profiles={profiles}
@@ -1882,25 +1923,12 @@ export default function App() {
         }
         onLogout={handleLogoutRequest}
       />
-    );
-  } else if (activeApp === "livetv") {
-    appContent = (
-      <LiveTvAppWrapper
-        currentAccount={currentAccount}
-        activeProfile={activeProfile}
-        profiles={profiles}
-        onSelectProfile={handleQuickSwitchProfile}
-        onSwitchApp={handleSwitchApp}
-        onSwitchProfileScreen={() => setShowProfileSelector(true)}
-        onOpenAdminDashboard={
-          currentAccount.role === "admin" ? openAdminDashboard : undefined
-        }
-        onLogout={handleLogoutRequest}
-      />
+      </>
     );
   } else {
     appContent = (
       <div className="min-h-screen bg-[#070b16] text-white font-sans selection:bg-blue-600 selection:text-white">
+        {expiryBanner}
         {/* 1. Who's Watching Profile Selector Screen */}
         <AnimatePresence mode="wait">
           {showProfileSelector && (
@@ -2617,14 +2645,6 @@ export default function App() {
                       onOpenDetail={(m) => openDetailModal(m)}
                       onShowToast={showToast}
                     />
-                  </div>
-                )}
-
-                {/* LIVE TV & SPORTS TAB (Now handled by Sub-App, but keep fallback) */}
-                {activeTab === "tv-live" && (
-                  <div className="pt-20 text-center text-slate-400">
-                    Vui lòng sử dụng tính năng App Switcher để chuyển sang Gấu
-                    LiveTV
                   </div>
                 )}
 

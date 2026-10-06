@@ -1,0 +1,30 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "rooms": {
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "wtPresence": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth.uid === $uid"
+      }
+    },
+    "activeSessions": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "system_cache": {
+      ".read": "auth != null",
+      ".write": false
+    },
+    "appConfig": {
+      ".read": "auth != null",
+      ".write": false
+    }
+  }
+}

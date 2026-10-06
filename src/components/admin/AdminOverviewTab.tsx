@@ -10,7 +10,6 @@ import {
   Users,
   Film,
   BookOpen,
-  Tv,
   Clock,
   Radio,
   Sparkles,
@@ -44,7 +43,7 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
   const [activeSessions, setActiveSessions] = useState<ActiveViewerSession[]>([]);
   const [userStats, setUserStats] = useState<UserStats[]>([]);
   const [apis, setApis] = useState<SystemApiEndpoint[]>([]);
-  const [selectedSessionType, setSelectedSessionType] = useState<'all' | 'movie' | 'manga' | 'tv' | 'youtube'>('all');
+  const [selectedSessionType, setSelectedSessionType] = useState<'all' | 'movie' | 'manga' | 'youtube'>('all');
   const [isLoadingStats, setIsLoadingStats] = useState(true);
 
   // Selected user for dedicated detail page
@@ -118,12 +117,10 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
 
   const movieSessions = activeSessions.filter((s) => s.type === 'watching_movie');
   const mangaSessions = activeSessions.filter((s) => s.type === 'reading_manga');
-  const tvSessions = activeSessions.filter((s) => s.type === 'watching_tv');
 
   const filteredSessions = activeSessions.filter((s) => {
     if (selectedSessionType === 'movie') return s.type === 'watching_movie';
     if (selectedSessionType === 'manga') return s.type === 'reading_manga';
-    if (selectedSessionType === 'tv') return s.type === 'watching_tv';
     return true;
   });
 
@@ -217,7 +214,7 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
       {subTab === 'live' && (
         <div className="space-y-6">
           {/* Top Stat Banner: Live Active Viewers and Real-time Pulse */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {/* Total Live Viewers */}
             <div className="bg-[#0f172a] border border-blue-900/40 rounded-2xl p-5 shadow-lg relative overflow-hidden">
               <div className="flex items-center justify-between">
@@ -282,30 +279,6 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
                 </div>
                 <div className="w-12 h-12 rounded-2xl bg-emerald-950/60 border border-emerald-800/60 flex items-center justify-center text-emerald-400 shrink-0">
                   <BookOpen className="w-6 h-6" />
-                </div>
-              </div>
-              <div className="mt-4 pt-3 border-t border-slate-800/60 text-xs text-slate-500">
-                Bấm để lọc danh sách bên dưới
-              </div>
-            </div>
-
-            {/* LiveTV Viewers */}
-            <div
-              onClick={() => setSelectedSessionType(selectedSessionType === 'tv' ? 'all' : 'tv')}
-              className={`cursor-pointer bg-[#0f172a] border rounded-2xl p-5 shadow-lg transition-all ${
-                selectedSessionType === 'tv' ? 'border-amber-500 ring-2 ring-amber-500/20' : 'border-slate-800 hover:border-slate-700'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Đang Xem LiveTV</p>
-                  <div className="flex items-baseline gap-2 mt-1">
-                    <h3 className="text-3xl font-black text-amber-400">{tvSessions.length}</h3>
-                    <span className="text-xs text-slate-400">phiên</span>
-                  </div>
-                </div>
-                <div className="w-12 h-12 rounded-2xl bg-amber-950/60 border border-amber-800/60 flex items-center justify-center text-amber-400 shrink-0">
-                  <Tv className="w-6 h-6" />
                 </div>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-800/60 text-xs text-slate-500">
@@ -378,16 +351,6 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
                 >
                   Manga ({mangaSessions.length})
                 </button>
-                <button
-                  onClick={() => setSelectedSessionType('tv')}
-                  className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
-                    selectedSessionType === 'tv'
-                      ? 'bg-amber-600 text-white shadow'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  LiveTV ({tvSessions.length})
-                </button>
               </div>
             </div>
 
@@ -399,7 +362,7 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
                 </div>
                 <p className="text-sm font-semibold text-slate-300">Chưa có ai đang xem</p>
                 <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  Khi có người xem phim, đọc truyện hoặc xem TV, thông tin sẽ hiện ở đây.
+                  Khi có người xem phim hoặc đọc truyện, thông tin sẽ hiện ở đây.
                 </p>
               </div>
             ) : (
@@ -407,7 +370,6 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
                 {filteredSessions.map((session) => {
                   const isMovie = session.type === 'watching_movie';
                   const isManga = session.type === 'reading_manga';
-                  const isTv = session.type === 'watching_tv';
 
                   // Calculate progress percentage
                   let progress = session.progressPercent ?? 0;
@@ -448,11 +410,6 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
                           {isManga && (
                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 shrink-0 flex items-center gap-1">
                               <BookOpen className="w-3 h-3" /> Manga
-                            </span>
-                          )}
-                          {isTv && (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 shrink-0 flex items-center gap-1">
-                              <Tv className="w-3 h-3" /> LiveTV
                             </span>
                           )}
                         </div>
@@ -506,16 +463,6 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
                             <span className="text-slate-400">Trang đọc:</span>
                             <span className="font-bold text-emerald-400">
                               {session.currentTime || 1} / {session.duration || '?'} trang
-                            </span>
-                          </div>
-                        )}
-
-                        {isTv && (
-                          <div className="bg-[#131f37]/60 p-2.5 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
-                            <span className="text-slate-400">Trạng thái phát:</span>
-                            <span className="font-bold text-amber-400 flex items-center gap-1.5">
-                              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-                              Đang phát trực tiếp
                             </span>
                           </div>
                         )}

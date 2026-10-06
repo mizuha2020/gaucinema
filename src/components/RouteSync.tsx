@@ -8,7 +8,7 @@ interface RouteSyncProps {
   expected: ParsedRoute;
   /** Áp dụng URL -> state khi lệch (back/forward/truy cập trực tiếp). */
   onRoute: (route: ParsedRoute) => void;
-  /** Chỉ đồng bộ ở app cinema; manga/livetv giữ stack riêng. */
+  /** Chỉ đồng bộ ở app cinema; manga giữ stack riêng. */
   activeApp: string;
 }
 

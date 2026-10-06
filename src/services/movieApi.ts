@@ -1,5 +1,5 @@
 import { Movie, MovieDetailResponse, MovieListResponse, EpisodeServer, ApiSource } from '../types';
-import { getFullApiUrl, safeFetchJson, isNativeApp } from './apiConfig';
+import { getFullApiUrl, safeFetchJson, apiFetch, apiFetchJson, isNativeApp } from './apiConfig';
 import { systemApiService } from './systemApiService';
 import { db, rtdb, sanitizeData } from './firebase';
 import { ref, get, set, onValue } from 'firebase/database';
@@ -249,7 +249,7 @@ export async function getTmdbAssets(tmdbId: string | number, tmdbType?: string):
   if (!isNative) {
     try {
       const fullUrl = getFullApiUrl(`/api/tmdb/backdrop/${id}${normalizedType ? `?type=${normalizedType}` : ''}`);
-      const data = await safeFetchJson<{ backdropUrl?: string; logoUrl?: string }>(fullUrl, {}, 2500);
+      const data = await apiFetchJson<{ backdropUrl?: string; logoUrl?: string }>(fullUrl, {}, 2500);
       if (data) {
         backdropUrl = data.backdropUrl || null;
         logoUrl = data.logoUrl || null;
@@ -391,7 +391,7 @@ export async function getTmdbTrending(): Promise<TmdbTrendingItem[]> {
     const fullUrl = getFullApiUrl("/api/tmdb/trending");
     const isLocalhostApk = typeof window !== 'undefined' && window.location.hostname === 'localhost' && !fullUrl.startsWith('http');
     if (!isLocalhostApk) {
-      const data = await safeFetchJson<{ results?: any[] }>(fullUrl, {}, 3000);
+      const data = await apiFetchJson<{ results?: any[] }>(fullUrl, {}, 3000);
       if (data?.results && Array.isArray(data.results) && data.results.length > 0) {
         const items: TmdbTrendingItem[] = data.results.map((r: any) => ({
           tmdbId: String(r.id || r.tmdbId || ''),
@@ -448,7 +448,7 @@ export async function tmdbFetch<T = any>(tmdbPath: string, params: Record<string
     const fullUrl = getFullApiUrl(`/api/tmdb/v3/${cleanPath}${qs ? `?${qs}` : ""}`);
     const isLocalhostApk = typeof window !== 'undefined' && window.location.hostname === 'localhost' && !fullUrl.startsWith('http');
     if (!isLocalhostApk) {
-      const data = await safeFetchJson<T>(fullUrl, {}, 3500);
+      const data = await apiFetchJson<T>(fullUrl, {}, 3500);
       if (data) return data;
     }
   } catch {}
@@ -761,7 +761,7 @@ export async function getTmdbHeroPopular(): Promise<Movie[]> {
     const fullUrl = getFullApiUrl(`/api/tmdb/hero-popular?t=${nowTs}`);
     const isLocalhostApk = typeof window !== 'undefined' && window.location.hostname === 'localhost' && !fullUrl.startsWith('http');
     if (!isLocalhostApk) {
-      const data = await safeFetchJson<{ items: any[] }>(fullUrl, { cache: 'no-store' as RequestCache }, 4000);
+      const data = await apiFetchJson<{ items: any[] }>(fullUrl, { cache: 'no-store' as RequestCache }, 4000);
       if (data?.items && Array.isArray(data.items) && data.items.length >= 8) {
         const normalized = data.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
         saveCacheToFirebase('hero_banner', { items: data.items, lastUpdated: nowTs });
@@ -988,7 +988,7 @@ async function fetchKKPhim<T>(endpoint: string, params?: Record<string, any>): P
 
   // 1. Try proxy
   try {
-    const res = await fetch(getFullApiUrl(`/api/proxy/kkphim/${clean}${query}`));
+    const res = await apiFetch(`/api/proxy/kkphim/${clean}${query}`);
     if (res.ok) {
       const data = await res.json();
       if (data && (data.status === true || data.items || data.data?.items || data.movie)) return data;
@@ -1014,7 +1014,7 @@ async function fetchOPhim<T>(endpoint: string, params?: Record<string, any>): Pr
 
   // 1. Try proxy
   try {
-    const res = await fetch(getFullApiUrl(`/api/proxy/ophim/${clean}${query}`));
+    const res = await apiFetch(`/api/proxy/ophim/${clean}${query}`);
     if (res.ok) {
       const data = await res.json();
       if (data && (data.status === true || data.status === 'success' || data.items || data.data?.items || data.movie)) return data;
@@ -1040,7 +1040,7 @@ async function fetchNguonC<T>(endpoint: string, params?: Record<string, any>): P
 
   // 1. Try proxy (server now returns 200 with empty items for 404 genres to avoid console spam)
   try {
-    const res = await fetch(getFullApiUrl(`/api/proxy/nguonc/${clean}${query}`));
+    const res = await apiFetch(`/api/proxy/nguonc/${clean}${query}`);
     if (res.ok) {
       const data = await res.json();
       if (data && (data.status === 'success' || data.status === true || data.items || data.movie)) return data;
@@ -1566,7 +1566,7 @@ export const movieApi = {
 
       // Smart Aggregator & Cast Search via server proxy
       try {
-        const res = await fetch(getFullApiUrl(`/api/proxy/search-all?keyword=${encodeURIComponent(kw)}`));
+        const res = await apiFetch(`/api/proxy/search-all?keyword=${encodeURIComponent(kw)}`);
         if (res.ok) {
           const payload = await res.json();
           if (payload?.items && Array.isArray(payload.items) && payload.items.length > 0) {
@@ -1794,7 +1794,7 @@ export const movieApi = {
       // 4. General fallback proxy if still not found
       if (!data || !data.movie) {
         try {
-          const res = await fetch(getFullApiUrl(`/api/proxy/movie/phim/${slug}`));
+          const res = await apiFetch(`/api/proxy/movie/phim/${slug}`);
           if (res.ok) data = await res.json();
         } catch {}
       }
@@ -1914,7 +1914,7 @@ export const movieApi = {
       const fullUrl = getFullApiUrl(`/api/top10/netflix-vn?t=${nowTs}`);
       const isLocalhostApk = typeof window !== 'undefined' && window.location.hostname === 'localhost' && !fullUrl.startsWith('http');
       if (!isLocalhostApk) {
-        const json = await safeFetchJson<{ status?: boolean; data?: any }>(fullUrl, { cache: 'no-store' as RequestCache }, 4000);
+        const json = await apiFetchJson<{ status?: boolean; data?: any }>(fullUrl, { cache: 'no-store' as RequestCache }, 4000);
         if (json?.data?.movies?.length >= 6 || json?.data?.tvShows?.length >= 6) {
           const rawMovies = json.data.movies || [];
           const rawTv = json.data.tvShows || [];
@@ -1984,7 +1984,7 @@ export async function getHeroAdminList(): Promise<{ success: boolean; items: Mov
   // 2. Try backend endpoint
   try {
     const fullUrl = getFullApiUrl("/api/hero/admin/list");
-    const res = await safeFetchJson<{ success: boolean; items: any[]; total: number; lastUpdated: number }>(fullUrl, {}, 4000);
+    const res = await apiFetchJson<{ success: boolean; items: any[]; total: number; lastUpdated: number }>(fullUrl, {}, 4000);
     if (res?.items && Array.isArray(res.items)) {
       const items = res.items.map((m: any) => normalizeMovieItem(m, (m.source as ApiSource) || 'kkphim'));
       return { success: true, items, total: res.total, lastUpdated: res.lastUpdated };
@@ -2076,7 +2076,7 @@ export async function selectHeroAsset(
     // Also notify server endpoint to update memory cache
     try {
       const fullUrl = getFullApiUrl("/api/hero/select-asset");
-      await fetch(fullUrl, {
+      await apiFetch(fullUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ slug, assetType, selectedUrl }),

@@ -17,7 +17,6 @@ function mapToSessionType(mediaType: MediaActivityType): ActiveViewerSession['ty
   switch (mediaType) {
     case 'movie': return 'watching_movie';
     case 'manga': return 'reading_manga';
-    case 'livetv': return 'watching_tv';
     case 'youtube': return 'browsing';
     case 'anime': return 'watching_movie';
     case 'browsing': return 'browsing';

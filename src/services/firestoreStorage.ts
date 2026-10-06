@@ -11,13 +11,14 @@ import {
   limit,
   onSnapshot,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, isFirestoreQuotaExhausted, OperationType, sanitizeData } from './firebase';
+import { db, handleFirestoreError, isFirestoreQuotaExhausted, nsKey, OperationType, sanitizeData } from './firebase';
 import { AdminNotification, CustomAvatar, MyListItem, UserProfile, WatchHistoryItem, YouTubeVideo } from '../types';
 import { MangaItem, MangaHistoryItem } from './mangaApi';
 import { DEFAULT_AVATARS } from './authService';
 
-const ACTIVE_PROFILE_KEY = 'qtb_active_profile_id_v2';
-const PROFILES_CACHE_PREFIX = 'qtb_profiles_cache_v2_';
+const ACTIVE_PROFILE_KEY = nsKey('qtb_active_profile_id_v2');
+const PROFILES_CACHE_PREFIX = nsKey('qtb_profiles_cache_v2_');
+const AVATARS_CACHE_KEY = nsKey('qtb_custom_avatars_cache');
 
 function getLocalJson<T>(key: string, fallback: T): T {
   try {
@@ -63,16 +64,21 @@ function saveLocalProfilesCache(accountId: string, profiles: UserProfile[]): voi
 export const firestoreStorage = {
   // --- PROFILES MANAGEMENT (Max 5 per account) ---
 
-  async getProfiles(accountId: string): Promise<UserProfile[]> {
+  async getProfiles(accountId: string, fallbackName?: string): Promise<UserProfile[]> {
     if (!accountId) return [];
+
+    // Tên dùng cho hồ sơ chính tự tạo (tài khoản tạo tay chưa có profiles).
+    // PHẢI là displayName/username, tuyệt đối không dùng accountId (là Auth uid).
+    const primaryName = (fallbackName || '').trim() || 'Người xem';
+    const primaryId = `prof_${accountId}_primary`;
     
     const cached = getLocalProfilesCache(accountId);
 
     if (isFirestoreQuotaExhausted()) {
       if (cached && cached.length > 0) return cached;
       const fallbackProf: UserProfile = {
-        id: accountId === 'admin' ? 'admin_primary' : `prof_${accountId}_primary`,
-        name: accountId === 'admin' ? 'Quản trị viên' : accountId,
+        id: primaryId,
+        name: primaryName,
         avatar: DEFAULT_AVATARS[0],
         color: '#2563EB',
         isPrimary: true,
@@ -98,10 +104,9 @@ export const firestoreStorage = {
       }
 
       // Otherwise, create default primary profile once
-      const primaryId = accountId === 'admin' ? 'admin_primary' : `prof_${accountId}_primary`;
       const primaryProf: UserProfile = {
         id: primaryId,
-        name: accountId === 'admin' ? 'Quản trị viên' : accountId,
+        name: primaryName,
         avatar: DEFAULT_AVATARS[0],
         color: '#2563EB',
         isPrimary: true,
@@ -117,8 +122,8 @@ export const firestoreStorage = {
         return cached;
       }
       const fallbackProf: UserProfile = {
-        id: accountId === 'admin' ? 'admin_primary' : `prof_${accountId}_primary`,
-        name: accountId === 'admin' ? 'Quản trị viên' : accountId,
+        id: primaryId,
+        name: primaryName,
         avatar: DEFAULT_AVATARS[0],
         color: '#2563EB',
         isPrimary: true,
@@ -374,7 +379,7 @@ export const firestoreStorage = {
   // --- CUSTOM AVATARS GALLERY (Managed by Admin) ---
 
   async getCustomAvatars(): Promise<CustomAvatar[]> {
-    const cacheKey = 'qtb_custom_avatars_cache';
+    const cacheKey = AVATARS_CACHE_KEY;
     const local = getLocalJson<CustomAvatar[]>(cacheKey, []);
 
     if (isFirestoreQuotaExhausted()) {
@@ -399,7 +404,7 @@ export const firestoreStorage = {
 
   async addCustomAvatar(url: string, name: string, addedBy: string): Promise<CustomAvatar> {
     const avatarId = `av_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const cacheKey = 'qtb_custom_avatars_cache';
+    const cacheKey = AVATARS_CACHE_KEY;
     const newAvatar: CustomAvatar = {
       id: avatarId,
       url,
@@ -424,7 +429,7 @@ export const firestoreStorage = {
   },
 
   async deleteCustomAvatar(avatarId: string): Promise<void> {
-    const cacheKey = 'qtb_custom_avatars_cache';
+    const cacheKey = AVATARS_CACHE_KEY;
     const local = getLocalJson<CustomAvatar[]>(cacheKey, []);
     setLocalJson(cacheKey, local.filter((a) => a.id !== avatarId));
 

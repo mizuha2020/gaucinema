@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { SystemApiEndpoint, ApiCategory, ApiHealthStatus } from '../../types';
 import { systemApiService } from '../../services/systemApiService';
-import { getFullApiUrl, isNativeApp } from '../../services/apiConfig';
+import { getFullApiUrl, apiFetch, isNativeApp } from '../../services/apiConfig';
 import { AdminHeroAssetsTab } from './AdminHeroAssetsTab';
 import {
   Server,
@@ -26,7 +26,6 @@ interface AdminApisTabProps {
 const CATEGORY_LABELS: Record<string, string> = {
   movie: 'Phim',
   manga: 'Truyện',
-  livetv: 'LiveTV',
   utility: 'Tiện ích',
 };
 
@@ -81,7 +80,7 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = ({ onShowToast }) => {
   const fetchBatchStatus = async () => {
     try {
       // APK (Capacitor https://localhost) không có server local -> phải dùng absolute backend URL
-      const res = await fetch(getFullApiUrl('/api/system/batch-status'));
+      const res = await apiFetch('/api/system/batch-status');
       if (res.ok) {
         const json = await res.json();
         if (json.success) {
@@ -101,7 +100,7 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = ({ onShowToast }) => {
       const timer = setTimeout(() => controller.abort(), 120000);
       let res: Response;
       try {
-        res = await fetch(getFullApiUrl('/api/system/batch-sync'), {
+        res = await apiFetch('/api/system/batch-sync', {
           method: 'POST',
           signal: controller.signal,
           headers: { Accept: 'application/json' },
@@ -387,7 +386,7 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = ({ onShowToast }) => {
             )}
           </div>
           <div className="flex items-center gap-1.5 overflow-x-auto">
-            {['all', 'movie', 'manga', 'livetv', 'utility'].map((cat) => (
+            {['all', 'movie', 'manga', 'utility'].map((cat) => (
               <button
                 key={cat}
                 onClick={() => setSelectedCategory(cat)}
@@ -530,7 +529,6 @@ export const AdminApisTab: React.FC<AdminApisTabProps> = ({ onShowToast }) => {
                   >
                     <option value="movie">Phim</option>
                     <option value="manga">Truyện</option>
-                    <option value="livetv">LiveTV</option>
                     <option value="utility">Tiện ích</option>
                   </select>
                 </div>

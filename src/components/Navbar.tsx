@@ -47,7 +47,7 @@ interface NavbarProps {
   onSearchSubmit: (query: string) => void;
   onOpenAdminDashboard?: () => void;
   onLogout?: () => void;
-  onSwitchApp: (app: 'cinema' | 'manga' | 'livetv') => void;
+  onSwitchApp: (app: 'cinema' | 'manga') => void;
   onRefreshHome?: () => void;
 }
 
@@ -595,34 +595,6 @@ export const Navbar: React.FC<NavbarProps> = ({
               <div className="absolute right-[-4rem] sm:right-0 top-12 w-[280px] sm:w-72 bg-[#0f172a] border border-blue-900/60 rounded-2xl shadow-2xl p-3 z-50 animate-in fade-in zoom-in-95 duration-200">
                 <div className="text-xs font-bold text-slate-400 mb-2 px-2">HỆ SINH THÁI</div>
                 <div className="space-y-1">
-                  <button
-                    onClick={() => {
-                      if (appConfig.livetv?.enabled !== false) {
-                        onSwitchApp('livetv');
-                        setIsAppMenuOpen(false);
-                      }
-                    }}
-                    disabled={appConfig.livetv?.enabled === false}
-                    className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-sm font-medium transition-colors cursor-pointer group ${
-                      appConfig.livetv?.enabled === false
-                        ? 'opacity-40 cursor-not-allowed text-slate-500'
-                        : 'text-slate-200 hover:bg-sky-900/30 hover:text-sky-300'
-                    }`}
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-sky-900/40 flex items-center justify-center group-hover:bg-sky-500/20 shrink-0">
-                      <Tv className="w-4 h-4 text-sky-400" />
-                    </div>
-                    <div className="flex flex-col items-start">
-                      <span>Gấu LiveTV</span>
-                      <span className="text-[10px] text-slate-400 font-normal">
-                        {appConfig.livetv?.enabled === false ? 'Đang bảo trì' : 'Kênh thể thao trực tiếp'}
-                      </span>
-                    </div>
-                    {appConfig.livetv?.enabled === false && (
-                      <span className="ml-auto text-[9px] font-bold text-red-400 bg-red-950 px-1.5 py-0.5 rounded-full">OFF</span>
-                    )}
-                  </button>
-
                   <button
                     onClick={() => {
                       if (appConfig.manga?.enabled !== false) {

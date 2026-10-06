@@ -4,7 +4,7 @@ import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Settings, PictureInP
 import { EpisodeServer, Movie, MovieEpisode, Account, UserProfile } from '../types';
 import { getMirrorUrls } from '../utils/mirrorUrls';
 import { loadCleanedM3u8Url, revokeBlobUrl } from '../utils/m3u8Cleaner';
-import { getFullApiUrl, verifyBackendUrl } from '../services/apiConfig';
+import { getFullApiUrl, apiFetch, getBackendToken, hlsXhrSetup, verifyBackendUrl } from '../services/apiConfig';
 import { resolveImdbId } from '../utils/introResolve';
 import { presenceService } from '../services/presenceService';
 import { Capacitor } from '@capacitor/core';
@@ -264,7 +264,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
         for (let attempt = 0; attempt < 2 && !cancelled; attempt++) {
           try {
             // eslint-disable-next-line no-await-in-loop
-            const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal as any, cache: 'no-store' as RequestCache });
+            const r = await apiFetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal as any, cache: 'no-store' as RequestCache });
             if (r.status === 404) { data = { imdb_id: imdbId, season, episode: epNum, intro: null, recap: null, outro: null } as any; break; }
             if (!r.ok) throw new Error(String(r.status));
             // eslint-disable-next-line no-await-in-loop
@@ -447,6 +447,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     const attachPreview = (src: string) => {
       if (cancelled) return;
       if (Hls.isSupported()) {
+        void getBackendToken(); // prewarm ID token cho hlsXhrSetup
         const hls = new Hls({
           enableWorker: true,
           backBufferLength: 10,
@@ -459,6 +460,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
           // Preview luôn dùng quality THẤP NHẤT: nhẹ băng thông, không tranh với player chính khi tua
           startLevel: 0,
           capLevelToPlayerSize: false,
+          xhrSetup: hlsXhrSetup,
         });
         previewHlsRef.current = hls;
         hls.loadSource(src);
@@ -539,6 +541,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     };
 
     if (Hls.isSupported()) {
+      void getBackendToken(); // prewarm ID token cho hlsXhrSetup
       const hls = new Hls({
         enableWorker: true,
         backBufferLength: 30,
@@ -550,6 +553,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
         fragLoadingTimeOut: 20000,
         startLevel: -1,
         capLevelToPlayerSize: true,
+        xhrSetup: hlsXhrSetup,
       });
       hlsRef.current = hls;
       // Client-side ad-clean first: fetch + strip ads in browser, then play blob

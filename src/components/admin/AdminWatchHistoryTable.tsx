@@ -5,7 +5,6 @@ import { formatDurationText, formatDateTimeExact, formatRelativeTime } from '../
 import {
   Film,
   BookOpen,
-  Tv,
   Youtube,
   Search,
   Filter,
@@ -321,20 +320,6 @@ export const AdminWatchHistoryTable: React.FC<AdminWatchHistoryTableProps> = ({
           </button>
           <button
             onClick={() => {
-              setSelectedMediaType('livetv');
-              setPage(1);
-            }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap ${
-              selectedMediaType === 'livetv'
-                ? 'bg-amber-600 text-white shadow-md shadow-amber-600/30'
-                : 'bg-[#0f172a] text-slate-400 hover:text-white border border-slate-800'
-            }`}
-          >
-            <Tv className="w-3.5 h-3.5" />
-            <span>LiveTV</span>
-          </button>
-          <button
-            onClick={() => {
               setSelectedMediaType('youtube');
               setPage(1);
             }}
@@ -386,7 +371,6 @@ export const AdminWatchHistoryTable: React.FC<AdminWatchHistoryTableProps> = ({
                 {paginatedItems.map((item) => {
                   const isMovie = item.mediaType === 'movie';
                   const isManga = item.mediaType === 'manga';
-                  const isTv = item.mediaType === 'livetv';
                   const isYt = item.mediaType === 'youtube';
 
                   const correspondingStat = userStats.find((s) => s.accountId === item.accountId);
@@ -452,11 +436,6 @@ export const AdminWatchHistoryTable: React.FC<AdminWatchHistoryTableProps> = ({
                         {isManga && (
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 flex items-center gap-1 w-fit">
                             <BookOpen className="w-3 h-3" /> Manga
-                          </span>
-                        )}
-                        {isTv && (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800 flex items-center gap-1 w-fit">
-                            <Tv className="w-3 h-3" /> LiveTV
                           </span>
                         )}
                         {isYt && (

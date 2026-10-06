@@ -67,11 +67,6 @@ export const AppSwitcherLoading: React.FC<AppSwitcherLoadingProps> = ({ targetAp
     title = 'Gấu Manga';
     message = 'Đang tải thế giới truyện tranh...';
     accentColor = 'bg-purple-500';
-  } else if (targetApp === 'livetv') {
-    themeClass = 'from-orange-900 to-slate-900';
-    title = 'Gấu LiveTV';
-    message = 'Đang kết nối các kênh trực tiếp...';
-    accentColor = 'bg-orange-500';
   }
 
   return (

@@ -87,6 +87,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newDisplayName, setNewDisplayName] = useState('');
+  const [newMonths, setNewMonths] = useState<number>(1);
   const [modalError, setModalError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -145,23 +146,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setModalError('Vui lòng nhập đầy đủ Username và Mật khẩu khởi tạo.');
       return;
     }
+    if (newPassword.trim().length < 8) {
+      setModalError('Mật khẩu phải có ít nhất 8 ký tự.');
+      return;
+    }
     setModalError(null);
 
     // Open password confirmation
     setConfirmModalConfig({
       isOpen: true,
       title: 'Xác Nhận Tạo Tài Khoản Mới',
-      description: `Bạn đang chuẩn bị tạo tài khoản người dùng @${newUsername.toLowerCase().trim()} kèm 1 hồ sơ chính mặc định. Vui lòng nhập mật khẩu Admin để hoàn tất.`,
+      description: `Bạn đang chuẩn bị tạo tài khoản người dùng @${newUsername.toLowerCase().trim()} (hạn dùng ${newMonths} tháng) kèm 1 hồ sơ chính mặc định. Vui lòng nhập mật khẩu Admin để hoàn tất.`,
       actionButtonText: 'Xác Nhận Tạo',
       isDestructive: false,
       onExecute: async () => {
         setIsSubmitting(true);
         try {
-          await authService.createAccount(newUsername, newPassword, newDisplayName);
+          await authService.createAccount(newUsername, newPassword, newDisplayName, newMonths);
           onShowToast(`Đã tạo thành công tài khoản "@${newUsername.toLowerCase().trim()}"`);
           setNewUsername('');
           setNewPassword('');
           setNewDisplayName('');
+          setNewMonths(1);
           setIsAddAccountOpen(false);
           setConfirmModalConfig((prev) => ({ ...prev, isOpen: false }));
           await loadData();
@@ -174,7 +180,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     });
   };
 
-  // 2. UPDATE / RESET PASSWORD WITH ADMIN CONFIRMATION
+  // 2. UPDATE WITH ADMIN CONFIRMATION
+  // NOTE (Prompt 2): admin chưa đổi được mật khẩu của user khác (cần Admin SDK —
+  // Prompt 5). Chỉ user tự đổi mật khẩu của mình. TODO ở Prompt 5.
   const handleSaveAccountEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingAccount) return;
@@ -182,7 +190,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setConfirmModalConfig({
       isOpen: true,
       title: `Cập Nhật Tài Khoản @${editingAccount.username}`,
-      description: `Bạn đang thực hiện cập nhật thông tin / đổi mật khẩu cho tài khoản @${editingAccount.username}. Vui lòng nhập mật khẩu Admin để áp dụng.`,
+      description: `Bạn đang thực hiện cập nhật thông tin / đổi trạng thái cho tài khoản @${editingAccount.username}. Vui lòng nhập mật khẩu Admin để áp dụng.`,
       actionButtonText: 'Lưu Thay Đổi',
       isDestructive: false,
       onExecute: async () => {
@@ -193,7 +201,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             status: editStatus,
           };
           if (editPassword.trim()) {
-            updates.password = editPassword.trim();
+            if (editPassword.trim().length < 8) {
+              throw new Error('Mật khẩu mới phải có ít nhất 8 ký tự.');
+            }
+            const isSelf = currentAccount && editingAccount.id === currentAccount.id;
+            if (!isSelf) {
+              // TODO (Prompt 5): POST /api/admin/users/:uid/password dùng Admin SDK.
+              throw new Error(
+                'Admin chưa thể đặt lại mật khẩu cho user khác ở phiên bản này (cần Admin SDK — sẽ làm ở Prompt 5). User hãy tự đổi mật khẩu của mình.'
+              );
+            }
+            await authService.changeOwnPassword(editPassword.trim());
           }
           await authService.updateAccount(editingAccount.id, updates);
           onShowToast(`Đã cập nhật thành công tài khoản "@${editingAccount.username}"`);
@@ -1084,11 +1102,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <input
                     type="password"
                     required
-                    placeholder="Tối thiểu 4 ký tự"
+                    placeholder="Tối thiểu 8 ký tự"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     className="w-full bg-[#131f37] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    Thời hạn sử dụng:
+                  </label>
+                  <select
+                    value={newMonths}
+                    onChange={(e) => setNewMonths(Number(e.target.value) || 1)}
+                    className="w-full bg-[#131f37] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
+                      <option key={m} value={m}>
+                        {m} tháng
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    * Tính theo tháng lịch. Tài khoản admin không có thời hạn.
+                  </p>
                 </div>
 
                 <div>
@@ -1166,7 +1204,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </label>
                   <input
                     type="password"
-                    placeholder="Để trống nếu giữ nguyên mật khẩu cũ"
+                    placeholder="Để trống nếu giữ nguyên. Chỉ đổi được cho chính mình (tối thiểu 8 ký tự)"
                     value={editPassword}
                     onChange={(e) => setEditPassword(e.target.value)}
                     className="w-full bg-[#131f37] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500 font-mono"

@@ -7,7 +7,6 @@ import {
   Clock,
   Film,
   BookOpen,
-  Tv,
   Youtube,
   Sparkles,
   Calendar,
@@ -58,7 +57,6 @@ type ChartViewMode = 'daily' | 'monthly' | 'categories';
 const MEDIA_COLORS: Record<string, string> = {
   movie: '#38bdf8', // sky-400
   manga: '#34d399', // emerald-400
-  livetv: '#fbbf24', // amber-400
   youtube: '#f87171', // red-400
   browsing: '#94a3b8', // slate-400
 };
@@ -260,7 +258,6 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
   // Activity-based stats (fallback)
   const activityMovieSec = useMemo(() => activities.filter(a => a.mediaType === 'movie').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
   const activityMangaSec = useMemo(() => activities.filter(a => a.mediaType === 'manga').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
-  const activityTvSec = useMemo(() => activities.filter(a => a.mediaType === 'livetv').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
   const activityYtSec = useMemo(() => activities.filter(a => a.mediaType === 'youtube').reduce((s, a) => s + getEffectiveDuration(a), 0), [activities]);
 
   // Final stats: userStat (Firestore) as primary, activity-based as fallback.
@@ -273,11 +270,10 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
 
   const movieSec = safeSec(userStat.watchSecondsByMedia?.movie, activityMovieSec);
   const mangaSec = safeSec(userStat.watchSecondsByMedia?.manga, activityMangaSec);
-  const tvSec = safeSec(userStat.watchSecondsByMedia?.livetv, activityTvSec);
   const ytSec = safeSec(userStat.watchSecondsByMedia?.youtube, activityYtSec);
 
   const effTotal = getEffectiveTotalWatch(userStat);
-  const sumTotal = movieSec + mangaSec + tvSec + ytSec;
+  const sumTotal = movieSec + mangaSec + ytSec;
   const totalWatchSec =
     Number.isFinite(effTotal) && effTotal > 0
       ? effTotal
@@ -287,7 +283,6 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
 
   const moviePct = totalWatchSec > 0 ? Math.round((movieSec / totalWatchSec) * 100) : 0;
   const mangaPct = totalWatchSec > 0 ? Math.round((mangaSec / totalWatchSec) * 100) : 0;
-  const tvPct = totalWatchSec > 0 ? Math.round((tvSec / totalWatchSec) * 100) : 0;
   const ytPct = totalWatchSec > 0 ? Math.round((ytSec / totalWatchSec) * 100) : 0;
 
   // Chart Data Preparation: Daily Trend
@@ -385,10 +380,9 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
     return [
       { name: 'Phim', value: Math.round(movieSec / 60), durationText: formatDurationText(movieSec), pct: moviePct, color: MEDIA_COLORS.movie },
       { name: 'Truyện Tranh', value: Math.round(mangaSec / 60), durationText: formatDurationText(mangaSec), pct: mangaPct, color: MEDIA_COLORS.manga },
-      { name: 'Truyền Hình (LiveTV)', value: Math.round(tvSec / 60), durationText: formatDurationText(tvSec), pct: tvPct, color: MEDIA_COLORS.livetv },
       { name: 'YouTube', value: Math.round(ytSec / 60), durationText: formatDurationText(ytSec), pct: ytPct, color: MEDIA_COLORS.youtube },
     ].filter((item) => item.value > 0 || totalWatchSec === 0);
-  }, [movieSec, mangaSec, tvSec, ytSec, moviePct, mangaPct, tvPct, ytPct, totalWatchSec]);
+  }, [movieSec, mangaSec, ytSec, moviePct, mangaPct, ytPct, totalWatchSec]);
 
   // Export Filtered History to CSV
   const handleExportCSV = () => {
@@ -694,22 +688,6 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
                 </div>
                 <div className="w-full bg-slate-800 rounded-full h-1.5 mt-3 overflow-hidden">
                   <div className="bg-emerald-400 h-1.5 rounded-full transition-all duration-500" style={{ width: `${mangaPct}%` }} />
-                </div>
-              </div>
-
-              {/* LiveTV */}
-              <div className="bg-[#070b16] border border-amber-900/40 rounded-2xl p-3.5 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between text-xs font-bold text-amber-400 mb-1">
-                    <span className="flex items-center gap-1.5">
-                      <Tv className="w-3.5 h-3.5" /> LiveTV
-                    </span>
-                    <span>{tvPct}%</span>
-                  </div>
-                  <p className="text-base font-bold text-white">{formatDurationText(tvSec)}</p>
-                </div>
-                <div className="w-full bg-slate-800 rounded-full h-1.5 mt-3 overflow-hidden">
-                  <div className="bg-amber-400 h-1.5 rounded-full transition-all duration-500" style={{ width: `${tvPct}%` }} />
                 </div>
               </div>
 
@@ -1025,19 +1003,6 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
                   </div>
                 </div>
 
-                {/* LiveTV */}
-                <div className="bg-[#070b16] border border-amber-900/40 rounded-2xl p-3.5">
-                  <div className="flex items-center justify-between text-xs font-bold text-amber-400">
-                    <span className="flex items-center gap-2">
-                      <Tv className="w-4 h-4" /> Truyền Hình Trực Tuyến (LiveTV)
-                    </span>
-                    <span>{tvPct}% ({formatDurationText(tvSec)})</span>
-                  </div>
-                  <div className="w-full bg-slate-800 rounded-full h-2 mt-2.5 overflow-hidden">
-                    <div className="bg-amber-400 h-2 rounded-full transition-all duration-500" style={{ width: `${tvPct}%` }} />
-                  </div>
-                </div>
-
                 {/* YouTube */}
                 <div className="bg-[#070b16] border border-red-900/40 rounded-2xl p-3.5">
                   <div className="flex items-center justify-between text-xs font-bold text-red-400">
@@ -1123,14 +1088,6 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
                   }`}
                 >
                   Manga
-                </button>
-                <button
-                  onClick={() => setFilterType('livetv')}
-                  className={`flex-1 py-1.5 px-2 rounded-lg font-medium transition cursor-pointer whitespace-nowrap text-center ${
-                    filterType === 'livetv' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  LiveTV
                 </button>
                 <button
                   onClick={() => setFilterType('youtube')}
@@ -1358,7 +1315,6 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
                 {paginatedActivities.map((item) => {
                   const isMovie = item.mediaType === 'movie';
                   const isManga = item.mediaType === 'manga';
-                  const isTv = item.mediaType === 'livetv';
                   const isYt = item.mediaType === 'youtube';
 
                   return (
@@ -1394,11 +1350,6 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
                             {isManga && (
                               <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800 flex items-center gap-1">
                                 <BookOpen className="w-2.5 h-2.5" /> Truyện
-                              </span>
-                            )}
-                            {isTv && (
-                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-amber-950 text-amber-300 border border-amber-800 flex items-center gap-1">
-                                <Tv className="w-2.5 h-2.5" /> LiveTV
                               </span>
                             )}
                             {isYt && (

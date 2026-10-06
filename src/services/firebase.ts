@@ -30,6 +30,40 @@ export const db = dbInstance!;
 export const auth = authInstance!;
 export const rtdb = rtdbInstance!;
 
+/** ProjectId đang dùng — để namespace cache localStorage theo project. */
+export const FIREBASE_PROJECT_ID: string =
+  (firebaseConfig as Record<string, string>).projectId || '(default)';
+
+/** Ghép hậu tố project vào key cache, tránh rò rỉ dữ liệu khi đổi project. */
+export function nsKey(key: string): string {
+  return `${key}__${FIREBASE_PROJECT_ID}`;
+}
+
+// Dọn cache localStorage của project cũ (chỉ chạy 1 lần, key nào thiếu hậu tố
+// project hiện tại thì xóa). Firebase Auth lưu phiên trong IndexedDB nên không
+// bị đăng xuất khi dọn localStorage.
+try {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const suffix = `__${FIREBASE_PROJECT_ID}`;
+    const legacyPrefixes = [
+      'qtb_custom_avatars_cache',
+      'qtb_profiles_cache_v2_',
+      'qtb_active_profile_id_v2',
+      'qtb_system_apis_cache_v3',
+    ];
+    const doomed: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && !k.includes(suffix) && legacyPrefixes.some((p) => k === p || k.startsWith(p))) {
+        doomed.push(k);
+      }
+    }
+    doomed.forEach((k) => window.localStorage.removeItem(k));
+  }
+} catch {
+  // ignore
+}
+
 export enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',

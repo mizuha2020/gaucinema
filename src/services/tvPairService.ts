@@ -132,6 +132,9 @@ export const tvPairService = {
     if (!accSnap.exists()) throw new Error('Không tìm thấy tài khoản đã duyệt.');
     const acc = { ...(accSnap.data() as Account), id: accSnap.id };
     if (acc.status === 'blocked') throw new Error('Tài khoản đã bị tạm khóa.');
+    if (acc.role !== 'admin' && acc.expiresAt && acc.expiresAt < Date.now()) {
+      throw new Error('Tài khoản đã hết hạn sử dụng. Vui lòng liên hệ quản trị viên để gia hạn.');
+    }
     return acc;
   },
 

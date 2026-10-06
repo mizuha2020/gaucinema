@@ -17,6 +17,7 @@
 // - Pattern yếu (promo/banner/..., rule RTDB) vẫn cần thêm kề discontinuity.
 // - Safety cap: cắt quá 35% hoặc >20 segment liên tiếp -> giữ nguyên playlist.
 import { adblockService } from '../services/adblockService';
+import { apiFetch } from '../services/apiConfig';
 
 /** Pattern mạnh: gần như chắc chắn là QC, được cắt thẳng không cần discontinuity. */
 const STRONG_PATTERNS = [
@@ -318,7 +319,8 @@ async function fetchText(url: string, timeoutMs = 12000): Promise<string> {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const r = await fetch(url, { signal: controller.signal, headers: { Accept: '*/*' } });
+    // apiFetch chỉ gắn token khi gọi đúng backend /api/*, URL CDN ngoài giữ nguyên.
+    const r = await apiFetch(url, { signal: controller.signal, headers: { Accept: '*/*' } });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return await r.text();
   } finally {

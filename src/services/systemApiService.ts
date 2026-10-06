@@ -7,9 +7,9 @@ import {
   updateDoc,
   deleteDoc,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, isFirestoreQuotaExhausted, OperationType, sanitizeData } from './firebase';
+import { db, handleFirestoreError, isFirestoreQuotaExhausted, nsKey, OperationType, sanitizeData } from './firebase';
 import { SystemApiEndpoint, ApiCategory, ApiHealthStatus } from '../types';
-import { getFullApiUrl } from './apiConfig';
+import { getFullApiUrl, apiFetch } from './apiConfig';
 
 export const DEFAULT_SYSTEM_APIS: SystemApiEndpoint[] = [
   // 1. Movie APIs
@@ -121,39 +121,7 @@ export const DEFAULT_SYSTEM_APIS: SystemApiEndpoint[] = [
     lastChecked: Date.now(),
   },
 
-  // 3. LiveTV / IPTV APIs
-  {
-    id: 'iptv_tinhlagi',
-    name: 'TinhLaGi TV Playlist',
-    category: 'livetv',
-    baseUrl: 'https://bit.ly/tinhlagitivi',
-    testUrl: 'https://bit.ly/tinhlagitivi',
-    description: 'Danh sách luồng truyền hình trực tuyến VTV, HTV, Thể thao và Giải trí hàng đầu.',
-    enabled: true,
-    isDefault: true,
-    priority: 1,
-    lastStatus: 'live',
-    lastLatencyMs: 210,
-    lastStatusCode: 200,
-    lastChecked: Date.now(),
-  },
-  {
-    id: 'iptv_vn',
-    name: 'IPTV-Org Vietnam',
-    category: 'livetv',
-    baseUrl: 'https://iptv-org.github.io/iptv/countries/vn.m3u',
-    testUrl: 'https://iptv-org.github.io/iptv/countries/vn.m3u',
-    description: 'Danh sách kênh truyền hình mở quốc tế và nội địa Việt Nam.',
-    enabled: true,
-    isDefault: true,
-    priority: 2,
-    lastStatus: 'live',
-    lastLatencyMs: 195,
-    lastStatusCode: 200,
-    lastChecked: Date.now(),
-  },
-
-  // 4. Utility APIs
+  // 3. Utility APIs
   {
     id: 'server_proxy',
     name: 'Gấu Cinema Proxy & Health',
@@ -171,7 +139,7 @@ export const DEFAULT_SYSTEM_APIS: SystemApiEndpoint[] = [
   },
 ];
 
-const LOCAL_STORAGE_KEY = 'qtb_system_apis_cache_v3';
+const LOCAL_STORAGE_KEY = nsKey('qtb_system_apis_cache_v3');
 
 class SystemApiService {
   private inMemoryApis: SystemApiEndpoint[] = [];
@@ -432,7 +400,7 @@ class SystemApiService {
 
     // Use backend ping endpoint to bypass browser CORS and measure network timing
     try {
-      const res = await fetch(getFullApiUrl('/api/system/apis/ping'), {
+      const res = await apiFetch('/api/system/apis/ping', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: smartUrl, timeoutMs: 9000 }),

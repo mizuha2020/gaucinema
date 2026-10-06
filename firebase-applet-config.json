@@ -1,10 +1,9 @@
 {
-  "projectId": "gaucinema",
-  "appId": "1:198260052869:web:2902a613bfdfd253dbeaec",
-  "apiKey": "AIzaSyCOyglmE8dXUwGwLQMFe9PSnyrxXudEM-Q",
-  "authDomain": "gaucinema.firebaseapp.com",
-  "databaseURL": "https://gaucinema-default-rtdb.asia-southeast1.firebasedatabase.app",
-  "storageBucket": "gaucinema.firebasestorage.app",
-  "messagingSenderId": "198260052869",
-  "measurementId": "G-E77DCGGNKV"
+  "apiKey": "AIzaSyCvb46dBqyFUaOFO5mbwo1s0U7n1lFGG1E",
+  "authDomain": "gaucinema-98e55.firebaseapp.com",
+  "databaseURL": "https://gaucinema-98e55-default-rtdb.asia-southeast1.firebasedatabase.app",
+  "projectId": "gaucinema-98e55",
+  "storageBucket": "gaucinema-98e55.firebasestorage.app",
+  "messagingSenderId": "614031495548",
+  "appId": "1:614031495548:web:82b5d82fdf091c5d1814f9"
 }

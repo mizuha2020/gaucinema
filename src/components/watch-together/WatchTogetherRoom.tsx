@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 import { getMirrorUrls } from '../../utils/mirrorUrls';
 import { loadCleanedM3u8Url, revokeBlobUrl } from '../../utils/m3u8Cleaner';
-import { getFullApiUrl, verifyBackendUrl } from '../../services/apiConfig';
+import { getFullApiUrl, getBackendToken, hlsXhrSetup, verifyBackendUrl } from '../../services/apiConfig';
 function getAdCleanUrl(raw: string): string {
   if (!raw || raw.startsWith('blob:') || raw.startsWith('data:')) return raw;
   try { const b64 = btoa(unescape(encodeURIComponent(raw))); return getFullApiUrl(`/api/proxy/m3u8?url=${encodeURIComponent(b64)}`); } catch { return getFullApiUrl(`/api/proxy/m3u8?url=${encodeURIComponent(raw)}`); }
@@ -169,7 +169,8 @@ export const WatchTogetherRoom: React.FC<WatchTogetherRoomProps> = ({
     };
 
     if (Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true, backBufferLength: 30, maxBufferLength: 30, maxMaxBufferLength: 60, maxBufferSize: 30 * 1000 * 1000, manifestLoadingTimeOut: 10000, levelLoadingTimeOut: 10000, fragLoadingTimeOut: 20000, startLevel: -1, capLevelToPlayerSize: true });
+      void getBackendToken(); // prewarm ID token cho hlsXhrSetup
+      const hls = new Hls({ enableWorker: true, backBufferLength: 30, maxBufferLength: 30, maxMaxBufferLength: 60, maxBufferSize: 30 * 1000 * 1000, manifestLoadingTimeOut: 10000, levelLoadingTimeOut: 10000, fragLoadingTimeOut: 20000, startLevel: -1, capLevelToPlayerSize: true, xhrSetup: hlsXhrSetup });
       hlsRef.current = hls;
       // Lọc QC phía client trước (IP máy chạy được, IP cloud có thể bị chặn) + chờ backend sẵn sàng
       (async () => {

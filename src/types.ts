@@ -132,14 +132,16 @@ export interface UserProfile {
 export type AccountRole = 'admin' | 'user';
 
 export interface Account {
-  id: string; // usually username or uid
+  id: string; // Firebase Auth uid — cũng là document id của /accounts/{uid}
+  uid: string; // Firebase Auth uid
   username: string;
-  password?: string;
   role: AccountRole;
   displayName: string;
   status: 'active' | 'blocked';
   createdAt: number;
   updatedAt?: number;
+  // Thời hạn sử dụng (epoch ms). Tài khoản admin: null/không có.
+  expiresAt?: number | null;
   profilesCount?: number;
 }
 
@@ -181,7 +183,7 @@ export interface MyListItem {
   addedAt: number;
 }
 
-export type ActiveApp = 'cinema' | 'manga' | 'livetv';
+export type ActiveApp = 'cinema' | 'manga';
 
 export interface YouTubeChannel {
   id: string;
@@ -274,7 +276,7 @@ export interface YouTubeCommunityPost {
 
 export type NavTab = 'home' | 'series' | 'single' | 'cinema' | 'anime' | 'tv-shows' | 'manga' | 'filter' | 'my-list' | 'history' | 'offline' | 'tv-live' | 'youtube' | 'xem-chung';
 
-export type ApiCategory = 'movie' | 'manga' | 'livetv' | 'youtube' | 'utility';
+export type ApiCategory = 'movie' | 'manga' | 'youtube' | 'utility';
 export type ApiHealthStatus = 'live' | 'slow' | 'down';
 
 export interface SystemApiEndpoint {
@@ -316,7 +318,7 @@ export interface ActiveViewerSession {
   deviceInfo?: string;
 }
 
-export type MediaActivityType = 'movie' | 'manga' | 'livetv' | 'youtube' | 'browsing' | 'anime';
+export type MediaActivityType = 'movie' | 'manga' | 'youtube' | 'browsing' | 'anime';
 
 export interface UserActivityItem {
   id: string; // e.g. act_${accountId}_${profileId}_${mediaType}_${contentKey}
@@ -349,7 +351,6 @@ export interface UserStats {
   watchSecondsByMedia: {
     movie: number;
     manga: number;
-    livetv: number;
     youtube: number;
   };
   totalSessions: number;

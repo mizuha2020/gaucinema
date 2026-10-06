@@ -8,7 +8,6 @@ import {
   Clock,
   Film,
   BookOpen,
-  Tv,
   Youtube,
   Sparkles,
   Calendar,
@@ -33,7 +32,7 @@ export const AdminUserDetailModal: React.FC<AdminUserDetailModalProps> = ({
 }) => {
   const [activities, setActivities] = useState<UserActivityItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [filterType, setFilterType] = useState<'all' | 'movie' | 'manga' | 'livetv' | 'youtube'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'movie' | 'manga' | 'youtube'>('all');
   const [searchKeyword, setSearchKeyword] = useState('');
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
 
@@ -69,13 +68,11 @@ export const AdminUserDetailModal: React.FC<AdminUserDetailModalProps> = ({
 
   const movieSec = userStat.watchSecondsByMedia?.movie || 0;
   const mangaSec = userStat.watchSecondsByMedia?.manga || 0;
-  const tvSec = userStat.watchSecondsByMedia?.livetv || 0;
   const ytSec = userStat.watchSecondsByMedia?.youtube || 0;
-  const totalWatchSec = getEffectiveTotalWatch(userStat) || (movieSec + mangaSec + tvSec + ytSec) || 0;
+  const totalWatchSec = getEffectiveTotalWatch(userStat) || (movieSec + mangaSec + ytSec) || 0;
 
   const moviePct = totalWatchSec > 0 ? Math.round((movieSec / totalWatchSec) * 100) : 0;
   const mangaPct = totalWatchSec > 0 ? Math.round((mangaSec / totalWatchSec) * 100) : 0;
-  const tvPct = totalWatchSec > 0 ? Math.round((tvSec / totalWatchSec) * 100) : 0;
   const ytPct = totalWatchSec > 0 ? Math.round((ytSec / totalWatchSec) * 100) : 0;
 
   return (
@@ -215,20 +212,6 @@ export const AdminUserDetailModal: React.FC<AdminUserDetailModalProps> = ({
                 </div>
               </div>
 
-              {/* LiveTV */}
-              <div className="bg-[#070b16] border border-amber-900/40 rounded-xl p-3">
-                <div className="flex items-center justify-between text-amber-400 text-xs font-bold">
-                  <span className="flex items-center gap-1.5">
-                    <Tv className="w-3.5 h-3.5" /> Truyền Hình
-                  </span>
-                  <span>{tvPct}%</span>
-                </div>
-                <p className="text-sm font-bold text-white mt-1.5">{formatDurationText(tvSec)}</p>
-                <div className="w-full bg-slate-800 rounded-full h-1 mt-2">
-                  <div className="bg-amber-400 h-1 rounded-full" style={{ width: `${tvPct}%` }} />
-                </div>
-              </div>
-
               {/* YouTube */}
               <div className="bg-[#070b16] border border-red-900/40 rounded-xl p-3">
                 <div className="flex items-center justify-between text-red-400 text-xs font-bold">
@@ -324,7 +307,6 @@ export const AdminUserDetailModal: React.FC<AdminUserDetailModalProps> = ({
                 {activities.map((item) => {
                   const isMovie = item.mediaType === 'movie';
                   const isManga = item.mediaType === 'manga';
-                  const isTv = item.mediaType === 'livetv';
                   const isYt = item.mediaType === 'youtube';
 
                   return (
@@ -359,11 +341,6 @@ export const AdminUserDetailModal: React.FC<AdminUserDetailModalProps> = ({
                             {isManga && (
                               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-800">
                                 Manga
-                              </span>
-                            )}
-                            {isTv && (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800">
-                                LiveTV
                               </span>
                             )}
                             {isYt && (

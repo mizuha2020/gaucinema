@@ -86,12 +86,12 @@
     },
     "SystemApiEndpoint": {
       "title": "SystemApiEndpoint",
-      "description": "System API configurations managed by admin for movies, manga, livetv and utility services",
+      "description": "System API configurations managed by admin for movies, manga and utility services",
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 64 },
         "name": { "type": "string", "maxLength": 128 },
-        "category": { "type": "string", "enum": ["movie", "manga", "livetv", "utility"] },
+        "category": { "type": "string", "enum": ["movie", "manga", "utility"] },
         "baseUrl": { "type": "string", "maxLength": 2048 },
         "testUrl": { "type": "string", "maxLength": 2048 },
         "description": { "type": "string", "maxLength": 500 },

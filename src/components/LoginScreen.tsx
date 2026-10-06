@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { authService } from '../services/authService';
 import { Account } from '../types';
 import { Lock, User, KeyRound, ShieldAlert, Sparkles, ShieldCheck, Eye, EyeOff, Smartphone } from 'lucide-react';
@@ -10,9 +10,11 @@ import appLogo from '../assets/images/app_logo.jpg';
 
 interface LoginScreenProps {
   onLoginSuccess: (account: Account) => void;
+  /** Thông báo từ phiên cũ (bị khóa / hết hạn / lỗi tải) — hiển thị thay cho form lỗi. */
+  authNotice?: string | null;
 }
 
-export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
+export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, authNotice }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -21,6 +23,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const isTv = useTvMode();
   const passwordRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (authNotice) setErrorMessage(authNotice);
+  }, [authNotice]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
