@@ -80,10 +80,17 @@ export const AdminOverviewTab: React.FC<AdminOverviewTabProps> = ({
     };
   }, [selectedUserForDetail]);
 
+  const lastStatsFetchRef = React.useRef<number>(0);
+
   const fetchUserStats = async (currentSessions?: ActiveViewerSession[]) => {
+    // Prompt 6: throttle 60s — presence heartbeat (30s/viewer) không được kéo
+    // theo ~150 reads Firestore mỗi lần. Sessions vẫn live qua RTDB.
+    // fixCorruptedStats là tool sửa chữa, KHÔNG chạy routine ở đây.
+    const now = Date.now();
+    if (now - lastStatsFetchRef.current < 60000 && userStats.length > 0) return;
+    lastStatsFetchRef.current = now;
     setIsLoadingStats(true);
     try {
-      await userAnalyticsService.fixCorruptedStats();
       const stats = await userAnalyticsService.getAllUserStats();
       setUserStats(stats);
     } catch (e) {

@@ -9,7 +9,6 @@ import {
   query,
   orderBy,
   limit,
-  onSnapshot,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, isFirestoreQuotaExhausted, nsKey, OperationType, sanitizeData } from './firebase';
 import { AdminNotification, CustomAvatar, MyListItem, UserProfile, WatchHistoryItem, YouTubeVideo } from '../types';
@@ -19,6 +18,9 @@ import { DEFAULT_AVATARS } from './authService';
 const ACTIVE_PROFILE_KEY = nsKey('qtb_active_profile_id_v2');
 const PROFILES_CACHE_PREFIX = nsKey('qtb_profiles_cache_v2_');
 const AVATARS_CACHE_KEY = nsKey('qtb_custom_avatars_cache');
+// Memory memo theo phiên cho collection ít đổi (Prompt 6 PHẦN D)
+let avatarsMemo: CustomAvatar[] | null = null;
+let notificationsMemo: AdminNotification[] | null = null;
 
 function getLocalJson<T>(key: string, fallback: T): T {
   try {
@@ -381,12 +383,15 @@ export const firestoreStorage = {
   },
 
   // --- CUSTOM AVATARS GALLERY (Managed by Admin) ---
+  // Prompt 6 PHẦN D: đọc 1 lần/phiên (memory memo), refresh khi admin sửa.
 
-  async getCustomAvatars(): Promise<CustomAvatar[]> {
+  async getCustomAvatars(forceRefresh = false): Promise<CustomAvatar[]> {
     const cacheKey = AVATARS_CACHE_KEY;
+    if (!forceRefresh && avatarsMemo !== null) return avatarsMemo;
     const local = getLocalJson<CustomAvatar[]>(cacheKey, []);
 
     if (isFirestoreQuotaExhausted()) {
+      avatarsMemo = local;
       return local;
     }
 
@@ -397,11 +402,14 @@ export const firestoreStorage = {
         const list = snap.docs.map((d) => d.data() as CustomAvatar);
         const sorted = list.sort((a, b) => b.createdAt - a.createdAt);
         setLocalJson(cacheKey, sorted);
+        avatarsMemo = sorted;
         return sorted;
       }
+      avatarsMemo = local;
       return local;
     } catch (e) {
       handleFirestoreError(e, OperationType.LIST, 'customAvatars');
+      avatarsMemo = local;
       return local;
     }
   },
@@ -419,6 +427,7 @@ export const firestoreStorage = {
 
     const local = getLocalJson<CustomAvatar[]>(cacheKey, []);
     setLocalJson(cacheKey, [newAvatar, ...local]);
+    avatarsMemo = [newAvatar, ...(avatarsMemo || local)];
 
     if (isFirestoreQuotaExhausted()) return newAvatar;
 
@@ -436,6 +445,7 @@ export const firestoreStorage = {
     const cacheKey = AVATARS_CACHE_KEY;
     const local = getLocalJson<CustomAvatar[]>(cacheKey, []);
     setLocalJson(cacheKey, local.filter((a) => a.id !== avatarId));
+    if (avatarsMemo) avatarsMemo = avatarsMemo.filter((a) => a.id !== avatarId);
 
     if (isFirestoreQuotaExhausted()) return;
 
@@ -795,12 +805,17 @@ export const firestoreStorage = {
   },
 
   // --- ADMIN SYSTEM TICKER NOTIFICATIONS ---
+  // Prompt 6 PHẦN D: đọc 1 lần/phiên (memory memo). Admin sửa thì write-through.
 
-  async getNotifications(): Promise<AdminNotification[]> {
+  async getNotifications(forceRefresh = false): Promise<AdminNotification[]> {
     const cacheKey = 'qtb_notifications_cache';
+    if (!forceRefresh && notificationsMemo !== null) return notificationsMemo;
     const local = getLocalJson<AdminNotification[]>(cacheKey, []);
 
-    if (isFirestoreQuotaExhausted()) return local;
+    if (isFirestoreQuotaExhausted()) {
+      notificationsMemo = local;
+      return local;
+    }
 
     const colRef = collection(db, 'notifications');
     try {
@@ -809,11 +824,14 @@ export const firestoreStorage = {
         const list = snap.docs.map((d) => d.data() as AdminNotification);
         const sorted = list.sort((a, b) => b.createdAt - a.createdAt);
         setLocalJson(cacheKey, sorted);
+        notificationsMemo = sorted;
         return sorted;
       }
+      notificationsMemo = local;
       return local;
     } catch (e) {
       handleFirestoreError(e, OperationType.LIST, 'notifications');
+      notificationsMemo = local;
       return local;
     }
   },
@@ -829,6 +847,7 @@ export const firestoreStorage = {
 
     const local = getLocalJson<AdminNotification[]>(cacheKey, []);
     setLocalJson(cacheKey, [newNotif, ...local]);
+    notificationsMemo = [newNotif, ...(notificationsMemo || local)];
 
     if (isFirestoreQuotaExhausted()) return newNotif;
 
@@ -849,6 +868,9 @@ export const firestoreStorage = {
       cacheKey,
       local.map((n) => (n.id === id ? { ...n, ...updates } : n))
     );
+    if (notificationsMemo) {
+      notificationsMemo = notificationsMemo.map((n) => (n.id === id ? { ...n, ...updates } : n));
+    }
 
     if (isFirestoreQuotaExhausted()) return;
 
@@ -864,6 +886,7 @@ export const firestoreStorage = {
     const cacheKey = 'qtb_notifications_cache';
     const local = getLocalJson<AdminNotification[]>(cacheKey, []);
     setLocalJson(cacheKey, local.filter((n) => n.id !== id));
+    if (notificationsMemo) notificationsMemo = notificationsMemo.filter((n) => n.id !== id);
 
     if (isFirestoreQuotaExhausted()) return;
 
@@ -875,28 +898,18 @@ export const firestoreStorage = {
     }
   },
 
+  // Prompt 6 PHẦN D: KHÔNG còn snapshot thường trực (mỗi change tốn read).
+  // Đọc 1 lần khi subscribe, giữ memory cả phiên. Admin vừa sửa thì tự
+  // refresh 1 lần qua forceRefresh ở caller.
   subscribeNotifications(onUpdate: (notifications: AdminNotification[]) => void): () => void {
-    if (isFirestoreQuotaExhausted()) {
-      onUpdate([]);
-      return () => {};
-    }
-    const colRef = collection(db, 'notifications');
-    try {
-      const unsubscribe = onSnapshot(
-        colRef,
-        (snap) => {
-          const list = snap.docs.map((d) => d.data() as AdminNotification);
-          list.sort((a, b) => b.createdAt - a.createdAt);
-          onUpdate(list);
-        },
-        (error) => {
-          handleFirestoreError(error, OperationType.GET, 'notifications');
-        }
-      );
-      return unsubscribe;
-    } catch (e) {
-      void 0;
-      return () => {};
-    }
+    let alive = true;
+    this.getNotifications()
+      .then((list) => {
+        if (alive) onUpdate(list);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
   },
 };

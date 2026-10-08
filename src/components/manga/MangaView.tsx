@@ -127,6 +127,8 @@ export const MangaView: React.FC<MangaViewProps> = ({
     chapter: MangaChapter;
     pageIndex?: number;
   } | null>(null);
+  // Chapter đang đọc dở (để flush đúng khi đổi chương — Prompt 6 PHẦN B)
+  const lastMangaChapterRef = React.useRef<string | null>(null);
   const isDetail = !!selectedManga;
 
   const [savedMangaList, setSavedMangaList] = useState<MangaItem[]>([]);
@@ -465,9 +467,44 @@ export const MangaView: React.FC<MangaViewProps> = ({
       chapter,
       pageIndex: pageIdx,
     });
+    // Ưu tiên resume T1/T2 (thiết bị khác đọc dở) nếu mới hơn lịch sử
+    if (accountId && profileId && selectedManga?.id) {
+      const mangaId = selectedManga.id;
+      import('../../services/progressService')
+        .then(async ({ readResumeManga }) => {
+          try {
+            const r = await readResumeManga(accountId, profileId, mangaId);
+            if (r && r.pageIndex > pageIdx) {
+              setActiveReadingSession((prev) =>
+                prev ? { ...prev, pageIndex: r.pageIndex } : prev
+              );
+            }
+          } catch {
+            // ignore
+          }
+        })
+        .catch(() => {});
+    }
   };
 
   const handleCloseReader = () => {
+    // Đóng reader: flush Tầng 3 một lần (Prompt 6 PHẦN B)
+    if (accountId && profileId) {
+      lastMangaChapterRef.current = null;
+      import('../../services/progressService')
+        .then(async ({ flushPending }) => {
+          try {
+            const wrote = await flushPending(accountId, profileId);
+            if (wrote) {
+              const updated = await firestoreStorage.getMangaHistory(accountId, profileId);
+              setHistoryList(updated);
+            }
+          } catch {
+            // ignore
+          }
+        })
+        .catch(() => {});
+    }
     if (window.history.state && window.history.state.mangaView === "reader")
       window.history.back();
     else setActiveReadingSession(null);
@@ -497,6 +534,31 @@ export const MangaView: React.FC<MangaViewProps> = ({
 
   const handleChapterRead = async (chapter: MangaChapter, pageIndex = 0) => {
     if (!selectedManga || !chapter?.id) return;
+    // Prompt 6 PHẦN B: mỗi trang chỉ tick T1/T2 (local + RTDB), KHÔNG ghi
+    // Firestore từng trang. Flush T3 khi đổi chương/đóng reader.
+    if (accountId && profileId) {
+      const { tickManga, flushPending, pruneProgress } = await import(
+        '../../services/progressService'
+      );
+      try {
+        const lastId = lastMangaChapterRef.current;
+        if (lastId && lastId !== chapter.id) {
+          // Đổi chương: flush chương cũ trước
+          const wrote = await flushPending(accountId, profileId);
+          if (wrote) {
+            const updated = await firestoreStorage.getMangaHistory(accountId, profileId);
+            setHistoryList(updated);
+          }
+        } else if (!lastId) {
+          pruneProgress(accountId, profileId, true).catch(() => {});
+        }
+        lastMangaChapterRef.current = chapter.id;
+        tickManga(accountId, profileId, selectedManga, chapter, pageIndex, 0);
+      } catch {
+        // ignore
+      }
+      return;
+    }
     const newItem: MangaHistoryItem = {
       mangaId: selectedManga.id,
       source: selectedManga.source,

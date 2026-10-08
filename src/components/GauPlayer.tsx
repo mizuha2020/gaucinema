@@ -42,6 +42,7 @@ interface GauPlayerProps {
   onBack: () => void;
   onSelectEpisode: (ep: MovieEpisode, server: EpisodeServer, currentTime?: number) => void;
   onSaveProgress?: (currentTime: number, duration: number) => void;
+  onProgressTick?: (currentTime: number, duration: number) => void;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
   initialTime?: number;
   currentAccount?: Account | null;
@@ -76,6 +77,7 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
   onBack,
   onSelectEpisode,
   onSaveProgress,
+  onProgressTick,
   onTimeUpdate,
   initialTime = 0,
   currentAccount,
@@ -1222,15 +1224,16 @@ export const GauPlayer: React.FC<GauPlayerProps> = memo(({
     else if (e.key === 'End') { e.preventDefault(); v.currentTime = Math.max(0, (v.duration || 0) - 1); resetControlsTimer(); }
   }, [duration, resetControlsTimer]);
 
-  // save progress every 30s
+  // tick tiến độ Tầng 1+2 mỗi 5s (localStorage + RTDB) — KHÔNG ghi Firestore.
+  // Ghi Firestore chỉ ở mốc kết thúc qua onSaveProgress (pause/unmount/hidden).
   useEffect(() => {
     const id = window.setInterval(() => {
       const v = videoRef.current;
       if (!v || v.paused || !duration) return;
-      onSaveProgress?.(v.currentTime, duration);
-    }, 30000);
+      onProgressTick?.(v.currentTime, duration);
+    }, 5000);
     return () => window.clearInterval(id);
-  }, [duration, onSaveProgress]);
+  }, [duration, onProgressTick]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

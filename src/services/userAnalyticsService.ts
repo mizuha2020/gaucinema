@@ -19,7 +19,6 @@ import { authService } from './authService';
 
 const HEARTBEAT_EXPIRATION_MS = 240 * 1000; // 4 minutes
 const PENDING_STORAGE_KEY = 'gau_pending_analytics_v1';
-const AUTO_FLUSH_INTERVAL_MS = 180 * 1000; // 3 minutes
 
 function cleanDocId(raw: string): string {
   return raw.replace(/[\/\.#$\[\]\s]/g, '_').substring(0, 120);
@@ -59,22 +58,16 @@ interface PendingAccountStats {
 }
 
 class UserAnalyticsService {
-  // In-memory accumulation buffer
+  // In-memory accumulation buffer (flush duy nhất khi hết phiên — Prompt 6 C)
   private pendingStats: Map<string, PendingAccountStats> = new Map();
   private pendingActivities: Map<string, UserActivityItem> = new Map();
-  private flushTimer: NodeJS.Timeout | null = null;
   private isFlushing = false;
 
   constructor() {
     this.restoreFromLocalStorage();
-    this.startAutoFlushTimer();
-  }
-
-  private startAutoFlushTimer(): void {
-    if (this.flushTimer) clearInterval(this.flushTimer);
-    this.flushTimer = setInterval(() => {
-      this.flushPendingAnalytics().catch(() => {});
-    }, AUTO_FLUSH_INTERVAL_MS);
+    // Prompt 6 PHẦN C: KHÔNG auto-flush định kỳ (mỗi flush là lượt ghi).
+    // Ghi MỘT LẦN khi kết thúc phiên (presence stopSession) bằng writeBatch.
+    // Crash giữa chừng đã có localStorage đỡ, flush ở phiên sau.
   }
 
   /**

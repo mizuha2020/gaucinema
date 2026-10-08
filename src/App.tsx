@@ -15,6 +15,12 @@ import {
 import { authService } from "./services/authService";
 import { firestoreStorage } from "./services/firestoreStorage";
 import {
+  tickMovie,
+  flushPending,
+  readResumeMovie,
+  pruneProgress,
+} from "./services/progressService";
+import {
   claimSession,
   fetchSessions,
   getDeviceId,
@@ -1772,25 +1778,13 @@ export default function App() {
     setAllServers(servers);
     setInitialResumeTime(resumeTime);
 
-    // Ghi nhận ngay khi bắt đầu xem để mục "Xem tiếp" / "Lịch sử" xuất hiện lập tức.
+    // Prompt 6 PHẦN B: mở player KHÔNG ghi Firestore (chỉ tick T1/T2 + dọn
+    // rác RTDB). "Xem tiếp" đa thiết bị đọc từ RTDB; Firestore ghi ở mốc kết thúc.
     if (currentAccount && activeProfile) {
-      firestoreStorage
-        .saveWatchProgress(currentAccount.id, activeProfile.id, {
-          id: `${movie.slug}_${episode.slug}`,
-          movieSlug: movie.slug,
-          movieName: movie.name,
-          movieOriginName: movie.origin_name,
-          movieThumb: movie.thumb_url,
-          moviePoster: movie.poster_url,
-          episodeName: episode.name,
-          episodeSlug: episode.slug,
-          serverName: server.server_name,
-          linkM3u8: episode.link_m3u8,
-          currentTime: resumeTime,
-          duration: 0,
-          progressPercent: 0,
-        })
-        .then(() => refreshProfileData());
+      pruneProgress(currentAccount.id, activeProfile.id, false).catch(() => {});
+      if (resumeTime > 0) {
+        tickMovie(currentAccount.id, activeProfile.id, movie, episode, server, resumeTime, 0);
+      }
     }
   };
 
@@ -1811,40 +1805,17 @@ export default function App() {
   };
 
   // Snapshot tiến độ lần cuối khi thoát player (bản cũ nằm ở popstate)
+  // Prompt 6 PHẦN B: flush Tầng 3 duy nhất (debounce + chênh <10s thì bỏ).
   const saveFinalProgress = () => {
-    if (
-      currentAccount &&
-      activeProfile &&
-      playingMovie &&
-      playingEpisode &&
-      playingServer &&
-      videoTimeRef.current > 0
-    ) {
-      firestoreStorage
-        .saveWatchProgress(currentAccount.id, activeProfile.id, {
-          id: `${playingMovie.slug}_${playingEpisode.slug}`,
-          movieSlug: playingMovie.slug,
-          movieName: playingMovie.name,
-          movieOriginName: playingMovie.origin_name,
-          movieThumb: playingMovie.thumb_url,
-          moviePoster: playingMovie.poster_url,
-          episodeName: playingEpisode.name,
-          episodeSlug: playingEpisode.slug,
-          serverName: playingServer.server_name,
-          linkM3u8: playingEpisode.link_m3u8,
-          currentTime: videoTimeRef.current,
-          duration: videoDurationRef.current || 0,
-          progressPercent:
-            videoDurationRef.current > 0
-              ? Math.round(
-                  (videoTimeRef.current / videoDurationRef.current) * 100,
-                )
-              : 0,
-        })
-        .then(() => refreshProfileData());
-    } else {
+    if (!currentAccount || !activeProfile) {
       refreshProfileData();
+      return;
     }
+    flushPending(currentAccount.id, activeProfile.id)
+      .then((wrote) => {
+        if (wrote) refreshProfileData();
+      })
+      .catch(() => {});
   };
 
   const closePlayer = () => {
@@ -1864,6 +1835,23 @@ export default function App() {
   };
 
   // Start Playing a Movie directly
+  // Mốc resume ưu tiên T1/T2 (local/RTDB) rồi mới tới Firestore history.
+  // Giúp xem dở trên điện thoại, mở TV xem tiếp ngay cả khi Firestore chưa flush.
+  const resolveResumeTime = async (
+    movieSlug: string,
+    episodeSlug: string,
+    fallback: number
+  ): Promise<number> => {
+    try {
+      if (!currentAccount || !activeProfile) return fallback;
+      const r = await readResumeMovie(currentAccount.id, activeProfile.id, movieSlug, episodeSlug);
+      if (r && r.currentTime > 10 && r.currentTime > fallback) return Math.floor(r.currentTime);
+    } catch {
+      // ignore
+    }
+    return fallback;
+  };
+
   const handlePlayMovie = async (movie: Movie) => {
     try {
       showToast(`Đang kết nối phim: ${movie.name}...`);
@@ -1892,12 +1880,13 @@ export default function App() {
         const defaultServer = servers[0];
         const defaultEpisode = defaultServer.server_data[0];
 
+        const tiered = await resolveResumeTime(movieData.slug, defaultEpisode.slug, resumeSeconds);
         openPlayerWithHistory(
           movieData,
           defaultEpisode,
           defaultServer,
           servers,
-          resumeSeconds,
+          tiered,
         );
       } else {
         openDetailModal(movieData || movie);
@@ -1912,7 +1901,7 @@ export default function App() {
   };
 
   // Play a specific episode
-  const handlePlayEpisode = (
+  const handlePlayEpisode = async (
     movie: Movie,
     episode: MovieEpisode,
     server: EpisodeServer,
@@ -1925,6 +1914,7 @@ export default function App() {
       if (match && match.currentTime > 10) {
         resumeTime = match.currentTime;
       }
+      resumeTime = await resolveResumeTime(movie.slug, episode.slug, resumeTime);
     }
     openPlayerWithHistory(
       movie,
@@ -1994,13 +1984,17 @@ export default function App() {
   // Đổi tập trong player cũng đổi URL (replace để khỏi ngập history)
   const handleSelectEpisode = useCallback(
     (ep: MovieEpisode, srv: EpisodeServer, resumeTime?: number) => {
+      // Flush tập cũ trước khi chuyển (mốc kết thúc tập — Prompt 6 PHẦN B)
+      if (currentAccount && activeProfile) {
+        flushPending(currentAccount.id, activeProfile.id).catch(() => {});
+      }
       setPlayingEpisode(ep);
       setPlayingServer(srv);
       setInitialResumeTime(resumeTime ?? 0);
       const m = playingMovieRef.current;
       if (m) appNavigate(buildXemUrl(m.slug, ep.slug, srv.server_name), { replace: true });
     },
-    [],
+    [currentAccount, activeProfile],
   );
 
   // Lightweight live-time forwarder so the exit save uses the real final time
@@ -2009,57 +2003,41 @@ export default function App() {
     if (d > 0) videoDurationRef.current = d;
   }, []);
 
-  // Save Progress Callback from Player to Firestore
-  const handleSaveProgress = useCallback(
-    async (currentTime: number, duration: number) => {
+  // Tick tiến độ Tầng 1+2 từ Player (5s) — KHÔNG ghi Firestore, không refresh.
+  const handleProgressTick = useCallback(
+    (currentTime: number, duration: number) => {
       videoTimeRef.current = currentTime;
-      videoDurationRef.current = duration;
-      if (
-        !currentAccount ||
-        !activeProfile ||
-        !playingMovie ||
-        !playingEpisode ||
-        !playingServer
-      )
+      if (duration > 0) videoDurationRef.current = duration;
+      if (!currentAccount || !activeProfile || !playingMovie || !playingEpisode || !playingServer) {
         return;
-      if (duration <= 0) return;
-
-      const progressPercent = Math.min(100, (currentTime / duration) * 100);
-      await firestoreStorage.saveWatchProgress(
+      }
+      tickMovie(
         currentAccount.id,
         activeProfile.id,
-        {
-          id: `${playingMovie.slug}_${playingEpisode.slug}`,
-          movieSlug: playingMovie.slug,
-          movieName: playingMovie.name,
-          movieOriginName: playingMovie.origin_name,
-          movieThumb: playingMovie.thumb_url,
-          moviePoster: playingMovie.poster_url,
-          episodeName: playingEpisode.name,
-          episodeSlug: playingEpisode.slug,
-          serverName: playingServer.server_name,
-          linkM3u8: playingEpisode.link_m3u8,
-          currentTime,
-          duration,
-          progressPercent,
-        },
+        playingMovie,
+        playingEpisode,
+        playingServer,
+        currentTime,
+        duration
       );
-      // Refresh the "Continue Watching" / History lists live so they appear
-      // while the user is still watching, not only after closing the player.
-      const history = await firestoreStorage.getHistory(
-        currentAccount.id,
-        activeProfile.id,
-      );
-      setWatchHistory(history);
     },
-    [
-      currentAccount,
-      activeProfile,
-      playingMovie,
-      playingEpisode,
-      playingServer,
-    ],
+    [currentAccount, activeProfile, playingMovie, playingEpisode, playingServer]
   );
+
+  // Flush Tầng 3 (Firestore) — CHỈ ở mốc kết thúc: đóng player, chuyển tập,
+  // pause, rời trang. Debounce + bỏ qua chênh <10s trong progressService.
+  const handleSaveProgress = useCallback(async () => {
+    if (!currentAccount || !activeProfile) return;
+    try {
+      const wrote = await flushPending(currentAccount.id, activeProfile.id);
+      if (wrote) {
+        const history = await firestoreStorage.getHistory(currentAccount.id, activeProfile.id);
+        setWatchHistory(history);
+      }
+    } catch {
+      // ignore
+    }
+  }, [currentAccount, activeProfile]);
 
   // Search Submit Handler (URL-first: /browse?q=... chia sẻ được)
   const handleSearchSubmit = (keyword: string) => {
@@ -2400,6 +2378,7 @@ export default function App() {
               onBack={closePlayer}
               onSelectEpisode={handleSelectEpisode}
               onSaveProgress={handleSaveProgress}
+              onProgressTick={handleProgressTick}
               onTimeUpdate={handlePlayerTimeUpdate}
               currentAccount={currentAccount}
               activeProfile={activeProfile}

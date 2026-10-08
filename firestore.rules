@@ -2,18 +2,28 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Prompt 6 PHẦN A: KHÔNG còn lệnh get() nào trong rules (mỗi get() tốn
+    // 1 lượt đọc, nhân đôi chi phí toàn app). Admin và hạn dùng đọc từ
+    // custom claim trong ID token (do server gán qua Admin SDK).
     function isSignedIn() { return request.auth != null; }
-    function me() { return get(/databases/$(database)/documents/accounts/$(request.auth.uid)).data; }
-    function isAdmin() { return isSignedIn() && me().role == 'admin'; }
+    function isAdmin() { return isSignedIn() && request.auth.token.admin == true; }
+    function notExpired() {
+      return isAdmin() ||
+        (isSignedIn()
+          && request.auth.token.expiresAt is number
+          && request.auth.token.expiresAt > request.time.toMillis());
+    }
 
     // Tài khoản: document id PHẢI là Firebase Auth uid.
+    // Phép so sánh uid rẻ đặt TRƯỚC (short-circuit, vế isAdmin đắt không chạy).
     match /accounts/{uid} {
       allow read: if request.auth.uid == uid || isAdmin();
       allow create: if isAdmin();
       allow delete: if isAdmin();
       // Admin toàn quyền. Chính chủ được sửa nhưng CẤM đụng role, status, uid.
+      // Tài khoản hết hạn không sửa được gì (kể cả chính mình).
       allow update: if isAdmin() ||
-        (isSignedIn() && request.auth.uid == uid
+        (request.auth.uid == uid && notExpired()
           && request.resource.data.role == resource.data.role
           && request.resource.data.status == resource.data.status
           && request.resource.data.uid == resource.data.uid);
@@ -23,76 +33,75 @@ service cloud.firestore {
     // database, kể cả gọi Firestore SDK từ DevTools.
     match /accounts/{uid}/profiles/{profileId} {
       allow create: if (request.auth.uid == uid || isAdmin()) && (profileId == 'p1' || profileId == 'p2');
-      allow read, update, delete: if request.auth.uid == uid || isAdmin();
+      allow read, update, delete: if (request.auth.uid == uid && notExpired()) || isAdmin();
     }
 
     // Dữ liệu dưới mỗi hồ sơ: liệt kê TƯỜNG MINH từng subcollection.
-    // TUYỆT ĐỐI không dùng {rest=**} ở đây — wildcard ** khớp cả 0 segment
-    // nên cũng khớp chính document profiles/{profileId}, cộng dồn OR sẽ cho
-    // phép create p3/p999, vô hiệu hóa chặn slot phía trên (bug F8).
-    // Thêm subcollection mới thì thêm block tương ứng (mặc định fail-closed).
+    // TUYỆT ĐỐI không dùng {rest=**} — wildcard ** khớp cả 0 segment nên cũng
+    // khớp chính document profiles/{profileId}, cộng dồn OR sẽ cho phép
+    // create p3/p999, vô hiệu hóa chặn slot phía trên (bug F8).
     match /accounts/{uid}/profiles/{profileId}/history/{docId} {
-      allow read, write: if request.auth.uid == uid || isAdmin();
+      allow read, write: if (request.auth.uid == uid && notExpired()) || isAdmin();
     }
     match /accounts/{uid}/profiles/{profileId}/myList/{docId} {
-      allow read, write: if request.auth.uid == uid || isAdmin();
+      allow read, write: if (request.auth.uid == uid && notExpired()) || isAdmin();
     }
     match /accounts/{uid}/profiles/{profileId}/savedManga/{docId} {
-      allow read, write: if request.auth.uid == uid || isAdmin();
+      allow read, write: if (request.auth.uid == uid && notExpired()) || isAdmin();
     }
     match /accounts/{uid}/profiles/{profileId}/mangaHistory/{docId} {
-      allow read, write: if request.auth.uid == uid || isAdmin();
+      allow read, write: if (request.auth.uid == uid && notExpired()) || isAdmin();
     }
     match /accounts/{uid}/profiles/{profileId}/youtubeFavorites/{docId} {
-      allow read, write: if request.auth.uid == uid || isAdmin();
+      allow read, write: if (request.auth.uid == uid && notExpired()) || isAdmin();
     }
     match /accounts/{uid}/profiles/{profileId}/youtubeHistory/{docId} {
-      allow read, write: if request.auth.uid == uid || isAdmin();
+      allow read, write: if (request.auth.uid == uid && notExpired()) || isAdmin();
     }
     match /accounts/{uid}/profiles/{profileId}/youtubeSubscriptions/{docId} {
-      allow read, write: if request.auth.uid == uid || isAdmin();
+      allow read, write: if (request.auth.uid == uid && notExpired()) || isAdmin();
     }
 
     // Thống kê và lịch sử hoạt động: client ghi, chỉ admin đọc.
     match /userStats/{id} {
-      allow create, update: if isSignedIn();
+      allow create, update: if isSignedIn() && notExpired();
       allow read: if isAdmin();
     }
     match /userActivityHistory/{id} {
-      allow create, update: if isSignedIn();
+      allow create, update: if isSignedIn() && notExpired();
       allow read: if isAdmin();
     }
 
     // Phiên xem trực tuyến (presence).
     match /activeSessions/{id} {
-      allow create, update, delete, read: if isSignedIn();
+      allow create, update, delete, read: if isSignedIn() && notExpired();
     }
 
-    // Dữ liệu dùng chung: ai đăng nhập cũng đọc được, chỉ admin ghi.
+    // Dữ liệu dùng chung: ai đăng nhập (còn hạn) cũng đọc được, chỉ admin ghi.
     match /system_apis/{id} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && notExpired();
       allow write: if isAdmin();
     }
     match /notifications/{id} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && notExpired();
       allow write: if isAdmin();
     }
     match /customAvatars/{id} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && notExpired();
       allow write: if isAdmin();
     }
     match /global/{id} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && notExpired();
       allow write: if isAdmin();
     }
     match /system_cache/{id} {
-      allow read: if isSignedIn();
+      allow read: if isSignedIn() && notExpired();
       allow write: if isAdmin();
     }
 
     // Mã ghép đôi TV.
     match /tvPairCodes/{code} {
-      allow read, write: if isSignedIn();
+      allow read, write: if isSignedIn() && notExpired();
     }
   }
 }

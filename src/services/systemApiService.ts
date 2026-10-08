@@ -192,6 +192,12 @@ class SystemApiService {
    * Get all managed APIs from Firestore (with automatic seeding and local cache fallback)
    */
   async getAllApis(): Promise<SystemApiEndpoint[]> {
+    // Prompt 6 PHẦN D: collection gần như không đổi trong phiên — đọc 1 lần,
+    // giữ trong memory cả phiên. Chỉ đọc lại khi admin sửa (qua các hàm
+    // add/update/delete bên dưới, chúng tự refresh memo).
+    if (this.isInitialized && this.inMemoryApis.length > 0) {
+      return this.inMemoryApis;
+    }
     try {
       if (isFirestoreQuotaExhausted()) {
         this.loadFromLocalStorage();

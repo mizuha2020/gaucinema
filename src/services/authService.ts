@@ -205,24 +205,28 @@ export const authService = {
   },
 
   // Admin: Get all Accounts
+  // Prompt 6 PHẦN E: BỎ đếm profiles trong danh sách tổng (N+1 reads: 51 lượt
+  // cho 50 acc). Chỉ đếm khi mở trang chi tiết 1 user (getProfilesCount).
   async getAllAccounts(): Promise<Account[]> {
     try {
       const snap = await withTimeout(getDocs(collection(db, 'accounts')), 10000);
-      const accounts: Account[] = [];
-      for (const d of snap.docs) {
+      const accounts: Account[] = snap.docs.map((d) => {
         const data = d.data() as Account;
-        let profilesCount = 1;
-        try {
-          const profilesSnap = await getDocs(collection(db, 'accounts', d.id, 'profiles'));
-          profilesCount = profilesSnap.size;
-        } catch {
-          // giữ mặc định
-        }
-        accounts.push({ ...data, id: d.id, uid: (data.uid || d.id) as string, profilesCount });
-      }
+        return { ...data, id: d.id, uid: (data.uid || d.id) as string };
+      });
       return accounts.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     } catch {
       return [];
+    }
+  },
+
+  /** Đếm profiles khi mở trang chi tiết 1 user (thay cho N+1 ở danh sách). */
+  async getProfilesCount(accountId: string): Promise<number> {
+    try {
+      const snap = await withTimeout(getDocs(collection(db, 'accounts', accountId, 'profiles')), 8000);
+      return snap.size;
+    } catch {
+      return 0;
     }
   },
 

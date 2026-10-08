@@ -26,7 +26,6 @@ import {
 } from 'lucide-react';
 import { EpisodeServer, Movie, MovieEpisode, Account, UserProfile } from '../types';
 import { presenceService } from '../services/presenceService';
-import { watchHistoryService } from '../services/watchHistoryService';
 import { offlineMovieService } from '../services/offlineMovieService';
 import { enterNativePip, setNativeVideoPlaying, checkNativePipSupported } from '../utils/nativeVideoPlayer';
 import { Capacitor } from '@capacitor/core';
@@ -41,6 +40,7 @@ interface SimplePlayerProps {
   onBack: () => void;
   onSelectEpisode: (ep: MovieEpisode, server: EpisodeServer, currentTime?: number) => void;
   onSaveProgress: (currentTime: number, duration: number) => void;
+  onProgressTick?: (currentTime: number, duration: number) => void;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
   initialTime?: number;
   autoFullscreen?: boolean; // 👈 Thêm prop này, mặc định true
@@ -94,6 +94,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
   onBack,
   onSelectEpisode,
   onSaveProgress,
+  onProgressTick,
   onTimeUpdate,
   initialTime = 0,
   autoFullscreen = false, // 👈 Mặc định bật
@@ -1092,6 +1093,8 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
 
   useEffect(() => {
     lastSavedTimeRef.current = 0;
+    // Tick Tầng 1+2 mỗi 5s (local + RTDB), KHÔNG ghi Firestore.
+    // Ghi Firestore (recordWatch trực tiếp) đã gỡ theo Prompt 6 PHẦN C.
     saveInterval.current = setInterval(() => {
       const video = videoRef.current;
       if (!video || duration <= 0) return;
@@ -1099,31 +1102,15 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
       const cur = video.currentTime;
       if (lastSavedTimeRef.current > 0 && cur - lastSavedTimeRef.current < 15) return;
       lastSavedTimeRef.current = cur;
-      onSaveProgress(cur, duration);
-      if (!disableHistory) watchHistoryService.recordWatch({
-        accountId: currentAccount?.id || currentAccount?.username || 'user',
-        accountDisplayName: currentAccount?.displayName || currentAccount?.username || 'Khán Giả Phim',
-        profileId: activeProfile?.id || 'movie_profile',
-        profileName: activeProfile?.name || 'Người xem',
-        profileAvatar: activeProfile?.avatar || '',
-        mediaType: 'movie',
-        contentId: movie.slug || movie._id || movie.id || '',
-        title: movie.name,
-        subtitle: currentEpisode.name ? `Tập ${currentEpisode.name}` : undefined,
-        coverUrl: movie.poster_url || movie.thumb_url,
-        apiSource: currentServer.server_name || 'movie',
-        currentTime: cur,
-        duration: duration,
-        progressPercent: Math.round((cur / duration) * 100),
-        watchedDurationSeconds: 30,
-      });
-    }, 30000);
+      onProgressTick?.(cur, duration);
+    }, 5000);
     return () => {
       if (saveInterval.current) clearInterval(saveInterval.current);
     };
-  }, [duration, onSaveProgress]);
+  }, [duration, onProgressTick]);
 
-  // Save progress on unmount (when player closes)
+  // Save progress on unmount (when player closes) — flush Tầng 3 duy nhất.
+  // Ghi recordWatch trực tiếp đã gỡ theo Prompt 6 PHẦN C (buffer + flush cuối).
   useEffect(() => {
     return () => {
       const video = videoRef.current;
@@ -1132,25 +1119,7 @@ export const SimplePlayer: React.FC<SimplePlayerProps> = memo(({
       const liveDuration = video?.duration || duration;
       if (video && liveDuration > 0 && currentAccount && activeProfile && !disableHistory) {
         const cur = video.currentTime;
-        const progressPercent = Math.round((cur / liveDuration) * 100);
         onSaveProgress(cur, liveDuration);
-        watchHistoryService.recordWatch({
-          accountId: currentAccount.id || currentAccount.username || 'user',
-          accountDisplayName: currentAccount.displayName || currentAccount.username || 'Khán Giả Phim',
-          profileId: activeProfile.id || 'movie_profile',
-          profileName: activeProfile.name || 'Người xem',
-          profileAvatar: activeProfile.avatar || '',
-          mediaType: 'movie',
-          contentId: movie.slug || movie._id || movie.id || '',
-          title: movie.name,
-          subtitle: currentEpisode.name ? `Tập ${currentEpisode.name}` : undefined,
-          coverUrl: movie.poster_url || movie.thumb_url,
-          apiSource: currentServer.server_name || 'movie',
-          currentTime: cur,
-          duration: liveDuration,
-          progressPercent,
-          watchedDurationSeconds: 0,
-        });
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps

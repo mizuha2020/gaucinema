@@ -35,6 +35,29 @@ interface AdminDashboardProps {
   onShowToast: (msg: string, type?: 'info' | 'success' | 'error' | 'warning') => void;
 }
 
+/** Số hồ sơ trong modal sửa (Prompt 6 PHẦN E: chỉ đếm khi mở chi tiết 1 user). */
+const EditProfilesCount: React.FC<{ accountId: string }> = ({ accountId }) => {
+  const [count, setCount] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    let alive = true;
+    setCount(null);
+    authService
+      .getProfilesCount(accountId)
+      .then((n) => {
+        if (alive) setCount(n);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [accountId]);
+  return (
+    <p className="text-xs text-slate-400">
+      Số hồ sơ: <strong className="text-sky-300">{count === null ? '…' : `${count} / 2 hồ sơ`}</strong>
+    </p>
+  );
+};
+
 /** Dòng hạn dùng + gia hạn nhanh ngay trên card tài khoản (Prompt 5 A2.5). */
 const AccountExpiryRow: React.FC<{
   account: Account;
@@ -834,10 +857,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               </span>
                             </div>
                             <div className="flex justify-between items-center">
-                              <span>Số hồ sơ:</span>
-                              <span className="font-bold text-sky-300">{acc.profilesCount || 1} / 2 hồ sơ</span>
-                            </div>
-                            <div className="flex justify-between items-center">
                               <span>Ngày khởi tạo:</span>
                               <span className="text-slate-300">
                                 {acc.createdAt ? new Date(acc.createdAt).toLocaleDateString('vi-VN') : 'Mặc định'}
@@ -1342,6 +1361,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     className="w-full bg-[#131f37] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
                   />
                 </div>
+
+                <EditProfilesCount accountId={editingAccount.id} />
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">

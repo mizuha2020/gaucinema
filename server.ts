@@ -290,6 +290,27 @@ async function startServer() {
       if (acc.role !== "admin" && acc.expiresAt && acc.expiresAt < Date.now()) {
         return res.status(403).json({ error: "ACCOUNT_EXPIRED", expiresAt: acc.expiresAt });
       }
+      // Tự vá claim cho tài khoản cũ (tạo trước khi có claims): gán claim khớp
+      // Firestore mà KHÔNG revoke (token tự refresh trong 1h, không đá user).
+      // Các thao tác nhạy cảm (extend/khóa) vẫn revoke để hiệu lực ngay.
+      try {
+        const tokenClaims = (decoded as any) || {};
+        if (
+          acc.role !== "admin" &&
+          typeof acc.expiresAt === "number" &&
+          tokenClaims.expiresAt !== acc.expiresAt
+        ) {
+          const u = await getAdminAuth().getUser(uid).catch(() => null);
+          const prev = ((u?.customClaims || {}) as Record<string, any>);
+          if (prev.expiresAt !== acc.expiresAt) {
+            getAdminAuth()
+              .setCustomUserClaims(uid, { ...prev, expiresAt: acc.expiresAt })
+              .catch(() => {});
+          }
+        }
+      } catch {
+        // ignore — không chặn request vì vá claim
+      }
       req.account = acc;
       return next();
     } catch {
@@ -3182,6 +3203,29 @@ setTimeout(seedInitialCastIndex, 2000);
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err?.message || "Claims failed" });
+    }
+  });
+
+  // Gán custom claim admin (Prompt 6 A1). Gọi 1 lần cho tài khoản admin hiện
+  // có, và tự động cho mọi tài khoản role admin mới. Xong phải ĐĂNG XUẤT và
+  // ĐĂNG NHẬP LẠI để token mới có claim (kèm getIdToken(true) ép refresh).
+  app.post("/api/admin/users/:uid/set-admin", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const targetUid = String(req.params?.uid || "");
+      if (!targetUid) return res.status(400).json({ error: "INVALID_UID" });
+      const snap = await getAdminFirestore().doc(`accounts/${targetUid}`).get();
+      if (!snap.exists) return res.status(404).json({ error: "NOT_FOUND" });
+      if ((snap.data() as any)?.role !== "admin") {
+        return res.status(400).json({ error: "NOT_AN_ADMIN_ACCOUNT" });
+      }
+      const user = await getAdminAuth().getUser(targetUid);
+      const prev = (user.customClaims || {}) as Record<string, any>;
+      await getAdminAuth().setCustomUserClaims(targetUid, { ...prev, admin: true });
+      await getAdminAuth().revokeRefreshTokens(targetUid).catch(() => {});
+      bustAccountCache(targetUid);
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || "Set-admin failed" });
     }
   });
 
