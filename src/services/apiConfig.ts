@@ -1,7 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { auth } from './firebase';
 import { signOut } from 'firebase/auth';
-import { getDeviceId } from './sessionService';
+import { getDeviceId, releaseSession } from './sessionService';
 
 export const isNativeApp = (): boolean => {
   if (typeof window === 'undefined') return false;
@@ -295,11 +295,47 @@ function isBackendUrl(url: string): boolean {
   return false;
 }
 
+export const AUTH_FLASH_KEY = 'gau_auth_notice_flash';
+
 function handleSessionExpired(): void {
   try {
     cachedIdToken = null;
     cachedIdTokenAt = 0;
     signOut(auth).catch(() => {});
+  } catch {
+    // ignore
+  } finally {
+    try {
+      window.location.reload();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** Bị khóa/hết hạn giữa chừng (Prompt 5 A3/A2.4): nhả slot RTDB, signOut,
+ *  để lại thông báo cho màn hình đăng nhập (khác nhau rõ ràng), rồi reload. */
+async function handleAccountCutoff(kind: 'ACCOUNT_BLOCKED' | 'ACCOUNT_EXPIRED', expiresAt?: number | null): Promise<void> {
+  try {
+    await releaseSession().catch(() => {});
+  } catch {
+    // ignore
+  }
+  try {
+    cachedIdToken = null;
+    cachedIdTokenAt = 0;
+    await signOut(auth).catch(() => {});
+  } catch {
+    // ignore
+  }
+  try {
+    const msg =
+      kind === 'ACCOUNT_BLOCKED'
+        ? 'Tài khoản đã bị quản trị viên tạm khóa.'
+        : `Tài khoản đã hết hạn sử dụng${
+            expiresAt ? ` (hết hạn ngày ${new Date(expiresAt).toLocaleDateString('vi-VN')})` : ''
+          }. Vui lòng liên hệ quản trị viên để gia hạn.`;
+    window.sessionStorage.setItem(AUTH_FLASH_KEY, msg);
   } catch {
     // ignore
   } finally {
@@ -360,6 +396,23 @@ export async function apiFetch(
   };
 
   let res = await runWithTimeout(backend ? await getBackendToken() : null, timeoutMs);
+  if (res.status === 403 && backend) {
+    // Prompt 5 A3/A2.4: token HỢP LỆ nhưng tài khoản bị khóa/hết hạn.
+    // Không retry (retry vô ích), xử lý ngay rồi throw để caller dừng.
+    try {
+      const probe = await res.clone().json().catch(() => null);
+      const code = (probe as any)?.error;
+      if (code === 'ACCOUNT_BLOCKED' || code === 'ACCOUNT_EXPIRED') {
+        await handleAccountCutoff(code, (probe as any)?.expiresAt ?? null);
+        throw new Error(code === 'ACCOUNT_BLOCKED' ? 'Tài khoản đã bị quản trị viên tạm khóa.' : 'Tài khoản đã hết hạn sử dụng.');
+      }
+    } catch (e: any) {
+      if (e?.message === 'Tài khoản đã bị quản trị viên tạm khóa.' || e?.message === 'Tài khoản đã hết hạn sử dụng.') {
+        throw e;
+      }
+      // ignore — không phải cutoff thì trả response như thường
+    }
+  }
   if (res.status === 409 && backend) {
     // Prompt 4 B7: thiết bị mất slot (vd admin ngắt phiên). Hiện màn hình
     // chặn, GIỮ ĐĂNG NHẬP (không signOut). Dùng clone để không nuốt body.

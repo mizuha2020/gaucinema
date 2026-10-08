@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Account, CustomAvatar } from '../types';
-import { authService, DEFAULT_AVATARS } from '../services/authService';
+import { authService, DEFAULT_AVATARS, formatExpiryDate } from '../services/authService';
 import { firestoreStorage } from '../services/firestoreStorage';
 import { AdminConfirmModal } from './AdminConfirmModal';
 import { AdminOverviewTab } from './admin/AdminOverviewTab';
@@ -34,6 +34,79 @@ interface AdminDashboardProps {
   onBackToCinema: () => void;
   onShowToast: (msg: string, type?: 'info' | 'success' | 'error' | 'warning') => void;
 }
+
+/** Dòng hạn dùng + gia hạn nhanh ngay trên card tài khoản (Prompt 5 A2.5). */
+const AccountExpiryRow: React.FC<{
+  account: Account;
+  onExtended: (expiresAt: number) => void;
+  onShowToast: (msg: string, type?: 'info' | 'success' | 'error' | 'warning') => void;
+}> = ({ account, onExtended, onShowToast }) => {
+  const [months, setMonths] = React.useState<number>(1);
+  const [busy, setBusy] = React.useState(false);
+  const expired = !!account.expiresAt && account.expiresAt < Date.now();
+  const expiringSoon =
+    !!account.expiresAt &&
+    account.expiresAt >= Date.now() &&
+    account.expiresAt - Date.now() < 7 * 24 * 60 * 60 * 1000;
+  const color = expired ? 'text-red-400' : expiringSoon ? 'text-amber-400' : 'text-emerald-400';
+
+  const handleExtend = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const { apiFetch } = await import('../services/apiConfig');
+      const res = await apiFetch(`/api/admin/users/${account.id}/extend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ months }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.expiresAt) {
+        onExtended(data.expiresAt);
+        onShowToast(`Đã gia hạn ${months} tháng cho @${account.username} (tới ${formatExpiryDate(data.expiresAt)})`);
+      } else {
+        onShowToast(`Không gia hạn được: ${(data as any)?.error || res.status}`, 'error');
+      }
+    } catch {
+      onShowToast('Không gia hạn được. Thử lại sau.', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="pt-1.5 mt-1.5 border-t border-slate-800 space-y-2">
+      <div className="flex justify-between items-center">
+        <span>Hạn dùng:</span>
+        <span className={`font-bold ${color}`}>
+          {account.expiresAt
+            ? `${formatExpiryDate(account.expiresAt)}${expired ? ' (hết hạn)' : ''}`
+            : 'Không thời hạn'}
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <select
+          value={months}
+          onChange={(e) => setMonths(Number(e.target.value) || 1)}
+          className="flex-1 min-w-0 bg-[#131f37] border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 cursor-pointer"
+        >
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
+            <option key={m} value={m}>
+              +{m} tháng
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={handleExtend}
+          disabled={busy}
+          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold rounded-lg shadow cursor-pointer"
+        >
+          {busy ? '...' : 'Gia hạn'}
+        </button>
+      </div>
+    </div>
+  );
+};
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   currentAccount,
@@ -180,9 +253,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     });
   };
 
-  // 2. UPDATE WITH ADMIN CONFIRMATION
-  // NOTE (Prompt 2): admin chưa đổi được mật khẩu của user khác (cần Admin SDK —
-  // Prompt 5). Chỉ user tự đổi mật khẩu của mình. TODO ở Prompt 5.
+  // 2. UPDATE WITH ADMIN CONFIRMATION (Prompt 5: admin đổi được pass user khác)
   const handleSaveAccountEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingAccount) return;
@@ -196,26 +267,51 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       onExecute: async () => {
         setIsSubmitting(true);
         try {
+          // Đổi trạng thái qua endpoint block/unblock để có hiệu lực ngay
+          // (thu hồi phiên + nhả slot), không update Firestore trực tiếp.
+          if (editStatus !== editingAccount.status) {
+            const { apiFetch } = await import('../services/apiConfig');
+            const action = editStatus === 'blocked' ? 'block' : 'unblock';
+            const res = await apiFetch(`/api/admin/users/${editingAccount.id}/${action}`, {
+              method: 'POST',
+            });
+            if (!res.ok) {
+              throw new Error('Không thể đổi trạng thái. Vui lòng thử lại.');
+            }
+          }
           const updates: any = {
             displayName: editDisplayName.trim() || editingAccount.username,
-            status: editStatus,
           };
           if (editPassword.trim()) {
             if (editPassword.trim().length < 8) {
               throw new Error('Mật khẩu mới phải có ít nhất 8 ký tự.');
             }
             const isSelf = currentAccount && editingAccount.id === currentAccount.id;
-            if (!isSelf) {
-              // TODO (Prompt 5): POST /api/admin/users/:uid/password dùng Admin SDK.
-              throw new Error(
-                'Admin chưa thể đặt lại mật khẩu cho user khác ở phiên bản này (cần Admin SDK — sẽ làm ở Prompt 5). User hãy tự đổi mật khẩu của mình.'
-              );
+            if (isSelf) {
+              await authService.changeOwnPassword(editPassword.trim());
+            } else {
+              // Admin đặt lại mật khẩu cho user khác (đá mọi phiên cũ)
+              const { apiFetch } = await import('../services/apiConfig');
+              const res = await apiFetch(`/api/admin/users/${editingAccount.id}/password`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ newPassword: editPassword.trim() }),
+              });
+              if (!res.ok) {
+                throw new Error('Không đặt lại được mật khẩu. Vui lòng thử lại.');
+              }
+              // Copy mật khẩu mới để gửi cho user (hiện 1 lần trong toast)
+              try {
+                await navigator.clipboard.writeText(editPassword.trim());
+              } catch {
+                // ignore
+              }
             }
-            await authService.changeOwnPassword(editPassword.trim());
           }
           await authService.updateAccount(editingAccount.id, updates);
           onShowToast(`Đã cập nhật thành công tài khoản "@${editingAccount.username}"`);
           setEditingAccount(null);
+          setEditPassword('');
           setConfirmModalConfig((prev) => ({ ...prev, isOpen: false }));
           await loadData();
         } catch (err: any) {
@@ -227,7 +323,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     });
   };
 
-  // 3. TOGGLE LOCK / UNLOCK WITH ADMIN CONFIRMATION
+  // Sinh mật khẩu ngẫu nhiên mạnh cho ô đặt lại (admin copy gửi user)
+  const handleGeneratePassword = () => {
+    try {
+      const arr = new Uint32Array(12);
+      crypto.getRandomValues(arr);
+      const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+      let out = '';
+      for (const n of arr) {
+        out += alphabet[n % alphabet.length];
+      }
+      setEditPassword(out);
+    } catch {
+      setEditPassword(`Gau${Math.floor(100000 + Math.random() * 900000)}!`);
+    }
+  };
+
+  // 3. TOGGLE LOCK / UNLOCK WITH ADMIN CONFIRMATION (hiệu lực ngay: thu hồi
+  // phiên + nhả slot, không chỉ đổi cờ trong Firestore)
   const handleToggleStatusClick = (account: Account) => {
     if (account.username === 'admin') return;
     const isLocking = account.status === 'active';
@@ -236,27 +349,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       isOpen: true,
       title: isLocking ? `Tạm Khóa Tài Khoản @${account.username}` : `Mở Khóa Tài Khoản @${account.username}`,
       description: isLocking
-        ? `Tài khoản @${account.username} sẽ tạm thời không thể đăng nhập vào rạp phim. Vui lòng nhập mật khẩu Admin để khóa.`
+        ? `Tài khoản @${account.username} sẽ bị đá khỏi mọi thiết bị NGAY LẬP TỨC và không thể đăng nhập lại. Vui lòng nhập mật khẩu Admin để khóa.`
         : `Tài khoản @${account.username} sẽ được khôi phục quyền đăng nhập và xem phim bình thường. Vui lòng nhập mật khẩu Admin để mở khóa.`,
       actionButtonText: isLocking ? 'Xác Nhận Khóa' : 'Xác Nhận Mở Khóa',
       isDestructive: isLocking,
       onExecute: async () => {
-        const nextStatus = isLocking ? 'blocked' : 'active';
-        await authService.updateAccount(account.id, { status: nextStatus });
-        onShowToast(nextStatus === 'blocked' ? `Đã tạm khóa tài khoản @${account.username}` : `Đã mở khóa tài khoản @${account.username}`);
+        const { apiFetch } = await import('../services/apiConfig');
+        const action = isLocking ? 'block' : 'unblock';
+        const res = await apiFetch(`/api/admin/users/${account.id}/${action}`, {
+          method: 'POST',
+        });
+        if (!res.ok) {
+          throw new Error('Không thực hiện được. Vui lòng thử lại.');
+        }
+        onShowToast(isLocking ? `Đã tạm khóa tài khoản @${account.username}` : `Đã mở khóa tài khoản @${account.username}`);
         setConfirmModalConfig((prev) => ({ ...prev, isOpen: false }));
         await loadData();
       },
     });
   };
 
-  // 4. DELETE ACCOUNT WITH ADMIN CONFIRMATION
+  // 4. DELETE ACCOUNT WITH ADMIN CONFIRMATION (Prompt 5: xóa hẳn Auth user.
+  // Bắt gõ đúng username trước, rồi xác thực mật khẩu Admin như thường.)
   const handleDeleteAccountClick = (account: Account) => {
     if (account.username === 'admin') {
       onShowToast('Không thể xóa tài khoản Admin mặc định!');
       return;
     }
 
+    let typed: string | null = null;
+    try {
+      typed = window.prompt(
+        `XÓA VĨNH VIỄN @${account.username} (kèm hồ sơ, Auth user, slot)?\nGõ đúng username để tiếp tục:`,
+        ''
+      );
+    } catch {
+      typed = null;
+    }
+    if (typed === null) return;
+    if (typed.trim().toLowerCase() !== account.username.toLowerCase()) {
+      onShowToast('Tên nhập không khớp. Đã hủy xóa.', 'error');
+      return;
+    }
     setConfirmModalConfig({
       isOpen: true,
       title: `Xóa Vĩnh Viễn Tài Khoản @${account.username}`,
@@ -701,7 +835,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             </div>
                             <div className="flex justify-between items-center">
                               <span>Số hồ sơ:</span>
-                              <span className="font-bold text-sky-300">{acc.profilesCount || 1} / 5 hồ sơ</span>
+                              <span className="font-bold text-sky-300">{acc.profilesCount || 1} / 2 hồ sơ</span>
                             </div>
                             <div className="flex justify-between items-center">
                               <span>Ngày khởi tạo:</span>
@@ -709,6 +843,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 {acc.createdAt ? new Date(acc.createdAt).toLocaleDateString('vi-VN') : 'Mặc định'}
                               </span>
                             </div>
+                            {!isAdmin && (
+                              <AccountExpiryRow
+                                account={acc}
+                                onExtended={(expiresAt) => {
+                                  setAccounts((prev) =>
+                                    prev.map((a) => (a.id === acc.id ? { ...a, expiresAt } : a))
+                                  );
+                                }}
+                                onShowToast={onShowToast}
+                              />
+                            )}
                           </div>
                         </div>
 
@@ -1202,13 +1347,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <label className="block text-xs font-semibold text-slate-300 mb-1">
                     Đặt lại mật khẩu mới cho user:
                   </label>
-                  <input
-                    type="password"
-                    placeholder="Để trống nếu giữ nguyên. Chỉ đổi được cho chính mình (tối thiểu 8 ký tự)"
-                    value={editPassword}
-                    onChange={(e) => setEditPassword(e.target.value)}
-                    className="w-full bg-[#131f37] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="Để trống nếu giữ nguyên (tối thiểu 8 ký tự)"
+                      value={editPassword}
+                      onChange={(e) => setEditPassword(e.target.value)}
+                      className="flex-1 min-w-0 bg-[#131f37] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleGeneratePassword}
+                      className="shrink-0 px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-xs font-bold rounded-xl text-sky-300 border border-slate-700 cursor-pointer"
+                      title="Sinh mật khẩu ngẫu nhiên mạnh"
+                    >
+                      Ngẫu nhiên
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Đổi cho user khác sẽ đá mọi phiên cũ của họ. Mật khẩu mới đã copy sẵn, gửi cho user.
+                  </p>
                 </div>
 
                 {editingAccount.username !== 'admin' && (

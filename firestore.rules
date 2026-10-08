@@ -21,17 +21,35 @@ service cloud.firestore {
 
     // Hồ sơ: slot cố định p1/p2 — hồ sơ thứ 3 KHÔNG THỂ tạo được ở tầng
     // database, kể cả gọi Firestore SDK từ DevTools.
-    // LƯU Ý: không dùng match /{sub=**} chung ở đây — rules cộng dồn theo OR,
-    // một wildcard cho phép create sẽ vô hiệu hóa chặn p1/p2 phía trên.
     match /accounts/{uid}/profiles/{profileId} {
       allow create: if (request.auth.uid == uid || isAdmin()) && (profileId == 'p1' || profileId == 'p2');
       allow read, update, delete: if request.auth.uid == uid || isAdmin();
     }
 
-    // Dữ liệu dưới mỗi hồ sơ (history, myList, savedManga, mangaHistory,
-    // youtubeFavorites, youtubeHistory, youtubeSubscriptions...):
-    // chỉ chính chủ hoặc admin.
-    match /accounts/{uid}/profiles/{profileId}/{rest=**} {
+    // Dữ liệu dưới mỗi hồ sơ: liệt kê TƯỜNG MINH từng subcollection.
+    // TUYỆT ĐỐI không dùng {rest=**} ở đây — wildcard ** khớp cả 0 segment
+    // nên cũng khớp chính document profiles/{profileId}, cộng dồn OR sẽ cho
+    // phép create p3/p999, vô hiệu hóa chặn slot phía trên (bug F8).
+    // Thêm subcollection mới thì thêm block tương ứng (mặc định fail-closed).
+    match /accounts/{uid}/profiles/{profileId}/history/{docId} {
+      allow read, write: if request.auth.uid == uid || isAdmin();
+    }
+    match /accounts/{uid}/profiles/{profileId}/myList/{docId} {
+      allow read, write: if request.auth.uid == uid || isAdmin();
+    }
+    match /accounts/{uid}/profiles/{profileId}/savedManga/{docId} {
+      allow read, write: if request.auth.uid == uid || isAdmin();
+    }
+    match /accounts/{uid}/profiles/{profileId}/mangaHistory/{docId} {
+      allow read, write: if request.auth.uid == uid || isAdmin();
+    }
+    match /accounts/{uid}/profiles/{profileId}/youtubeFavorites/{docId} {
+      allow read, write: if request.auth.uid == uid || isAdmin();
+    }
+    match /accounts/{uid}/profiles/{profileId}/youtubeHistory/{docId} {
+      allow read, write: if request.auth.uid == uid || isAdmin();
+    }
+    match /accounts/{uid}/profiles/{profileId}/youtubeSubscriptions/{docId} {
       allow read, write: if request.auth.uid == uid || isAdmin();
     }
 

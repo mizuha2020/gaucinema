@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
-import { UserStats } from '../../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { UserStats, Account } from '../../types';
+import { authService, formatExpiryDate } from '../../services/authService';
 import {
   userAnalyticsService,
   formatDurationText,
@@ -38,8 +39,46 @@ export const AdminUserStatsTab: React.FC<AdminUserStatsTabProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
+  const [expiryFilter, setExpiryFilter] = useState<'all' | 'active' | 'expiring' | 'expired'>('all');
   const [sortBy, setSortBy] = useState<'online_time' | 'watch_time' | 'last_active' | 'name'>('watch_time');
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // Hạn dùng tài khoản (Prompt 5 A2.5): join với collection accounts
+  const [accountsById, setAccountsById] = useState<Record<string, Account>>({});
+  useEffect(() => {
+    let alive = true;
+    authService
+      .getAllAccounts()
+      .then((accs) => {
+        if (!alive) return;
+        const map: Record<string, Account> = {};
+        for (const a of accs) {
+          map[a.id] = a;
+          if (a.username) map[`@${a.username}`] = a;
+        }
+        setAccountsById(map);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const getExpiryOf = (accountId: string): { expired: boolean; expiringSoon: boolean; daysLeft: number | null; dateStr: string | null } => {
+    const acc =
+      accountsById[accountId] ||
+      Object.values(accountsById).find((a) => a.username === accountId);
+    if (!acc || acc.role === 'admin' || !acc.expiresAt) {
+      return { expired: false, expiringSoon: false, daysLeft: null, dateStr: null };
+    }
+    const msLeft = acc.expiresAt - Date.now();
+    return {
+      expired: msLeft <= 0,
+      expiringSoon: msLeft > 0 && msLeft < 7 * 24 * 60 * 60 * 1000,
+      daysLeft: Math.ceil(msLeft / (24 * 60 * 60 * 1000)),
+      dateStr: formatExpiryDate(acc.expiresAt),
+    };
+  };
 
   // Aggregates
   const totalOnlineSecAll = useMemo(() => {
@@ -60,6 +99,13 @@ export const AdminUserStatsTab: React.FC<AdminUserStatsTabProps> = ({
       if (statusFilter === 'online' && !u.isOnline) return false;
       if (statusFilter === 'offline' && u.isOnline) return false;
 
+      if (expiryFilter !== 'all') {
+        const e = getExpiryOf(u.accountId);
+        if (expiryFilter === 'active' && (e.expired || e.expiringSoon)) return false;
+        if (expiryFilter === 'expiring' && !e.expiringSoon) return false;
+        if (expiryFilter === 'expired' && !e.expired) return false;
+      }
+
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const matchName = (u.accountDisplayName || '').toLowerCase().includes(q);
@@ -74,7 +120,8 @@ export const AdminUserStatsTab: React.FC<AdminUserStatsTabProps> = ({
       if (sortBy === 'name') return (a.accountDisplayName || a.accountId).localeCompare(b.accountDisplayName || b.accountId);
       return 0;
     });
-  }, [userStats, statusFilter, searchQuery, sortBy]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userStats, statusFilter, expiryFilter, searchQuery, sortBy, accountsById]);
 
   // Sync legacy history
   const handleSyncLegacy = async () => {
@@ -220,6 +267,42 @@ export const AdminUserStatsTab: React.FC<AdminUserStatsTabProps> = ({
               </button>
             </div>
 
+            {/* Expiry Filter (Prompt 5 A2.5) */}
+            <div className="flex items-center p-1 bg-[#0f172a] rounded-xl border border-slate-800 text-xs">
+              <button
+                onClick={() => setExpiryFilter('all')}
+                className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer ${
+                  expiryFilter === 'all' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Mọi hạn
+              </button>
+              <button
+                onClick={() => setExpiryFilter('active')}
+                className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer ${
+                  expiryFilter === 'active' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Đang hoạt động
+              </button>
+              <button
+                onClick={() => setExpiryFilter('expiring')}
+                className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer ${
+                  expiryFilter === 'expiring' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Sắp hết hạn
+              </button>
+              <button
+                onClick={() => setExpiryFilter('expired')}
+                className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer ${
+                  expiryFilter === 'expired' ? 'bg-red-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Đã hết hạn
+              </button>
+            </div>
+
             {/* Sort Dropdown */}
             <select
               value={sortBy}
@@ -250,6 +333,12 @@ export const AdminUserStatsTab: React.FC<AdminUserStatsTabProps> = ({
             const mangaSec = user.watchSecondsByMedia?.manga || 0;
             const ytSec = user.watchSecondsByMedia?.youtube || 0;
             const totalWatchSec = getEffectiveTotalWatch(user);
+            const expiry = getExpiryOf(user.accountId);
+            const expiryClass = expiry.expired
+              ? 'text-red-400'
+              : expiry.expiringSoon
+                ? 'text-amber-400'
+                : 'text-slate-400';
 
             return (
               <div
@@ -357,18 +446,28 @@ export const AdminUserStatsTab: React.FC<AdminUserStatsTabProps> = ({
                 </div>
 
                 {/* Card Footer Action */}
-                <div className="pt-4 mt-4 border-t border-slate-800/80 flex items-center justify-between">
-                  <span className="text-[10px] text-slate-500">
-                    Lần cuối: {formatRelativeTime(user.lastActiveAt)}
-                  </span>
+                <div className="pt-4 mt-4 border-t border-slate-800/80 space-y-2">
+                  <div className={`flex items-center justify-between text-[11px] font-semibold ${expiryClass}`}>
+                    <span>Hạn dùng:</span>
+                    <span>
+                      {expiry.dateStr
+                        ? `${expiry.dateStr} (${expiry.expired ? 'hết hạn' : `${expiry.daysLeft} ngày còn lại`})`
+                        : 'Không thời hạn'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-slate-500">
+                      Lần cuối: {formatRelativeTime(user.lastActiveAt)}
+                    </span>
 
-                  <button
-                    onClick={() => onOpenUserDetail(user)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white text-xs font-bold transition shadow-md shadow-blue-600/20 cursor-pointer"
-                  >
-                    <span>Xem Lịch Sử</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
+                    <button
+                      onClick={() => onOpenUserDetail(user)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white text-xs font-bold transition shadow-md shadow-blue-600/20 cursor-pointer"
+                    >
+                      <span>Xem Lịch Sử</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
             );

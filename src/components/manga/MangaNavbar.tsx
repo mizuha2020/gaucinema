@@ -571,17 +571,32 @@ export const MangaNavbar: React.FC<MangaNavbarProps> = ({
               {isProfileMenuOpen && (
                 <div className="absolute right-0 top-12 w-64 bg-[#0f0f14] border border-purple-900/60 rounded-2xl shadow-2xl p-3 z-50">
                   {currentAccount && (
-                    <div className="px-2 py-1.5 mb-2 bg-white/[0.04] rounded-xl border border-white/10 flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <Shield className="w-3.5 h-3.5 text-fuchsia-400 shrink-0" />
-                        <span className="text-xs font-bold text-white truncate">
-                          @{currentAccount.username}
-                        </span>
+                    <div className="px-2 py-1.5 mb-2 bg-white/[0.04] rounded-xl border border-white/10">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Shield className="w-3.5 h-3.5 text-fuchsia-400 shrink-0" />
+                          <span className="text-xs font-bold text-white truncate">
+                            @{currentAccount.username}
+                          </span>
+                        </div>
+                        {currentAccount.role === "admin" && (
+                          <span className="text-[9px] bg-red-950 text-red-300 border border-red-800/80 px-1.5 py-0.2 rounded font-bold">
+                            ADMIN
+                          </span>
+                        )}
                       </div>
-                      {currentAccount.role === "admin" && (
-                        <span className="text-[9px] bg-red-950 text-red-300 border border-red-800/80 px-1.5 py-0.2 rounded font-bold">
-                          ADMIN
-                        </span>
+                      {currentAccount.role !== "admin" && currentAccount.expiresAt && (
+                        <p
+                          className={`text-[10px] mt-1 pl-5 font-semibold ${
+                            currentAccount.expiresAt < Date.now()
+                              ? "text-red-400"
+                              : currentAccount.expiresAt - Date.now() < 7 * 24 * 60 * 60 * 1000
+                                ? "text-amber-400"
+                                : "text-white/40"
+                          }`}
+                        >
+                          HSD: {new Date(currentAccount.expiresAt).toLocaleDateString("vi-VN")}
+                        </p>
                       )}
                     </div>
                   )}

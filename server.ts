@@ -277,31 +277,118 @@ async function startServer() {
     try {
       const decoded = await getAdminAuth().verifyIdToken(token);
       req.user = decoded;
+      // Prompt 5 A1+A2.1: chặn ngay ở middleware (1 lượt đọc Firestore, cache
+      // 60s). Khóa và hết hạn có hiệu lực với phiên đang dùng, không cần đợi
+      // đăng nhập lại.
+      const uid = (decoded as any)?.uid;
+      if (!uid) return res.status(401).json({ error: "UNAUTHORIZED" });
+      const acc = await getCachedAccount(uid);
+      if (!acc) return res.status(401).json({ error: "UNAUTHORIZED" });
+      if (acc.status === "blocked") {
+        return res.status(403).json({ error: "ACCOUNT_BLOCKED" });
+      }
+      if (acc.role !== "admin" && acc.expiresAt && acc.expiresAt < Date.now()) {
+        return res.status(403).json({ error: "ACCOUNT_EXPIRED", expiresAt: acc.expiresAt });
+      }
+      req.account = acc;
       return next();
     } catch {
       return res.status(401).json({ error: "UNAUTHORIZED" });
     }
   }
 
+  // Cache đọc accounts/{uid} 60s (Prompt 5 A1 — đỡ tốn quota mỗi request).
+  // Lưu ý: vừa block/unblock/gia hạn xong có độ trễ tối đa 60s ở middleware
+  // (revokeRefreshTokens + xóa slot xử lý ngay nên thực tế nhanh hơn nhiều).
+  const accountCache = new Map<string, { at: number; data: any }>();
+  const ACCOUNT_CACHE_MS = 60000;
+
+  async function getCachedAccount(uid: string): Promise<any | null> {
+    try {
+      const cached = accountCache.get(uid);
+      if (cached && Date.now() - cached.at < ACCOUNT_CACHE_MS) {
+        return cached.data;
+      }
+      const snap = await getAdminFirestore().doc(`accounts/${uid}`).get();
+      const data = snap.exists ? snap.data() : null;
+      if (accountCache.size > 2000) accountCache.clear();
+      accountCache.set(uid, { at: Date.now(), data });
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  function bustAccountCache(uid: string): void {
+    try {
+      accountCache.delete(uid);
+    } catch {
+      // ignore
+    }
+  }
+
+  function bustSlotCache(uid: string): void {
+    try {
+      for (const k of slotCheckCache.keys()) {
+        if (k === uid || k.startsWith(uid + "|")) slotCheckCache.delete(k);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   async function requireAdmin(req: any, res: any, next: any) {
     try {
-      const uid = req.user?.uid;
-      if (!uid) return res.status(401).json({ error: "UNAUTHORIZED" });
-      const snap = await getAdminFirestore().doc(`accounts/${uid}`).get();
-      const role = snap.exists ? (snap.data() as any)?.role : null;
-      if (role !== "admin") return res.status(403).json({ error: "FORBIDDEN" });
+      // Dùng lại document đã đọc ở requireAuth (1 lượt đọc cho cả 2 middleware).
+      const role = req.account?.role;
+      if (role !== "admin") {
+        const uid = req.user?.uid;
+        if (!uid) return res.status(401).json({ error: "UNAUTHORIZED" });
+        const snap = await getAdminFirestore().doc(`accounts/${uid}`).get();
+        const r = snap.exists ? (snap.data() as any)?.role : null;
+        if (r !== "admin") return res.status(403).json({ error: "FORBIDDEN" });
+        return next();
+      }
       return next();
     } catch {
       return res.status(403).json({ error: "FORBIDDEN" });
     }
   }
 
+  // Cộng N tháng lịch, xử lý tràn ngày (giống client Prompt 2 bước 2b).
+  function addCalendarMonthsMs(fromMs: number, months: number): number {
+    const base = new Date(fromMs);
+    const day = base.getDate();
+    const target = new Date(base);
+    target.setDate(1);
+    target.setMonth(target.getMonth() + months);
+    const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+    target.setDate(Math.min(day, lastDay));
+    return target.getTime();
+  }
+
+  // Gán expiresAt vào custom claim (giữ nguyên claim cũ), revoke token cũ.
+  // Rules Firestore (Prompt 6) đọc claim này mà không tốn lượt get().
+  async function setExpiresClaim(uid: string, expiresAt: number | null): Promise<void> {
+    const user = await getAdminAuth().getUser(uid);
+    const prev = (user.customClaims || {}) as Record<string, any>;
+    if (expiresAt === null) {
+      const { expiresAt: _drop, ...rest } = prev;
+      await getAdminAuth().setCustomUserClaims(uid, rest);
+    } else {
+      await getAdminAuth().setCustomUserClaims(uid, { ...prev, expiresAt });
+    }
+    await getAdminAuth().revokeRefreshTokens(uid).catch(() => {});
+  }
+
   // ---- Giới hạn 2 thiết bị (Prompt 4 B7) ----
   // Client gửi deviceId qua header X-Device-Id trong MỌI request. Server kiểm
   // tra THIẾT BỊ CÓ GIỮ SLOT KHÔNG (sessions/{uid}/1|2), chứ không chỉ đã
   // đăng nhập chưa. Không có slot -> 409 NO_SESSION_SLOT (client hiện màn
-  // hình chặn, KHÔNG signOut). Cache memory 30s để không đọc RTDB mỗi request.
-  const slotCheckCache = new Map<string, { at: number; ok: boolean }>();
+  // hình chặn, KHÔNG signOut).
+  // Cache memory 30s CHỈ cho kết quả cho phép (F1): kết quả từ chối KHÔNG
+  // cache — nếu không máy vừa claim lại vẫn ăn 409 oan tới 30s.
+  const slotCheckCache = new Map<string, { at: number }>();
   const SLOT_CACHE_MS = 30000;
 
   function pruneSlotCache() {
@@ -327,16 +414,17 @@ async function startServer() {
       const key = `${uid}|${deviceId}`;
       const cached = slotCheckCache.get(key);
       if (cached && Date.now() - cached.at < SLOT_CACHE_MS) {
-        if (cached.ok) return next();
-        return res.status(409).json({ error: "NO_SESSION_SLOT" });
+        return next();
       }
       const snap = await getAdminDatabase().ref(`sessions/${uid}`).get();
       const val = snap.val() || {};
       const ok = val?.["1"]?.deviceId === deviceId || val?.["2"]?.deviceId === deviceId;
-      slotCheckCache.set(key, { at: Date.now(), ok });
-      pruneSlotCache();
-      if (!ok) return res.status(409).json({ error: "NO_SESSION_SLOT" });
-      return next();
+      if (ok) {
+        slotCheckCache.set(key, { at: Date.now() });
+        pruneSlotCache();
+        return next();
+      }
+      return res.status(409).json({ error: "NO_SESSION_SLOT" });
     } catch {
       return res.status(409).json({ error: "NO_SESSION_SLOT" });
     }
@@ -3003,6 +3091,182 @@ setTimeout(seedInitialCastIndex, 2000);
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err?.message || "Kick failed" });
+    }
+  });
+
+  // ---- Quyền kiểm soát của admin (Prompt 5) ----
+  // Tất cả endpoint dưới đây: requireAuth + requireAdmin. Không qua
+  // requireActiveSlot (admin thao tác lên tài khoản/slot của người khác).
+
+  // Khóa tài khoản có hiệu lực ngay: status + thu hồi mọi phiên + nhả slot.
+  app.post("/api/admin/users/:uid/block", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const targetUid = String(req.params?.uid || "");
+      if (!targetUid) return res.status(400).json({ error: "INVALID_UID" });
+      const snap = await getAdminFirestore().doc(`accounts/${targetUid}`).get();
+      if (!snap.exists) return res.status(404).json({ error: "NOT_FOUND" });
+      if ((snap.data() as any)?.role === "admin") {
+        return res.status(403).json({ error: "CANNOT_BLOCK_ADMIN" });
+      }
+      await getAdminFirestore().doc(`accounts/${targetUid}`).set(
+        { status: "blocked", updatedAt: Date.now() },
+        { merge: true }
+      );
+      bustAccountCache(targetUid);
+      bustSlotCache(targetUid);
+      await getAdminAuth().revokeRefreshTokens(targetUid).catch(() => {});
+      await getAdminDatabase().ref(`sessions/${targetUid}`).remove().catch(() => {});
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || "Block failed" });
+    }
+  });
+
+  app.post("/api/admin/users/:uid/unblock", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const targetUid = String(req.params?.uid || "");
+      if (!targetUid) return res.status(400).json({ error: "INVALID_UID" });
+      const snap = await getAdminFirestore().doc(`accounts/${targetUid}`).get();
+      if (!snap.exists) return res.status(404).json({ error: "NOT_FOUND" });
+      await getAdminFirestore().doc(`accounts/${targetUid}`).set(
+        { status: "active", updatedAt: Date.now() },
+        { merge: true }
+      );
+      bustAccountCache(targetUid);
+      bustSlotCache(targetUid);
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || "Unblock failed" });
+    }
+  });
+
+  // Gia hạn: chưa hết hạn thì cộng dồn vào expiresAt hiện tại, hết hạn rồi
+  // thì cộng từ hiện tại. Tháng lịch, xử lý tràn ngày.
+  app.post("/api/admin/users/:uid/extend", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const targetUid = String(req.params?.uid || "");
+      const months = Math.floor(Number(req.body?.months));
+      if (!targetUid) return res.status(400).json({ error: "INVALID_UID" });
+      if (!Number.isFinite(months) || months < 1 || months > 12) {
+        return res.status(400).json({ error: "INVALID_MONTHS" });
+      }
+      const ref = getAdminFirestore().doc(`accounts/${targetUid}`);
+      const snap = await ref.get();
+      if (!snap.exists) return res.status(404).json({ error: "NOT_FOUND" });
+      const data = snap.data() as any;
+      if (data?.role === "admin") {
+        return res.status(400).json({ error: "ADMIN_HAS_NO_EXPIRY" });
+      }
+      const base = data?.expiresAt && data.expiresAt > Date.now() ? data.expiresAt : Date.now();
+      const expiresAt = addCalendarMonthsMs(base, months);
+      await ref.set({ expiresAt, updatedAt: Date.now() }, { merge: true });
+      bustAccountCache(targetUid);
+      await setExpiresClaim(targetUid, expiresAt).catch(() => {});
+      return res.json({ success: true, expiresAt });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || "Extend failed" });
+    }
+  });
+
+  // Đồng bộ expiresAt vào custom claim (gọi sau khi tạo tài khoản ở client).
+  app.post("/api/admin/users/:uid/claims", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const targetUid = String(req.params?.uid || "");
+      const hasField = req.body && Object.prototype.hasOwnProperty.call(req.body, "expiresAt");
+      const expiresAt = hasField ? req.body.expiresAt : undefined;
+      if (!targetUid) return res.status(400).json({ error: "INVALID_UID" });
+      if (expiresAt !== null && !(typeof expiresAt === "number" && Number.isFinite(expiresAt))) {
+        return res.status(400).json({ error: "INVALID_EXPIRY" });
+      }
+      await setExpiresClaim(targetUid, expiresAt);
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || "Claims failed" });
+    }
+  });
+
+  // Admin đặt lại mật khẩu cho user + đá mọi phiên cũ.
+  app.post("/api/admin/users/:uid/password", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const targetUid = String(req.params?.uid || "");
+      const newPassword = String(req.body?.newPassword || "");
+      if (!targetUid) return res.status(400).json({ error: "INVALID_UID" });
+      if (newPassword.trim().length < 8) {
+        return res.status(400).json({ error: "WEAK_PASSWORD" });
+      }
+      await getAdminAuth().updateUser(targetUid, { password: newPassword.trim() });
+      await getAdminAuth().revokeRefreshTokens(targetUid).catch(() => {});
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || "Password reset failed" });
+    }
+  });
+
+  // Xóa hẳn: RTDB sessions -> subcollections -> document -> Auth user.
+  // Chặn cứng tài khoản admin.
+  app.delete("/api/admin/users/:uid", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const targetUid = String(req.params?.uid || "");
+      if (!targetUid) return res.status(400).json({ error: "INVALID_UID" });
+      if (req.user?.uid === targetUid) {
+        return res.status(403).json({ error: "CANNOT_DELETE_SELF" });
+      }
+      const snap = await getAdminFirestore().doc(`accounts/${targetUid}`).get();
+      if (!snap.exists) return res.status(404).json({ error: "NOT_FOUND" });
+      if ((snap.data() as any)?.role === "admin") {
+        return res.status(403).json({ error: "CANNOT_DELETE_ADMIN" });
+      }
+      await getAdminDatabase().ref(`sessions/${targetUid}`).remove().catch(() => {});
+      const subNames = [
+        "profiles",
+        "history",
+        "myList",
+        "savedManga",
+        "mangaHistory",
+        "youtubeFavorites",
+        "youtubeHistory",
+        "youtubeSubscriptions",
+      ];
+      // Xóa nested dưới từng profile trước (history, myList...) rồi mới xóa profiles.
+      try {
+        const profSnap = await getAdminFirestore().collection(`accounts/${targetUid}/profiles`).get();
+        const nested = ["history", "myList", "savedManga", "mangaHistory", "youtubeFavorites", "youtubeHistory", "youtubeSubscriptions"];
+        for (const pDoc of profSnap.docs) {
+          for (const sub of nested) {
+            try {
+              const subSnap = await getAdminFirestore()
+                .collection(`accounts/${targetUid}/profiles/${pDoc.id}/${sub}`)
+                .get();
+              for (const d of subSnap.docs) {
+                await d.ref.delete().catch(() => {});
+              }
+            } catch {
+              // ignore
+            }
+          }
+          await pDoc.ref.delete().catch(() => {});
+        }
+      } catch {
+        // ignore
+      }
+      // Xóa subcollection trực tiếp còn sót (tương thích dữ liệu cũ)
+      for (const sub of subNames) {
+        if (sub === "profiles") continue;
+        try {
+          const subSnap = await getAdminFirestore().collection(`accounts/${targetUid}/${sub}`).get();
+          for (const d of subSnap.docs) {
+            await d.ref.delete().catch(() => {});
+          }
+        } catch {
+          // ignore
+        }
+      }
+      await getAdminFirestore().doc(`accounts/${targetUid}`).delete().catch(() => {});
+      bustAccountCache(targetUid);
+      await getAdminAuth().deleteUser(targetUid).catch(() => {});
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || "Delete failed" });
     }
   });
 

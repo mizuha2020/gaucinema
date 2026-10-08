@@ -1,0 +1,15 @@
+{
+  "//": "CHỈ DÙNG CHO TEST (Firebase Emulator Suite). Không deploy production từ file này.",
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "database": {
+    "rules": "database.rules.json"
+  },
+  "emulators": {
+    "auth": { "port": 9100 },
+    "firestore": { "port": 8090 },
+    "database": { "port": 9010 },
+    "ui": { "enabled": false }
+  }
+}

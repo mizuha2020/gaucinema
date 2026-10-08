@@ -5,7 +5,6 @@ import {
   onDisconnect,
   onValue,
   ref,
-  remove,
   runTransaction,
   update,
   type TransactionResult,
@@ -26,6 +25,9 @@ export interface SessionSlot {
   kind: 'movie' | 'manga' | '';
   title: string;
   startedAt: number;
+  /** Refcount tab trên cùng máy (F6): mỗi tab 1 tabId, đóng tab nào dọn tab đó.
+   *  Slot chỉ trống khi hết tab. Row legacy (không có tabs) giữ hành vi cũ. */
+  tabs?: Record<string, number>;
 }
 
 export type ClaimResult =
@@ -34,6 +36,9 @@ export type ClaimResult =
 
 const SESSIONS_PATH = 'sessions';
 const DEVICE_KEY = 'qtb_device_id';
+/** Định danh TAB (khác deviceId của máy): sessionStorage tồn tại theo tab —
+ *  reload cùng tab giữ nguyên, tab mới id mới, đóng tab là mất. */
+const TAB_KEY = 'qtb_tab_id';
 const CLAIM_TIMEOUT_MS = 10000;
 /** Tab ẩn liên tục quá 30 phút -> nhả slot (tránh chiếm chỗ khi để quên). */
 const HIDDEN_TIMEOUT_MS = 30 * 60 * 1000;
@@ -58,6 +63,23 @@ export function getDeviceId(): string {
     return id;
   } catch {
     return `dev_${Date.now()}_fallback`;
+  }
+}
+
+/** Định danh tab hiện tại ( Ổn định khi reload, khác nhau giữa các tab). */
+export function getTabId(): string {
+  try {
+    let id = window.sessionStorage.getItem(TAB_KEY);
+    if (!id) {
+      id =
+        typeof crypto !== 'undefined' && 'randomUUID' in crypto
+          ? (crypto as Crypto).randomUUID()
+          : `tab_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+      window.sessionStorage.setItem(TAB_KEY, id);
+    }
+    return id;
+  } catch {
+    return `tab_${Date.now()}_fallback`;
   }
 }
 
@@ -95,24 +117,28 @@ function withTimeoutReject<T>(promise: Promise<T>, ms: number): Promise<T> {
  * Dùng TRANSACTION nguyên tử (đọc+sửa 1 bước ở server): nhiều máy claim cùng
  * lúc cũng chỉ 1 bên thắng mỗi slot — đọc-rồi-ghi thường sẽ cùng thấy "trống"
  * rồi ghi đè nhau (3 máy cùng vào được).
- * Thứ tự: giữ slot cũ của chính máy này trước, rồi mới lấy slot trống đầu
- * tiên. Hết slot -> KHÔNG đăng xuất, trả về danh sách 2 phiên để hiện màn
- * hình chặn.
+ * Thứ tự trong transaction (F6/F3):
+ *  1. Slot máy này đang giữ (theo deviceId, cả row legacy) -> thêm tabId, giữ.
+ *  2. Slot trống: chưa tồn tại, HOẶC zombie (mất deviceId, vd bị kick rồi
+ *     update tái tạo), HOẶC hết tab (tabs rỗng — các tab đã đóng hết).
+ *  3. Còn lại -> abort (hết slot).
+ * Hết slot -> KHÔNG đăng xuất, trả về danh sách 2 phiên để hiện màn hình chặn.
  */
 export async function claimSession(
   uid: string,
   profile: { id: string; name: string }
 ): Promise<ClaimResult> {
   const deviceId = getDeviceId();
-  const shortId = String(deviceId).slice(0, 8);
-  const payload: SessionSlot = {
+  const tabId = getTabId();
+  const now = Date.now();
+  const basePayload: SessionSlot = {
     deviceId,
     deviceInfo: getDeviceInfo(),
     profileId: profile.id,
     profileName: profile.name,
     kind: '',
     title: '',
-    startedAt: Date.now(),
+    startedAt: now,
   };
 
   let result: TransactionResult;
@@ -122,22 +148,30 @@ export async function claimSession(
         ref(rtdb, `${SESSIONS_PATH}/${uid}`),
         (current: Record<string, SessionSlot> | null) => {
           const data: Record<string, SessionSlot> = current || {};
-          if (data['1']?.deviceId === deviceId) {
-            data['1'] = payload;
-            return data;
+          // 1. Slot của chính máy này
+          for (const s of SLOTS) {
+            if (data[s]?.deviceId === deviceId) {
+              data[s] = {
+                ...basePayload,
+                startedAt: data[s].startedAt || now,
+                tabs: { ...(data[s].tabs || {}), [tabId]: now },
+              };
+              return data;
+            }
           }
-          if (data['2']?.deviceId === deviceId) {
-            data['2'] = payload;
-            return data;
+          // 2. Slot trống / zombie / hết tab
+          for (const s of SLOTS) {
+            const row = data[s];
+            if (!row || !row.deviceId) {
+              data[s] = { ...basePayload, tabs: { [tabId]: now } };
+              return data;
+            }
+            if (row.tabs && Object.keys(row.tabs).length === 0) {
+              data[s] = { ...basePayload, tabs: { [tabId]: now } };
+              return data;
+            }
           }
-          if (!data['1']) {
-            data['1'] = payload;
-            return data;
-          }
-          if (!data['2']) {
-            data['2'] = payload;
-            return data;
-          }
+          // Row legacy có deviceId của máy khác (không tabs): KHÔNG cướp.
           return undefined; // abort: hết slot
         }
       ),
@@ -156,13 +190,6 @@ export async function claimSession(
       const cur = data?.[s];
       if (cur) list.push({ ...cur, slot: s });
     }
-    try {
-      console.log(
-        `[slot-claim] ABORT device=${shortId} holders=[${list.map((x) => `${x.slot}:${String(x.deviceId).slice(0, 8)}`).join(',')}]`
-      );
-    } catch {
-      // ignore
-    }
     return { ok: false, sessions: list, reason: 'occupied' };
   }
 
@@ -171,7 +198,7 @@ export async function claimSession(
   let won: (typeof SLOTS)[number] = '1';
   for (const s of SLOTS) {
     const cur = data?.[s];
-    if (cur?.deviceId === deviceId && cur?.startedAt === payload.startedAt) {
+    if (cur?.deviceId === deviceId && cur?.startedAt === basePayload.startedAt) {
       won = s;
       break;
     }
@@ -185,15 +212,10 @@ export async function claimSession(
       }
     }
   }
-  const slotRef = ref(rtdb, `${SESSIONS_PATH}/${uid}/${won}`);
-  // RTDB tự xóa node khi client mất kết nối/đóng tab/sập trình duyệt/rớt mạng.
-  await onDisconnect(slotRef).remove().catch(() => {});
+  // onDisconnect theo TAB (F6): đóng tab nào dọn tabId đó, tab còn lại giữ slot.
+  const tabRef = ref(rtdb, `${SESSIONS_PATH}/${uid}/${won}/tabs/${tabId}`);
+  await onDisconnect(tabRef).remove().catch(() => {});
   currentSlot = { uid, slot: won };
-  try {
-    console.log(`[slot-claim] WIN device=${shortId} slot=${won}`);
-  } catch {
-    // ignore
-  }
   return { ok: true, slot: won };
 }
 
@@ -213,13 +235,44 @@ export async function updateSessionActivity(
   }
 }
 
-/** Nhả slot đang giữ (khi đăng xuất). */
+/** Nhả tab hiện tại khỏi slot (khi đăng xuất). Hết tab thì xóa cả node.
+ *  Dùng transaction để 2 tab cùng logout không rò rỉ node rỗng. */
 export async function releaseSession(): Promise<void> {
   try {
     if (!currentSlot) return;
-    const slotRef = ref(rtdb, `${SESSIONS_PATH}/${currentSlot.uid}/${currentSlot.slot}`);
-    await onDisconnect(slotRef).cancel().catch(() => {});
-    await remove(slotRef).catch(() => {});
+    const { uid, slot } = currentSlot;
+    const tabId = getTabId();
+    const tabRef = ref(rtdb, `${SESSIONS_PATH}/${uid}/${slot}/tabs/${tabId}`);
+    await onDisconnect(tabRef).cancel().catch(() => {});
+    try {
+      await withTimeoutReject(
+        runTransaction(ref(rtdb, `${SESSIONS_PATH}/${uid}`), (current: Record<string, SessionSlot> | null) => {
+          const data: Record<string, SessionSlot> = current || {};
+          const row = data[slot];
+          if (!row) return undefined;
+          // Chỉ dọn slot của chính máy này (đề phòng state lệch)
+          if (row.deviceId && row.deviceId !== getDeviceId()) return undefined;
+          if (row.tabs) {
+            const tabs = { ...row.tabs };
+            delete tabs[tabId];
+            if (Object.keys(tabs).length === 0) {
+              delete (data as Record<string, unknown>)[slot];
+            } else {
+              row.tabs = tabs;
+            }
+          } else {
+            // Row legacy (không tabs): hành vi cũ — nhả cả node
+            delete (data as Record<string, unknown>)[slot];
+          }
+          return data;
+        }),
+        CLAIM_TIMEOUT_MS
+      );
+    } catch {
+      // Rớt mạng giữa chừng: onDisconnect đã hủy ở trên, server sẽ... không dọn
+      // được nữa. Tab còn lại (nếu có) giữ slot qua tabs của nó; hết tab thì
+      // claim sau thu hồi (empty-tabs/zombie). Chấp nhận được, không chặn logout.
+    }
   } catch {
     // ignore
   } finally {

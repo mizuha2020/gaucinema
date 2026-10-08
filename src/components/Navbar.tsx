@@ -665,15 +665,30 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 {/* Account info */}
                 {currentAccount && (
-                  <div className="px-2 py-1.5 mb-2 bg-[#131f37] rounded-xl border border-slate-800 flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <Shield className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                      <span className="text-xs font-bold text-white truncate">@{currentAccount.username}</span>
+                  <div className="px-2 py-1.5 mb-2 bg-[#131f37] rounded-xl border border-slate-800">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Shield className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                        <span className="text-xs font-bold text-white truncate">@{currentAccount.username}</span>
+                      </div>
+                      {currentAccount.role === 'admin' && (
+                        <span className="text-[9px] bg-red-950 text-red-300 border border-red-800/80 px-1.5 py-0.2 rounded font-bold">
+                          ADMIN
+                        </span>
+                      )}
                     </div>
-                    {currentAccount.role === 'admin' && (
-                      <span className="text-[9px] bg-red-950 text-red-300 border border-red-800/80 px-1.5 py-0.2 rounded font-bold">
-                        ADMIN
-                      </span>
+                    {currentAccount.role !== 'admin' && currentAccount.expiresAt && (
+                      <p
+                        className={`text-[10px] mt-1 pl-5 font-semibold ${
+                          currentAccount.expiresAt < Date.now()
+                            ? 'text-red-400'
+                            : currentAccount.expiresAt - Date.now() < 7 * 24 * 60 * 60 * 1000
+                              ? 'text-amber-400'
+                              : 'text-slate-400'
+                        }`}
+                      >
+                        HSD: {new Date(currentAccount.expiresAt).toLocaleDateString('vi-VN')}
+                      </p>
                     )}
                   </div>
                 )}

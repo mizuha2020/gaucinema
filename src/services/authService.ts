@@ -5,7 +5,6 @@ import {
   getDocs,
   query,
   setDoc,
-  deleteDoc,
   where,
 } from 'firebase/firestore';
 import { deleteApp, initializeApp } from 'firebase/app';
@@ -18,6 +17,7 @@ import {
   updatePassword,
 } from 'firebase/auth';
 import { auth, db, sanitizeData } from './firebase';
+import { apiFetch } from './apiConfig';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Account, UserProfile } from '../types';
 
@@ -317,6 +317,19 @@ export const authService = {
     };
     await setDoc(doc(db, 'accounts', uid, 'profiles', 'p1'), sanitizeData(primaryProfile)).catch(() => {});
 
+    // Prompt 5 A2.2: đồng bộ expiresAt vào custom claim (để rules đọc không
+    // tốn get()). Chỉ admin tạo được tài khoản nên gọi endpoint admin được.
+    // Lỗi thì bỏ qua — middleware vẫn đọc Firestore, chỉ thiếu tối ưu rules.
+    try {
+      await apiFetch(`/api/admin/users/${uid}/claims`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expiresAt: newAccount.expiresAt ?? null }),
+      });
+    } catch {
+      // ignore
+    }
+
     return newAccount;
   },
 
@@ -355,36 +368,28 @@ export const authService = {
     }
   },
 
-  // TODO (Prompt 5 — cần firebase-admin ở server):
-  // - Admin đổi mật khẩu của user khác: POST /api/admin/users/:uid/password
-  // - Admin gia hạn tài khoản: POST /api/admin/users/:uid/extend
-  // Client TUYỆT ĐỐI không tự bịa cách đổi mật khẩu/giãn hạn cho người khác.
+  // Admin đổi mật khẩu user khác + gia hạn: đã có endpoint server (Prompt 5).
+  // Client gọi endpoint, KHÔNG tự ý thao tác Auth của người khác.
 
   /**
-   * Xóa Firestore của tài khoản (subcollection + document).
-   * Chặn cứng tài khoản admin và tự xóa chính mình.
-   * NOTE: Chưa xóa được Firebase Auth user ở bước này (cần Admin SDK — Prompt 5).
+   * Xóa hẳn tài khoản qua endpoint admin (RTDB sessions -> subcollections ->
+   * document -> Auth user). Chặn cứng tài khoản admin và tự xóa chính mình.
    */
   async deleteAccount(accountId: string): Promise<void> {
-    const snap = await getDoc(doc(db, 'accounts', accountId)).catch(() => null);
-    const data = snap && snap.exists() ? (snap.data() as Account) : null;
-    if (data && data.role === 'admin') {
-      throw new Error('Không thể xóa tài khoản Quản trị viên!');
-    }
     if (auth.currentUser && accountId === auth.currentUser.uid) {
       throw new Error('Không thể xóa tài khoản đang đăng nhập.');
     }
-
-    const profilesSnap = await getDocs(collection(db, 'accounts', accountId, 'profiles')).catch(() => null);
-    if (profilesSnap) {
-      for (const pDoc of profilesSnap.docs) {
-        await deleteDoc(pDoc.ref).catch(() => {});
-      }
+    const res = await apiFetch(`/api/admin/users/${accountId}`, { method: 'DELETE' });
+    if (res.status === 404) {
+      throw new Error('Tài khoản không tồn tại.');
     }
-    await deleteDoc(doc(db, 'accounts', accountId));
-    // TODO (Prompt 5): gọi DELETE /api/admin/users/:uid để xóa Firebase Auth user
-    // bằng admin.auth().deleteUser(uid). Hiện tại Auth user còn tồn tại nhưng không
-    // còn document nên không đăng nhập vào app được nữa.
+    if (res.status === 403) {
+      throw new Error('Không thể xóa tài khoản Quản trị viên!');
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new Error((data as any)?.error || 'Không thể xóa tài khoản. Vui lòng thử lại.');
+    }
   },
 
   /** Thông tin hạn dùng phục vụ banner cảnh báo (< 7 ngày). */

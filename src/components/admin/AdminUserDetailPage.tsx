@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { UserStats, UserActivityItem, MediaActivityType } from '../../types';
+import { UserStats, UserActivityItem, MediaActivityType, Account } from '../../types';
 import { watchHistoryService } from '../../services/watchHistoryService';
 import { apiFetch } from '../../services/apiConfig';
+import { addCalendarMonths, formatExpiryDate } from '../../services/authService';
 import { subscribeSessions, type SessionSlot } from '../../services/sessionService';
 import { formatDurationText, formatDateTimeExact, formatRelativeTime, getEffectiveTotalOnline, getEffectiveTotalWatch } from '../../services/userAnalyticsService';
 import {
@@ -92,6 +93,67 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
   // Thiết bị đang dùng (Prompt 4 PHẦN C): 2 slot RTDB theo thời gian thực
   const [liveSessions, setLiveSessions] = useState<SessionSlot[]>([]);
   const [kickingSlot, setKickingSlot] = useState<string | null>(null);
+
+  // Thời hạn tài khoản (Prompt 5 A2.3/A2.5): đọc 1 lần, gia hạn qua endpoint
+  const [accountDoc, setAccountDoc] = useState<Account | null>(null);
+  const [extendMonths, setExtendMonths] = useState<number>(1);
+  const [isExtending, setIsExtending] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { db } = await import('../../services/firebase');
+        const { doc, getDoc } = await import('firebase/firestore');
+        const snap = await getDoc(doc(db, 'accounts', userStat.accountId));
+        if (alive && snap.exists()) {
+          const data = snap.data() as Account;
+          setAccountDoc({ ...data, id: snap.id });
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [userStat.accountId]);
+
+  const expiryBase = accountDoc?.expiresAt && accountDoc.expiresAt > Date.now()
+    ? accountDoc.expiresAt
+    : Date.now();
+  const expiryPreview = (() => {
+    try {
+      return addCalendarMonths(expiryBase, extendMonths);
+    } catch {
+      return expiryBase;
+    }
+  })();
+
+  const handleExtend = async () => {
+    if (isExtending) return;
+    setIsExtending(true);
+    try {
+      const res = await apiFetch(`/api/admin/users/${userStat.accountId}/extend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ months: extendMonths }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.expiresAt) {
+        setAccountDoc((prev) => (prev ? { ...prev, expiresAt: data.expiresAt } : prev));
+        onShowToast?.(
+          `Đã gia hạn ${extendMonths} tháng — hạn mới: ${formatExpiryDate(data.expiresAt)}`
+        );
+      } else {
+        onShowToast?.(`Không gia hạn được: ${(data as any)?.error || res.status}`);
+      }
+    } catch {
+      onShowToast?.('Không gia hạn được. Thử lại sau.');
+    } finally {
+      setIsExtending(false);
+    }
+  };
 
   useEffect(() => {
     const unsub = subscribeSessions(userStat.accountId, setLiveSessions);
@@ -516,6 +578,23 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
                 <span className="text-[11px] sm:text-xs">
                   {userStat.firstSeenAt ? `Tạo: ${formatDateTimeExact(userStat.firstSeenAt)}` : 'Mặc định'}
                 </span>
+                {accountDoc && accountDoc.role !== 'admin' && (
+                  <>
+                    <span>•</span>
+                    <span
+                      className={`text-[11px] sm:text-xs font-bold ${
+                        accountDoc.expiresAt && accountDoc.expiresAt < Date.now()
+                          ? 'text-red-400'
+                          : accountDoc.expiresAt && accountDoc.expiresAt - Date.now() < 7 * 24 * 60 * 60 * 1000
+                            ? 'text-amber-400'
+                            : 'text-emerald-400'
+                      }`}
+                    >
+                      Hạn dùng:{' '}
+                      {accountDoc.expiresAt ? formatExpiryDate(accountDoc.expiresAt) : 'không thời hạn'}
+                    </span>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -542,6 +621,40 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Gia hạn tài khoản (Prompt 5 A2.3/A2.5) */}
+      {accountDoc && accountDoc.role !== 'admin' && (
+        <div className="bg-[#0b1329] border border-indigo-900/60 p-4 sm:p-5 rounded-3xl shadow-xl flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-bold text-white uppercase tracking-wider">Gia hạn sử dụng</p>
+            <p className="text-[11px] text-slate-400 mt-1">
+              {accountDoc.expiresAt && accountDoc.expiresAt > Date.now()
+                ? `Còn hạn tới ${formatExpiryDate(accountDoc.expiresAt)} — gia hạn cộng dồn, không mất ngày còn lại. Hạn mới dự kiến: ${formatExpiryDate(expiryPreview)}.`
+                : `Đã hết hạn${accountDoc.expiresAt ? ` từ ${formatExpiryDate(accountDoc.expiresAt)}` : ''} — gia hạn tính từ hôm nay. Hạn mới dự kiến: ${formatExpiryDate(expiryPreview)}.`}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={extendMonths}
+              onChange={(e) => setExtendMonths(Number(e.target.value) || 1)}
+              className="bg-[#0f172a] border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 cursor-pointer min-h-[44px]"
+            >
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
+                <option key={m} value={m}>
+                  {m} tháng
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={handleExtend}
+              disabled={isExtending}
+              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold shadow-lg shadow-indigo-600/30 transition cursor-pointer min-h-[44px]"
+            >
+              {isExtending ? 'Đang gia hạn...' : 'Gia hạn'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Tab Navigation Bar for Mobile and Desktop */}
       <div className="bg-[#0b1329] border border-blue-900/60 p-1.5 sm:p-2 rounded-2xl shadow-xl">
@@ -768,6 +881,9 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
                       <p className="text-xs sm:text-sm font-bold text-white truncate">
                         Slot {s.slot} • {s.deviceInfo}
                         {s.profileName ? ` • ${s.profileName}` : ''}
+                        {s.tabs && Object.keys(s.tabs).length > 1
+                          ? ` • ${Object.keys(s.tabs).length} tab`
+                          : ''}
                       </p>
                       <p className="text-[11px] text-slate-400 truncate mt-0.5">
                         {s.title

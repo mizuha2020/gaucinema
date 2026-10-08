@@ -30,7 +30,7 @@ import { SessionBlockedScreen } from "./components/SessionBlockedScreen";
 import { movieApi } from "./services/movieApi";
 import { presenceService } from "./services/presenceService";
 import { appConfigService } from "./services/appConfigService";
-import { verifyBackendUrl, getBackendToken } from "./services/apiConfig";
+import { verifyBackendUrl, getBackendToken, AUTH_FLASH_KEY } from "./services/apiConfig";
 import { useTabScroll } from "./hooks/useTabScroll";
 import { LoginScreen } from "./components/LoginScreen";
 import { AdminDashboard } from "./components/AdminDashboard";
@@ -113,7 +113,19 @@ export default function App() {
   // (onAuthStateChanged). Không còn session JSON trong localStorage.
   const [currentAccount, setCurrentAccount] = useState<Account | null>(null);
   const [authReady, setAuthReady] = useState<boolean>(false);
-  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [authNotice, setAuthNotice] = useState<string | null>(() => {
+    // Thông báo 1 lần sau khi bị khóa/hết hạn giữa chừng (Prompt 5 A3/A2.4)
+    try {
+      const flash = window.sessionStorage.getItem(AUTH_FLASH_KEY);
+      if (flash) {
+        window.sessionStorage.removeItem(AUTH_FLASH_KEY);
+        return flash;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  });
   const [showAdminDashboard, setShowAdminDashboard] = useState<boolean>(false);
   // Giới hạn 2 thiết bị (Prompt 4): chiếm slot TRƯỚC khi render app/data.
   const [claimingSession, setClaimingSession] = useState<boolean>(false);
@@ -336,7 +348,7 @@ export default function App() {
     }
   };
 
-  const handleBlockedLogout = () => {
+  const handleBlockedLogout = async () => {
     const acc = blockedInfo?.account || pendingAccountRef.current;
     try {
       saveFinalProgress();
@@ -355,9 +367,14 @@ export default function App() {
     currentAccountRef.current = null;
     setBlockedInfo(null);
     goOnlineDb();
-    releaseSession().catch(() => {});
+    // F7: nhả slot khi còn phiên (xem handleLogout)
+    try {
+      await releaseSession();
+    } catch {
+      // ignore
+    }
     stopSessionWatch();
-    authService.logout().catch(() => {});
+    await authService.logout().catch(() => {});
     setCurrentAccount(null);
     setAuthNotice(null);
     setActiveProfile(null);
@@ -1342,7 +1359,7 @@ export default function App() {
     showToast(`Chào mừng @${account.username} đến với Gấu Cinema!`);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     // Cô lập tài khoản: lưu nốt tiến độ cho ĐÚNG acc cũ, rồi dọn sạch player
     // + URL media để acc sau không mở tiếp phim của acc trước (kể cả resume).
     try {
@@ -1354,15 +1371,20 @@ export default function App() {
     if (currentAccount) {
       firestoreStorage.clearActiveProfileId(currentAccount.id);
     }
-    // Nhả slot thiết bị ngay (Prompt 4)
+    // Nhả slot TRƯỚC khi signOut (F7): release sau signOut sẽ rớt quyền
+    // (rules yêu cầu auth) và kẹt slot tới 30 phút/onDisconnect.
     pendingAccountRef.current = null;
     currentAccountRef.current = null;
     claimedProfilesForRef.current = null;
     setBlockedInfo(null);
     goOnlineDb();
-    releaseSession().catch(() => {});
+    try {
+      await releaseSession();
+    } catch {
+      // ignore — null-branch subscribeAuth dọn nốt
+    }
     stopSessionWatch();
-    authService.logout().catch(() => {});
+    await authService.logout().catch(() => {});
     setCurrentAccount(null);
     setAuthNotice(null);
     setActiveProfile(null);
