@@ -5,6 +5,7 @@ import {
   onDisconnect,
   onValue,
   ref,
+  remove,
   runTransaction,
   update,
   type TransactionResult,
@@ -269,9 +270,10 @@ export async function releaseSession(): Promise<void> {
         CLAIM_TIMEOUT_MS
       );
     } catch {
-      // Rớt mạng giữa chừng: onDisconnect đã hủy ở trên, server sẽ... không dọn
-      // được nữa. Tab còn lại (nếu có) giữ slot qua tabs của nó; hết tab thì
-      // claim sau thu hồi (empty-tabs/zombie). Chấp nhận được, không chặn logout.
+      // Fallback khi transaction treo/lỗi: xóa thẳng tabId của mình. Không bao
+      // giờ xóa node hay tab của người khác. Node rỗng còn sót (nếu có) sẽ
+      // được claim sau thu hồi theo luật empty-tabs/zombie.
+      await remove(tabRef).catch(() => {});
     }
   } catch {
     // ignore

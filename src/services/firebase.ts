@@ -29,8 +29,6 @@ try {
 export const db = dbInstance!;
 export const auth = authInstance!;
 export const rtdb = rtdbInstance!;
-
-/** ProjectId đang dùng — để namespace cache localStorage theo project. */
 export const FIREBASE_PROJECT_ID: string =
   (firebaseConfig as Record<string, string>).projectId || '(default)';
 
@@ -179,3 +177,24 @@ export function sanitizeData<T>(data: T): T {
   }
   return data;
 }
+
+// Cầu test rules trên Console (DEV ONLY, không ảnh hưởng production):
+// window.__gauTest = { db, auth, fsDoc, fsSet, fsGet } để chạy các phép thử
+// Bước 13 (p3, cross-read...) với đúng phiên user đang đăng nhập.
+async function exposeTestBridge(): Promise<void> {
+  try {
+    if (!import.meta.env?.DEV) return;
+    const fsMod = await import('firebase/firestore');
+    (window as any).__gauTest = {
+      db: dbInstance,
+      auth: authInstance,
+      fsDoc: fsMod.doc,
+      fsSet: fsMod.setDoc,
+      fsGet: fsMod.getDoc,
+      fsDel: fsMod.deleteDoc,
+    };
+  } catch {
+    // ignore
+  }
+}
+void exposeTestBridge();

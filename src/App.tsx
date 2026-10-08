@@ -373,6 +373,11 @@ export default function App() {
     currentAccountRef.current = null;
     setBlockedInfo(null);
     goOnlineDb();
+    setCurrentAccount(null);
+    setAuthNotice(null);
+    setActiveProfile(null);
+    setShowProfileSelector(true);
+    setShowAdminDashboard(false);
     // F7: nhả slot khi còn phiên (xem handleLogout)
     try {
       await releaseSession();
@@ -381,11 +386,6 @@ export default function App() {
     }
     stopSessionWatch();
     await authService.logout().catch(() => {});
-    setCurrentAccount(null);
-    setAuthNotice(null);
-    setActiveProfile(null);
-    setShowProfileSelector(true);
-    setShowAdminDashboard(false);
   };
 
   // App Switcher State
@@ -1379,18 +1379,13 @@ export default function App() {
     }
     // Nhả slot TRƯỚC khi signOut (F7): release sau signOut sẽ rớt quyền
     // (rules yêu cầu auth) và kẹt slot tới 30 phút/onDisconnect.
+    // Dọn UI NGAY LẬP TỨC (không chờ mạng): app treo ở trạng thái login trong
+    // lúc chờ release sẽ tiếp tục fetch nền và ăn 401 hàng loạt sau signOut.
     pendingAccountRef.current = null;
     currentAccountRef.current = null;
     claimedProfilesForRef.current = null;
     setBlockedInfo(null);
     goOnlineDb();
-    try {
-      await releaseSession();
-    } catch {
-      // ignore — null-branch subscribeAuth dọn nốt
-    }
-    stopSessionWatch();
-    await authService.logout().catch(() => {});
     setCurrentAccount(null);
     setAuthNotice(null);
     setActiveProfile(null);
@@ -1398,6 +1393,13 @@ export default function App() {
     setShowAdminDashboard(false);
     setPlayingMovie(null);
     showToast("Đã đăng xuất khỏi tài khoản.");
+    try {
+      await releaseSession();
+    } catch {
+      // ignore — null-branch subscribeAuth dọn nốt
+    }
+    stopSessionWatch();
+    await authService.logout().catch(() => {});
   };
 
   // TV: session lưu localStorage nên restart app vẫn giữ login (nhớ lâu).
