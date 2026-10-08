@@ -296,6 +296,52 @@ async function startServer() {
     }
   }
 
+  // ---- Giới hạn 2 thiết bị (Prompt 4 B7) ----
+  // Client gửi deviceId qua header X-Device-Id trong MỌI request. Server kiểm
+  // tra THIẾT BỊ CÓ GIỮ SLOT KHÔNG (sessions/{uid}/1|2), chứ không chỉ đã
+  // đăng nhập chưa. Không có slot -> 409 NO_SESSION_SLOT (client hiện màn
+  // hình chặn, KHÔNG signOut). Cache memory 30s để không đọc RTDB mỗi request.
+  const slotCheckCache = new Map<string, { at: number; ok: boolean }>();
+  const SLOT_CACHE_MS = 30000;
+
+  function pruneSlotCache() {
+    try {
+      if (slotCheckCache.size < 1000) return;
+      const now = Date.now();
+      for (const [k, v] of slotCheckCache) {
+        if (now - v.at > SLOT_CACHE_MS) slotCheckCache.delete(k);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  async function requireActiveSlot(req: any, res: any, next: any) {
+    try {
+      const uid = req.user?.uid;
+      const deviceId = req.headers?.["x-device-id"];
+      if (!uid) return res.status(401).json({ error: "UNAUTHORIZED" });
+      if (typeof deviceId !== "string" || !deviceId) {
+        return res.status(409).json({ error: "NO_SESSION_SLOT" });
+      }
+      const key = `${uid}|${deviceId}`;
+      const cached = slotCheckCache.get(key);
+      if (cached && Date.now() - cached.at < SLOT_CACHE_MS) {
+        if (cached.ok) return next();
+        return res.status(409).json({ error: "NO_SESSION_SLOT" });
+      }
+      const snap = await getAdminDatabase().ref(`sessions/${uid}`).get();
+      const val = snap.val() || {};
+      const ok = val?.["1"]?.deviceId === deviceId || val?.["2"]?.deviceId === deviceId;
+      slotCheckCache.set(key, { at: Date.now(), ok });
+      pruneSlotCache();
+      if (!ok) return res.status(409).json({ error: "NO_SESSION_SLOT" });
+      return next();
+    } catch {
+      return res.status(409).json({ error: "NO_SESSION_SLOT" });
+    }
+  }
+
   // Enable CORS for Android app and other origins
   app.use(cors({
     origin: (origin, callback) => {
@@ -307,7 +353,7 @@ async function startServer() {
       }
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "X-Device-Id"],
     credentials: true
   }));
 
@@ -678,7 +724,7 @@ async function startServer() {
   }
 
   // IntroDB proxy - APK-safe (no cache, single fetch per episode). Handles CORS for native WebView.
-  app.get("/api/intro/segments", requireAuth, async (req, res) => {
+  app.get("/api/intro/segments", requireAuth, requireActiveSlot, async (req, res) => {
     // Never allow browser/proxy caching here: Express ETag would answer 304
     // with empty body, and FE fetch (res.ok=false on 304) would drop segments.
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -713,7 +759,7 @@ async function startServer() {
   });
 
   // TMDB Backdrop + Logo proxy (like chophim.app) - returns original backdrop/logotype for hero banner
-  app.get("/api/tmdb/backdrop/:tmdbId", requireAuth, async (req, res) => {
+  app.get("/api/tmdb/backdrop/:tmdbId", requireAuth, requireActiveSlot, async (req, res) => {
     const tmdbId = String(req.params.tmdbId || "").trim();
     if (!tmdbId || !/^\d+$/.test(tmdbId)) return res.status(400).json({ error: "Invalid tmdbId" });
     const force = req.query.force === "true" || req.query.force === "1";
@@ -725,7 +771,7 @@ async function startServer() {
   // TMDB Generic Proxy - expose toàn bộ TMDb v3 endpoints bạn liệt kê qua Bearer server-side
   // Base: /api/tmdb/v3/*  -> https://api.themoviedb.org/3/*
   const tmdbGenericCache = new LRUCache<string, { data: any; timestamp: number }>(200);
-  app.use("/api/tmdb/v3", requireAuth, async (req: any, res, next) => {
+  app.use("/api/tmdb/v3", requireAuth, requireActiveSlot, async (req: any, res, next) => {
     if (req.method !== "GET") return next();
     const fullPath = req.originalUrl || req.url || "";
     // extract subPath after /api/tmdb/v3/
@@ -771,7 +817,7 @@ async function startServer() {
 
   // TMDB Trending (hot) - like chophim: lấy phim đang hot quốc tế làm fallback hero
   const tmdbTrendingCache = new LRUCache<string, { data: any; timestamp: number }>(10);
-  app.get("/api/tmdb/trending", requireAuth, async (req, res) => {
+  app.get("/api/tmdb/trending", requireAuth, requireActiveSlot, async (req, res) => {
     const cacheKey = "trending:movie:day:vi";
     const cached = tmdbTrendingCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < 10 * 60 * 1000) {
@@ -1085,7 +1131,7 @@ async function startServer() {
     return payload;
   }
 
-  app.get("/api/tmdb/hero-popular", requireAuth, async (req, res) => {
+  app.get("/api/tmdb/hero-popular", requireAuth, requireActiveSlot, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
@@ -1120,7 +1166,7 @@ async function startServer() {
   });
 
   // Comprehensive System API Health Check & Ping Tester (Backend-based to prevent CORS & accurately measure latency)
-  app.post("/api/system/apis/ping", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/system/apis/ping", requireAuth, requireActiveSlot, requireAdmin, async (req, res) => {
     let { url, timeoutMs = 8000 } = req.body || {};
     if (!url || typeof url !== "string" || !url.startsWith("http")) {
       return res.status(400).json({
@@ -1511,7 +1557,7 @@ setTimeout(seedInitialCastIndex, 2000);
 // --- END SMART ACTOR & DIRECTOR SEARCH ENGINE ---
 
   // 1. KKPhim Dedicated Proxy (https://phimapi.com)
-  app.get("/api/proxy/kkphim/*", requireAuth, async (req, res) => {
+  app.get("/api/proxy/kkphim/*", requireAuth, requireActiveSlot, async (req, res) => {
     const endpoint = req.params[0];
     const query = new URLSearchParams(req.query as Record<string, string>).toString();
     const cacheKey = `kkphim:${endpoint}?${query}`;
@@ -1536,7 +1582,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // 2. OPhim Dedicated Proxy (https://ophim1.com)
-  app.get("/api/proxy/ophim/*", requireAuth, async (req, res) => {
+  app.get("/api/proxy/ophim/*", requireAuth, requireActiveSlot, async (req, res) => {
     const endpoint = req.params[0];
     const query = new URLSearchParams(req.query as Record<string, string>).toString();
     const cacheKey = `ophim:${endpoint}?${query}`;
@@ -1572,7 +1618,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // 3. NguonC Dedicated Proxy (https://phim.nguonc.com)
-  app.get("/api/proxy/nguonc/*", requireAuth, async (req, res) => {
+  app.get("/api/proxy/nguonc/*", requireAuth, requireActiveSlot, async (req, res) => {
     const endpoint = req.params[0];
     const query = new URLSearchParams(req.query as Record<string, string>).toString();
     const cacheKey = `nguonc:${endpoint}?${query}`;
@@ -1599,7 +1645,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // 4. Multi-Source Search Aggregator with Smart Cast & Actor Matching
-  app.get("/api/proxy/search-all", requireAuth, async (req, res) => {
+  app.get("/api/proxy/search-all", requireAuth, requireActiveSlot, async (req, res) => {
     const keyword = String(req.query.keyword || "").trim();
     if (!keyword) {
       return res.json({ status: true, items: [] });
@@ -1740,13 +1786,13 @@ setTimeout(seedInitialCastIndex, 2000);
   }
 
   // Debug endpoint cho admin: xem rule server đang dùng (không cần đọc RTDB thủ công)
-  app.get("/api/adblock/rules", requireAuth, async (_req, res) => {
+  app.get("/api/adblock/rules", requireAuth, requireActiveSlot, async (_req, res) => {
     const rules = await getAdblockRules();
     res.json({ keywords: rules.keywords, regexes: rules.regexes, cached: true });
   });
 
   // 5a. M3U8 Ad-Clean Proxy - strips SSAI ad segments injected by upstream (opstream/phim1280)
-  app.get("/api/proxy/m3u8", requireAuth, async (req, res) => {
+  app.get("/api/proxy/m3u8", requireAuth, requireActiveSlot, async (req, res) => {
     let rawUrl = (req.query.url as string) || "";
     if (!rawUrl) return res.status(400).send("Missing url");
     // support base64 or plain
@@ -2063,7 +2109,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // 5. Generic proxy for CORS issues (e.g. Manga Chapter APIs)
-  app.get("/api/proxy/generic", requireAuth, async (req, res) => {
+  app.get("/api/proxy/generic", requireAuth, requireActiveSlot, async (req, res) => {
     const b64url = req.query.url as string;
     if (!b64url) return res.status(400).json({ error: "Missing url" });
     
@@ -2943,7 +2989,24 @@ setTimeout(seedInitialCastIndex, 2000);
   scheduleNextVietnamBatch();
 
   // Admin Batch Management Endpoints
-  app.post("/api/system/batch-sync", requireAuth, requireAdmin, async (req, res) => {
+  // Admin ngắt phiên thiết bị (Prompt 4 PHẦN C): chỉ admin, xóa node slot
+  // sessions/{uid}/{slot} bằng Admin SDK. Client không được tự xóa slot
+  // của người khác. Thiết bị bị ngắt sẽ nhận 409 ở request kế tiếp.
+  app.post("/api/admin/sessions/:uid/kick", requireAuth, requireAdmin, async (req: any, res) => {
+    try {
+      const targetUid = String(req.params?.uid || "");
+      const slot = String(req.body?.slot || "");
+      if (!targetUid || (slot !== "1" && slot !== "2")) {
+        return res.status(400).json({ error: "INVALID_SLOT" });
+      }
+      await getAdminDatabase().ref(`sessions/${targetUid}/${slot}`).remove();
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || "Kick failed" });
+    }
+  });
+
+  app.post("/api/system/batch-sync", requireAuth, requireActiveSlot, requireAdmin, async (req, res) => {
     try {
       const stats = await runFullSystemBatch(true);
       return res.json({ success: true, message: "Đã kích hoạt đồng bộ dữ liệu Batch & RTDB thành công", stats });
@@ -2952,7 +3015,7 @@ setTimeout(seedInitialCastIndex, 2000);
     }
   });
 
-  app.get("/api/system/batch-status", requireAuth, (req, res) => {
+  app.get("/api/system/batch-status", requireAuth, requireActiveSlot, (req, res) => {
     return res.json({
       success: true,
       stats: systemBatchStats,
@@ -2966,7 +3029,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // Admin Hero Banner Assets Listing & Selection
-  app.get("/api/hero/admin/list", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/hero/admin/list", requireAuth, requireActiveSlot, requireAdmin, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
@@ -2991,7 +3054,7 @@ setTimeout(seedInitialCastIndex, 2000);
     }
   });
 
-  app.post("/api/hero/select-asset", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/hero/select-asset", requireAuth, requireActiveSlot, requireAdmin, async (req, res) => {
     try {
       const { slug, assetType, selectedUrl } = req.body || {};
       if (!slug || !selectedUrl || (assetType !== "backdrop" && assetType !== "logo")) {
@@ -3102,7 +3165,7 @@ setTimeout(seedInitialCastIndex, 2000);
     }
   });
 
-  app.get("/api/top10/netflix-vn", requireAuth, async (req, res) => {
+  app.get("/api/top10/netflix-vn", requireAuth, requireActiveSlot, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
@@ -3448,7 +3511,7 @@ setTimeout(seedInitialCastIndex, 2000);
   }
 
   // TruyenQQ API Endpoints with Automatic Backup Failover to OTruyen
-  app.get("/api/proxy/truyenqq/list", requireAuth, async (req, res) => {
+  app.get("/api/proxy/truyenqq/list", requireAuth, requireActiveSlot, async (req, res) => {
     const page = parseInt(String(req.query.page || "1"), 10) || 1;
     const cacheKey = `truyenqq:list:page:${page}`;
     const cached = proxyCache.get(cacheKey);
@@ -3496,7 +3559,7 @@ setTimeout(seedInitialCastIndex, 2000);
     return res.json({ items: [], totalPages: 1 });
   });
 
-  app.get("/api/proxy/truyenqq/search", requireAuth, async (req, res) => {
+  app.get("/api/proxy/truyenqq/search", requireAuth, requireActiveSlot, async (req, res) => {
     const query = String(req.query.q || req.query.keyword || "").trim();
     if (!query) {
       return res.json({ items: [], totalPages: 1 });
@@ -3545,7 +3608,7 @@ setTimeout(seedInitialCastIndex, 2000);
     return res.json({ items: [], totalPages: 1 });
   });
 
-  app.get("/api/proxy/truyenqq/detail", requireAuth, async (req, res) => {
+  app.get("/api/proxy/truyenqq/detail", requireAuth, requireActiveSlot, async (req, res) => {
     const slug = String(req.query.slug || req.query.id || "").trim();
     if (!slug) {
       return res.status(400).json({ error: "Missing manga slug/id" });
@@ -3712,7 +3775,7 @@ setTimeout(seedInitialCastIndex, 2000);
     return res.status(404).json({ error: "Manga detail not found" });
   });
 
-  app.get("/api/proxy/truyenqq/chapter", requireAuth, async (req, res) => {
+  app.get("/api/proxy/truyenqq/chapter", requireAuth, requireActiveSlot, async (req, res) => {
     const slug = String(req.query.slug || req.query.url || req.query.id || "").trim();
     if (!slug) {
       return res.status(400).json({ error: "Missing chapter slug/url" });
@@ -3759,7 +3822,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // MangaDex Proxy Endpoint (Bypasses CORS and rate limits with backend caching)
-  app.get("/api/proxy/mangadex/*", requireAuth, async (req, res) => {
+  app.get("/api/proxy/mangadex/*", requireAuth, requireActiveSlot, async (req, res) => {
     const rawEndpoint = req.params[0] || "";
     const cleanEndpoint = rawEndpoint.split("?")[0];
     const rawQuery = req.url.includes("?") ? req.url.substring(req.url.indexOf("?") + 1) : "";
@@ -3783,7 +3846,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // OTruyen Proxy Endpoint
-  app.get("/api/proxy/otruyen/*", requireAuth, async (req, res) => {
+  app.get("/api/proxy/otruyen/*", requireAuth, requireActiveSlot, async (req, res) => {
     const rawEndpoint = req.params[0] || "";
     const cleanEndpoint = rawEndpoint.split("?")[0];
     const rawQuery = req.url.includes("?") ? req.url.substring(req.url.indexOf("?") + 1) : "";
@@ -3807,7 +3870,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // CuuTruyen Proxy Endpoint (v2)
-  app.get("/api/proxy/cuutruyen/*", requireAuth, async (req, res) => {
+  app.get("/api/proxy/cuutruyen/*", requireAuth, requireActiveSlot, async (req, res) => {
     let rawEndpoint = req.params[0] || "";
     let cleanEndpoint = rawEndpoint.split("?")[0];
     if (cleanEndpoint === "mangas" || cleanEndpoint === "mangas/") {
@@ -3834,7 +3897,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // 6. Default General Proxy with resilient multi-source failover and caching
-  app.get("/api/proxy/movie/*", requireAuth, async (req, res) => {
+  app.get("/api/proxy/movie/*", requireAuth, requireActiveSlot, async (req, res) => {
     const endpoint = req.params[0];
     const query = new URLSearchParams(req.query as Record<string, string>).toString();
     const cacheKey = `movie:${endpoint}?${query}`;
@@ -4896,7 +4959,7 @@ setTimeout(seedInitialCastIndex, 2000);
   }
 
   // 7. YouTube Real Search API Endpoint (Direct YouTube Live Extraction)
-  app.get("/api/youtube/search", requireAuth, async (req, res) => {
+  app.get("/api/youtube/search", requireAuth, requireActiveSlot, async (req, res) => {
     // Continuation page request (infinite scroll)
     const contToken = String(req.query.token || "").trim();
     if (contToken) {
@@ -5069,7 +5132,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // 8. YouTube Channel Details & Channel Search Endpoint
-  app.get("/api/youtube/channel", requireAuth, async (req, res) => {
+  app.get("/api/youtube/channel", requireAuth, requireActiveSlot, async (req, res) => {
     const channelId = String(req.query.id || "").trim();
     const channelName = String(req.query.name || "").trim();
     const query = String(req.query.q || req.query.query || "").trim();
@@ -5094,7 +5157,7 @@ setTimeout(seedInitialCastIndex, 2000);
     }
   });
 
-  app.get("/api/youtube/trending", requireAuth, async (req, res) => {
+  app.get("/api/youtube/trending", requireAuth, requireActiveSlot, async (req, res) => {
     // Continuation page request (infinite scroll)
     const token = String(req.query.token || "").trim();
     const category = String(req.query.category || "all").trim();
@@ -5180,7 +5243,7 @@ setTimeout(seedInitialCastIndex, 2000);
   });
 
   // Autocomplete suggestions for YouTube search
-  app.get("/api/youtube/suggest", requireAuth, async (req, res) => {
+  app.get("/api/youtube/suggest", requireAuth, requireActiveSlot, async (req, res) => {
     try {
       const query = String(req.query.q || "").trim();
       if (!query) {

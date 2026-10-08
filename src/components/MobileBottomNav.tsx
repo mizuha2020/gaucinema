@@ -103,11 +103,6 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                 <div>
                   <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
                     <span>{activeProfile?.name || 'Người xem'}</span>
-                    {activeProfile?.isKid && (
-                      <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-500/40">
-                        Kids
-                      </span>
-                    )}
                   </h4>
                   <p className="text-xs text-sky-400">Đang hoạt động trên Gấu Cinema</p>
                 </div>

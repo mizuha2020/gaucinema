@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { auth } from './firebase';
 import { signOut } from 'firebase/auth';
+import { getDeviceId } from './sessionService';
 
 export const isNativeApp = (): boolean => {
   if (typeof window === 'undefined') return false;
@@ -331,6 +332,15 @@ export async function apiFetch(
     if (backend && token && !headers.has('Authorization')) {
       headers.set('Authorization', `Bearer ${token}`);
     }
+    // Prompt 4 B7: mọi request gửi kèm deviceId để server kiểm tra slot.
+    // Thẻ <img> không dùng helper này nên /api/proxy/image giữ public.
+    if (backend && !headers.has('X-Device-Id')) {
+      try {
+        headers.set('X-Device-Id', getDeviceId());
+      } catch {
+        // ignore
+      }
+    }
     return fetch(url, { ...init, headers, ...(signal ? { signal } : {}) });
   };
 
@@ -350,6 +360,23 @@ export async function apiFetch(
   };
 
   let res = await runWithTimeout(backend ? await getBackendToken() : null, timeoutMs);
+  if (res.status === 409 && backend) {
+    // Prompt 4 B7: thiết bị mất slot (vd admin ngắt phiên). Hiện màn hình
+    // chặn, GIỮ ĐĂNG NHẬP (không signOut). Dùng clone để không nuốt body.
+    try {
+      const probe = await res.clone().json().catch(() => null);
+      if (probe && (probe as any)?.error === 'NO_SESSION_SLOT') {
+        try {
+          window.dispatchEvent(new CustomEvent('gau:session-lost'));
+        } catch {
+          // ignore
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return res;
+  }
   if (res.status === 401 && backend && retry401) {
     const fresh = await getBackendToken(true);
     res = await runWithTimeout(fresh, timeoutMs);

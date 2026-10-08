@@ -69,8 +69,9 @@ export const firestoreStorage = {
 
     // Tên dùng cho hồ sơ chính tự tạo (tài khoản tạo tay chưa có profiles).
     // PHẢI là displayName/username, tuyệt đối không dùng accountId (là Auth uid).
+    // Slot hồ sơ cố định: chỉ 'p1' hoặc 'p2' (Prompt 4 — rules chặn ở tầng database).
     const primaryName = (fallbackName || '').trim() || 'Người xem';
-    const primaryId = `prof_${accountId}_primary`;
+    const primaryId = 'p1';
     
     const cached = getLocalProfilesCache(accountId);
 
@@ -135,15 +136,18 @@ export const firestoreStorage = {
 
   async addProfile(accountId: string, newProf: Omit<UserProfile, 'id' | 'createdAt'>): Promise<UserProfile> {
     const current = await this.getProfiles(accountId);
-    if (current.length >= 5) {
-      throw new Error('Tài khoản đã đạt giới hạn tối đa 5 hồ sơ người xem.');
+    // Slot cố định p1/p2 — hồ sơ thứ 3 không tồn tại được ở tầng database
+    // (rules validate), ở đây chặn sớm để báo lỗi đẹp.
+    const taken = new Set(current.map((p) => p.id));
+    const freeSlot = (['p1', 'p2'] as const).find((s) => !taken.has(s));
+    if (!freeSlot) {
+      throw new Error('Mỗi tài khoản chỉ được tạo tối đa 2 hồ sơ.');
     }
 
-    const profileId = `prof_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const fullProfile: UserProfile = {
       ...newProf,
-      id: profileId,
-      isPrimary: false,
+      id: freeSlot,
+      isPrimary: current.length === 0,
       createdAt: Date.now(),
     };
 
@@ -154,12 +158,12 @@ export const firestoreStorage = {
       return fullProfile;
     }
 
-    const docRef = doc(db, 'accounts', accountId, 'profiles', profileId);
+    const docRef = doc(db, 'accounts', accountId, 'profiles', freeSlot);
     try {
       await setDoc(docRef, sanitizeData(fullProfile));
       return fullProfile;
     } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, `accounts/${accountId}/profiles/${profileId}`);
+      handleFirestoreError(e, OperationType.CREATE, `accounts/${accountId}/profiles/${freeSlot}`);
       return fullProfile;
     }
   },

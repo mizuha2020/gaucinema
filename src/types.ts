@@ -123,7 +123,6 @@ export interface UserProfile {
   name: string;
   avatar: string;
   color: string;
-  isKid?: boolean;
   pin?: string;
   isPrimary?: boolean;
   createdAt?: number;

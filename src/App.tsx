@@ -14,6 +14,19 @@ import {
 } from "./types";
 import { authService } from "./services/authService";
 import { firestoreStorage } from "./services/firestoreStorage";
+import {
+  claimSession,
+  fetchSessions,
+  getDeviceId,
+  goOfflineDb,
+  goOnlineDb,
+  releaseSession,
+  startHiddenWatch,
+  stopHiddenWatch,
+  updateSessionActivity,
+  type SessionSlot,
+} from "./services/sessionService";
+import { SessionBlockedScreen } from "./components/SessionBlockedScreen";
 import { movieApi } from "./services/movieApi";
 import { presenceService } from "./services/presenceService";
 import { appConfigService } from "./services/appConfigService";
@@ -102,20 +115,255 @@ export default function App() {
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [showAdminDashboard, setShowAdminDashboard] = useState<boolean>(false);
+  // Giới hạn 2 thiết bị (Prompt 4): chiếm slot TRƯỚC khi render app/data.
+  const [claimingSession, setClaimingSession] = useState<boolean>(false);
+  const [blockedInfo, setBlockedInfo] = useState<{
+    account: Account;
+    sessions: SessionSlot[];
+    timeout: boolean;
+  } | null>(null);
+  const [retryingClaim, setRetryingClaim] = useState<boolean>(false);
+  const pendingAccountRef = useRef<Account | null>(null);
+  const currentAccountRef = useRef<Account | null>(null);
+  const activeProfileRef = useRef<UserProfile | null>(null);
+  const hiddenStopRef = useRef<(() => void) | null>(null);
+  // Profiles đã tải trong runClaimFlow cho account nào (tránh tải lại 2 lần)
+  const claimedProfilesForRef = useRef<string | null>(null);
+
+  const stopSessionWatch = () => {
+    try {
+      hiddenStopRef.current?.();
+    } catch {
+      // ignore
+    }
+    hiddenStopRef.current = null;
+    stopHiddenWatch();
+  };
+
+  // Chiếm slot thiết bị cho account. true = vào app, false = chặn/giữ login.
+  const runClaimFlow = async (account: Account): Promise<boolean> => {
+    let profs: UserProfile[] = [];
+    try {
+      profs = await firestoreStorage.getProfiles(
+        account.id,
+        account.displayName || account.username
+      );
+    } catch {
+      profs = [];
+    }
+    if (pendingAccountRef.current?.id !== account.id) return false;
+    const savedId = firestoreStorage.getActiveProfileId(account.id);
+    const initial =
+      profs.find((p) => p.id === savedId) ||
+      profs[0] ||
+      ({ id: "", name: account.displayName || account.username } as UserProfile);
+    let claim;
+    try {
+      claim = await claimSession(account.uid, {
+        id: initial.id,
+        name: initial.name,
+      });
+    } catch {
+      if (pendingAccountRef.current?.id !== account.id) return false;
+      setAuthNotice(
+        "Hệ thống đang có quá nhiều người truy cập. Vui lòng thử lại sau ít phút."
+      );
+      setBlockedInfo({ account, sessions: [], timeout: true });
+      return false;
+    }
+    // Đổi acc/logout giữa lúc claim: nhả slot vừa chiếm (nếu có) để khỏi kẹt.
+    if (pendingAccountRef.current?.id !== account.id) {
+      try {
+        await releaseSession();
+      } catch {
+        // ignore
+      }
+      return false;
+    }
+    if (!claim.ok) {
+      if (claim.reason === "occupied") {
+        // Hết slot: GIỮ ĐĂNG NHẬP, hiện màn hình chặn, ngắt websocket.
+        setBlockedInfo({ account, sessions: claim.sessions, timeout: false });
+        goOfflineDb();
+      } else {
+        setAuthNotice(
+          "Hệ thống đang có quá nhiều người truy cập. Vui lòng thử lại sau ít phút."
+        );
+        setBlockedInfo({ account, sessions: [], timeout: true });
+      }
+      return false;
+    }
+    // Chiếm được slot mới render app và tải dữ liệu.
+    claimedProfilesForRef.current = account.id;
+    setProfiles(profs);
+    if (initial && initial.id) {
+      if ((initial as UserProfile).pin) {
+        setActiveProfile(null);
+        setShowProfileSelector(true);
+      } else {
+        setActiveProfile(initial as UserProfile);
+        setShowProfileSelector(false);
+      }
+    } else {
+      setActiveProfile(null);
+      setShowProfileSelector(true);
+    }
+    currentAccountRef.current = account;
+    setCurrentAccount(account);
+    setAuthNotice(null);
+    setBlockedInfo(null);
+    try {
+      void getBackendToken();
+    } catch {
+      /* ignore */
+    }
+    // Tab ẩn quá 30 phút -> nhả slot + đăng xuất (tránh chiếm chỗ khi để quên).
+    stopSessionWatch();
+    hiddenStopRef.current = startHiddenWatch(() => {
+      releaseSession().catch(() => {});
+      stopSessionWatch();
+      authService.logout().catch(() => {});
+    });
+    return true;
+  };
 
   useEffect(() => {
-    const unsub = authService.subscribeAuth((account, notice) => {
-      setCurrentAccount(account);
-      setAuthNotice(notice || null);
-      setAuthReady(true);
+    const unsub = authService.subscribeAuth(async (account, notice) => {
       if (!account) {
+        // Dọn slot còn sót (vd bị đá do hết hạn giữa chừng) rồi về login.
+        // Chỉ dọn media khi đang rớt TỪ một acc xuống (giữ deep-link cho lần mở lạnh).
+        const hadAccount = currentAccountRef.current !== null;
+        pendingAccountRef.current = null;
+        currentAccountRef.current = null;
+        if (hadAccount) {
+          try {
+            saveFinalProgress();
+          } catch {
+            // ignore
+          }
+          sanitizeMediaOnAccountExit();
+        }
+        try {
+          await releaseSession();
+        } catch {
+          // ignore
+        }
+        stopSessionWatch();
+        goOnlineDb();
+        setBlockedInfo(null);
+        setClaimingSession(false);
+        setCurrentAccount(null);
+        setAuthNotice(notice || null);
+        setAuthReady(true);
         setShowAdminDashboard(false);
-      } else {
-        try { void getBackendToken(); } catch { /* ignore */ }
+        return;
+      }
+      // Có account: chiếm slot TRƯỚC khi render app và tải dữ liệu.
+      pendingAccountRef.current = account;
+      setClaimingSession(true);
+      setBlockedInfo(null);
+      setAuthReady(false);
+      try {
+        await runClaimFlow(account);
+      } finally {
+        if (pendingAccountRef.current?.id === account.id) {
+          setClaimingSession(false);
+          setAuthReady(true);
+        }
       }
     });
-    return unsub;
+    return () => {
+      pendingAccountRef.current = null;
+      stopSessionWatch();
+      unsub();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Server đá 409 NO_SESSION_SLOT (thiết bị mất slot, vd admin ngắt phiên):
+  // hiện màn hình chặn, GIỮ ĐĂNG NHẬP, không signOut.
+  useEffect(() => {
+    const onSessionLost = async () => {
+      const acc = currentAccountRef.current;
+      if (!acc || blockedInfo) return;
+      pendingAccountRef.current = acc;
+      let slots: SessionSlot[] = [];
+      try {
+        slots = await fetchSessions(acc.uid);
+      } catch {
+        slots = [];
+      }
+      setBlockedInfo({ account: acc, sessions: slots, timeout: false });
+    };
+    const onWatchActivity = (e: Event) => {
+      const acc = currentAccountRef.current;
+      if (!acc) return;
+      const detail = (e as CustomEvent)?.detail as
+        | { kind?: 'movie' | 'manga'; title?: string }
+        | undefined;
+      if (!detail?.title) return;
+      const prof = activeProfileRef.current;
+      updateSessionActivity(acc.id, {
+        profileId: prof?.id || "",
+        profileName: prof?.name || acc.displayName,
+        kind: detail.kind || "manga",
+        title: detail.title,
+      }).catch(() => {});
+    };
+    window.addEventListener("gau:session-lost", onSessionLost);
+    window.addEventListener("gau:watch-activity", onWatchActivity);
+    return () => {
+      window.removeEventListener("gau:session-lost", onSessionLost);
+      window.removeEventListener("gau:watch-activity", onWatchActivity);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blockedInfo]);
+
+  // Bấm "Thử lại" ở màn hình chặn: mở lại socket, chiếm slot, vào thẳng app.
+  const handleRetryClaim = async () => {
+    const acc = blockedInfo?.account || pendingAccountRef.current;
+    if (!acc || retryingClaim) return;
+    setRetryingClaim(true);
+    try {
+      goOnlineDb();
+      pendingAccountRef.current = acc;
+      setClaimingSession(true);
+      await runClaimFlow(acc);
+    } finally {
+      setRetryingClaim(false);
+      setClaimingSession(false);
+      setAuthReady(true);
+    }
+  };
+
+  const handleBlockedLogout = () => {
+    const acc = blockedInfo?.account || pendingAccountRef.current;
+    try {
+      saveFinalProgress();
+    } catch {
+      // ignore
+    }
+    sanitizeMediaOnAccountExit();
+    if (acc) {
+      try {
+        firestoreStorage.clearActiveProfileId(acc.id);
+      } catch {
+        // ignore
+      }
+    }
+    pendingAccountRef.current = null;
+    currentAccountRef.current = null;
+    setBlockedInfo(null);
+    goOnlineDb();
+    releaseSession().catch(() => {});
+    stopSessionWatch();
+    authService.logout().catch(() => {});
+    setCurrentAccount(null);
+    setAuthNotice(null);
+    setActiveProfile(null);
+    setShowProfileSelector(true);
+    setShowAdminDashboard(false);
+  };
 
   // App Switcher State
   const [activeApp, setActiveApp] = useState<ActiveApp>(() => {
@@ -245,6 +493,11 @@ export default function App() {
   const [activeProfile, setActiveProfile] = useState<UserProfile | null>(null);
   const [showProfileSelector, setShowProfileSelector] = useState<boolean>(true);
   const [isLoadingProfiles, setIsLoadingProfiles] = useState<boolean>(false);
+
+  // Mirror để event listener (watch-activity) đọc profile mới nhất
+  useEffect(() => {
+    activeProfileRef.current = activeProfile;
+  }, [activeProfile]);
 
   // Quick Profile Switcher Loader state
   const [profileSwitchSrc, setProfileSwitchSrc] = useState<UserProfile | null>(null);
@@ -529,8 +782,11 @@ export default function App() {
 
   useEffect(() => {
     if (currentAccount) {
+      // Claim flow đã tải profiles cho account này thì thôi (tránh đọc thừa)
+      if (claimedProfilesForRef.current === currentAccount.id) return;
       loadAccountProfiles(currentAccount);
     } else {
+      claimedProfilesForRef.current = null;
       setProfiles([]);
       setActiveProfile(null);
       setShowProfileSelector(true);
@@ -560,6 +816,58 @@ export default function App() {
   useEffect(() => {
     refreshProfileData();
   }, [refreshProfileData]);
+
+  // B4b: mở tập phim -> cập nhật slot đang giữ (để admin thấy ai xem gì)
+  useEffect(() => {
+    if (!currentAccount || !playingMovie || !playingEpisode) return;
+    const title = playingEpisode.name
+      ? `${playingMovie.name} — ${playingEpisode.name}`
+      : playingMovie.name;
+    updateSessionActivity(currentAccount.id, {
+      profileId: activeProfile?.id || "",
+      profileName: activeProfile?.name || currentAccount.displayName,
+      kind: "movie",
+      title,
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentAccount?.id, playingMovie?.slug, playingEpisode?.slug]);
+
+  // Phòng xem chung: host/khách vào phòng cũng cập nhật slot
+  useEffect(() => {
+    if (!currentAccount || !activeRoomId || !activeRoomData) return;
+    const title = activeRoomData.filmName
+      ? `Xem chung: ${activeRoomData.filmName}`
+      : "Xem chung";
+    updateSessionActivity(currentAccount.id, {
+      profileId: activeProfile?.id || "",
+      profileName: activeProfile?.name || currentAccount.displayName,
+      kind: "movie",
+      title,
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentAccount?.id, activeRoomId]);
+
+  // Tự kiểm tra slot định kỳ: tab tồn (mất slot mà không biết — vd node bị
+  // xóa tay, onDisconnect hụt) sẽ tự rơi vào màn hình chặn trong vài phút
+  // thay vì kẹt ở trang chủ mãi. Chỉ đọc nhẹ RTDB, không tốn quota.
+  useEffect(() => {
+    if (!currentAccount || blockedInfo) return;
+    const acc = currentAccount;
+    const timer = setInterval(async () => {
+      try {
+        const slots = await fetchSessions(acc.uid);
+        const mine = slots.some((s) => s.deviceId === getDeviceId());
+        if (!mine) {
+          pendingAccountRef.current = acc;
+          setBlockedInfo({ account: acc, sessions: slots, timeout: false });
+        }
+      } catch {
+        // ignore — lỗi mạng không đá user
+      }
+    }, 2 * 60 * 1000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentAccount?.id, blockedInfo]);
 
   // Offline auto-cleanup: khi đổi profile/account thì xóa hết hạn 7 ngày
   useEffect(() => {
@@ -974,7 +1282,58 @@ export default function App() {
   }, [currentAccount]);
 
   // Auth Handlers
-  const handleLoginSuccess = (account: Account) => {
+  // Dọn player + URL media khi đổi acc: acc sau không được mở tiếp phim,
+  // detail hay mốc giờ của acc trước (kể cả resume từ URL deep-link).
+  const sanitizeMediaOnAccountExit = () => {
+    setPlayingMovie(null);
+    try {
+      playingMovieRef.current = null;
+    } catch {
+      // ignore
+    }
+    try {
+      setPlayingEpisode(null);
+    } catch {
+      // ignore
+    }
+    try {
+      setPlayingServer(null);
+    } catch {
+      // ignore
+    }
+    setSelectedMovieForDetail(null);
+    setInitialResumeTime(0);
+    try {
+      videoTimeRef.current = 0;
+    } catch {
+      // ignore
+    }
+    try {
+      const r = parseLocation(window.location.pathname, window.location.search);
+      if (r.kind === "player" || r.kind === "detail") {
+        appNavigate("/", { replace: true });
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  // Login form mật khẩu: KHÔNG set account ở đây — đợi subscribeAuth chiếm
+  // slot xong mới render (B4). Chỉ toast + prewarm.
+  // Ghép đôi TV (paired=true): không có Firebase session nên set trực tiếp
+  // (luồng legacy, data sẽ lỗi quyền cho tới khi có token server-side).
+  const handleLoginSuccess = (account: Account, opts?: { paired?: boolean }) => {
+    if (!opts?.paired) {
+      setAuthNotice(null);
+      setShowAdminDashboard(false);
+      try {
+        void getBackendToken();
+      } catch {
+        /* ignore */
+      }
+      showToast(`Chào mừng @${account.username} đến với Gấu Cinema!`);
+      return;
+    }
     setCurrentAccount(account);
     setAuthNotice(null);
     setShowAdminDashboard(false);
@@ -984,9 +1343,25 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    // Cô lập tài khoản: lưu nốt tiến độ cho ĐÚNG acc cũ, rồi dọn sạch player
+    // + URL media để acc sau không mở tiếp phim của acc trước (kể cả resume).
+    try {
+      saveFinalProgress();
+    } catch {
+      // ignore
+    }
+    sanitizeMediaOnAccountExit();
     if (currentAccount) {
       firestoreStorage.clearActiveProfileId(currentAccount.id);
     }
+    // Nhả slot thiết bị ngay (Prompt 4)
+    pendingAccountRef.current = null;
+    currentAccountRef.current = null;
+    claimedProfilesForRef.current = null;
+    setBlockedInfo(null);
+    goOnlineDb();
+    releaseSession().catch(() => {});
+    stopSessionWatch();
     authService.logout().catch(() => {});
     setCurrentAccount(null);
     setAuthNotice(null);
@@ -1027,6 +1402,11 @@ export default function App() {
 
     setActiveProfile(profile);
     firestoreStorage.setActiveProfileId(currentAccount.id, profile.id);
+    // Đổi hồ sơ trong slot thiết bị (vẫn 1 slot, chỉ đổi nội dung hiển thị)
+    updateSessionActivity(currentAccount.id, {
+      profileId: profile.id,
+      profileName: profile.name,
+    }).catch(() => {});
     setShowProfileSelector(false);
   };
 
@@ -1058,6 +1438,10 @@ export default function App() {
     if (profileSwitchTarget && currentAccount) {
       setActiveProfile(profileSwitchTarget);
       firestoreStorage.setActiveProfileId(currentAccount.id, profileSwitchTarget.id);
+      updateSessionActivity(currentAccount.id, {
+        profileId: profileSwitchTarget.id,
+        profileName: profileSwitchTarget.name,
+      }).catch(() => {});
       setShowProfileSelector(false);
     }
     setIsProfileSwitchLoaderOpen(false);
@@ -1824,7 +2208,7 @@ export default function App() {
               const m = watchHistory.find((h) => h.movieSlug === movie.slug);
               if (m && m.currentTime > 10) resume = m.currentTime;
             }
-          } else if (activeProfile) {
+          } else if (currentAccount && activeProfile) {
             const m = watchHistory.find(
               (h) => h.movieSlug === movie.slug && h.episodeSlug === episode.slug,
             );
@@ -1859,13 +2243,28 @@ export default function App() {
     ],
   );
 
-  // 0. Đang khôi phục phiên Firebase Auth -> chờ, không flash màn hình login
-  if (!authReady) {
+  // 0. Đang khôi phục phiên Firebase Auth / chiếm slot thiết bị -> chờ
+  if (!authReady || claimingSession) {
     return (
       <div className="min-h-screen w-full bg-[#070b16] flex flex-col items-center justify-center gap-3">
         <div className="w-10 h-10 rounded-full border-2 border-sky-500/30 border-t-sky-400 animate-spin" />
         <p className="text-xs text-slate-400 font-medium">Đang khôi phục phiên đăng nhập...</p>
       </div>
+    );
+  }
+
+  // 0b. Hết slot thiết bị: GIỮ ĐĂNG NHẬP, hiện màn hình chặn (không signOut).
+  // Thiết bị này đã goOffline: không tốn kết nối, không đọc Firestore.
+  if (blockedInfo) {
+    return (
+      <SessionBlockedScreen
+        account={blockedInfo.account}
+        sessions={blockedInfo.sessions}
+        timeout={blockedInfo.timeout}
+        retrying={retryingClaim}
+        onRetry={handleRetryClaim}
+        onLogout={handleBlockedLogout}
+      />
     );
   }
 

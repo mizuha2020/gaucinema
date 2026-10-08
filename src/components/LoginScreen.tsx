@@ -9,7 +9,7 @@ import { useTvMode } from '../hooks/useTvMode';
 import appLogo from '../assets/images/app_logo.jpg';
 
 interface LoginScreenProps {
-  onLoginSuccess: (account: Account) => void;
+  onLoginSuccess: (account: Account, opts?: { paired?: boolean }) => void;
   /** Thông báo từ phiên cũ (bị khóa / hết hạn / lỗi tải) — hiển thị thay cho form lỗi. */
   authNotice?: string | null;
 }
@@ -115,7 +115,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess, authNo
           )}
 
           {mode === 'code' ? (
-            <TvPairCodePanel onPaired={onLoginSuccess} onBackToPassword={() => setMode('password')} />
+            <TvPairCodePanel onPaired={(acc) => onLoginSuccess(acc, { paired: true })} onBackToPassword={() => setMode('password')} />
           ) : (
           <>
           <form onSubmit={handleSubmit} className="space-y-4">

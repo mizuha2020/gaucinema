@@ -306,17 +306,16 @@ export const authService = {
 
     await setDoc(doc(db, 'accounts', uid), sanitizeData(newAccount));
 
-    // Tạo hồ sơ chính mặc định
-    const primaryProfileId = `prof_${trimmedUser}_primary`;
+    // Tạo hồ sơ chính mặc định ở slot p1 (slot cố định theo Prompt 4)
     const primaryProfile: UserProfile = {
-      id: primaryProfileId,
+      id: 'p1',
       name: displayName.trim() || trimmedUser,
       avatar: DEFAULT_AVATARS[Math.floor(Math.random() * DEFAULT_AVATARS.length)],
       color: '#2563EB',
       isPrimary: true,
       createdAt: Date.now(),
     };
-    await setDoc(doc(db, 'accounts', uid, 'profiles', primaryProfileId), sanitizeData(primaryProfile)).catch(() => {});
+    await setDoc(doc(db, 'accounts', uid, 'profiles', 'p1'), sanitizeData(primaryProfile)).catch(() => {});
 
     return newAccount;
   },

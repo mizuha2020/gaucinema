@@ -19,9 +19,19 @@ service cloud.firestore {
           && request.resource.data.uid == resource.data.uid);
     }
 
-    // Mọi subcollection của tài khoản (profiles, mylist, history...):
+    // Hồ sơ: slot cố định p1/p2 — hồ sơ thứ 3 KHÔNG THỂ tạo được ở tầng
+    // database, kể cả gọi Firestore SDK từ DevTools.
+    // LƯU Ý: không dùng match /{sub=**} chung ở đây — rules cộng dồn theo OR,
+    // một wildcard cho phép create sẽ vô hiệu hóa chặn p1/p2 phía trên.
+    match /accounts/{uid}/profiles/{profileId} {
+      allow create: if (request.auth.uid == uid || isAdmin()) && (profileId == 'p1' || profileId == 'p2');
+      allow read, update, delete: if request.auth.uid == uid || isAdmin();
+    }
+
+    // Dữ liệu dưới mỗi hồ sơ (history, myList, savedManga, mangaHistory,
+    // youtubeFavorites, youtubeHistory, youtubeSubscriptions...):
     // chỉ chính chủ hoặc admin.
-    match /accounts/{uid}/{sub=**} {
+    match /accounts/{uid}/profiles/{profileId}/{rest=**} {
       allow read, write: if request.auth.uid == uid || isAdmin();
     }
 

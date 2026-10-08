@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { UserStats, UserActivityItem, MediaActivityType } from '../../types';
 import { watchHistoryService } from '../../services/watchHistoryService';
+import { apiFetch } from '../../services/apiConfig';
+import { subscribeSessions, type SessionSlot } from '../../services/sessionService';
 import { formatDurationText, formatDateTimeExact, formatRelativeTime, getEffectiveTotalOnline, getEffectiveTotalWatch } from '../../services/userAnalyticsService';
 import {
   ArrowLeft,
@@ -86,6 +88,36 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
 
   // Chart View Mode
   const [chartViewMode, setChartViewMode] = useState<ChartViewMode>('daily');
+
+  // Thiết bị đang dùng (Prompt 4 PHẦN C): 2 slot RTDB theo thời gian thực
+  const [liveSessions, setLiveSessions] = useState<SessionSlot[]>([]);
+  const [kickingSlot, setKickingSlot] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsub = subscribeSessions(userStat.accountId, setLiveSessions);
+    return unsub;
+  }, [userStat.accountId]);
+
+  const handleKickSession = async (slot: '1' | '2', label: string) => {
+    if (!window.confirm(`Ngắt phiên "${label}" của @${userStat.accountId}? Thiết bị đó sẽ bị chặn ở request kế tiếp.`)) return;
+    setKickingSlot(slot);
+    try {
+      const res = await apiFetch(`/api/admin/sessions/${userStat.accountId}/kick`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slot }),
+      });
+      if (res.ok) {
+        onShowToast?.(`Đã ngắt phiên ${slot}`);
+      } else {
+        onShowToast?.('Không ngắt được phiên. Thử lại sau.');
+      }
+    } catch {
+      onShowToast?.('Không ngắt được phiên. Thử lại sau.');
+    } finally {
+      setKickingSlot(null);
+    }
+  };
 
   // Load activities
   const fetchUserActivities = async () => {
@@ -707,6 +739,55 @@ export const AdminUserDetailPage: React.FC<AdminUserDetailPageProps> = ({
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Thiết bị đang dùng — 2 slot RTDB theo thời gian thực (Prompt 4) */}
+          <div className="bg-[#0b1329] border border-blue-900/60 rounded-3xl p-4 sm:p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                <span>Thiết Bị Đang Dùng ({liveSessions.length}/2)</span>
+              </h3>
+              <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1.5">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                Trực tiếp
+              </span>
+            </div>
+            {liveSessions.length === 0 ? (
+              <p className="text-xs text-slate-500 py-2 text-center">Không có thiết bị nào đang giữ slot</p>
+            ) : (
+              <div className="space-y-2.5">
+                {liveSessions.map((s) => (
+                  <div
+                    key={s.slot || s.deviceId}
+                    className="bg-[#0f172a] border border-slate-800/80 rounded-2xl p-3 flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs sm:text-sm font-bold text-white truncate">
+                        Slot {s.slot} • {s.deviceInfo}
+                        {s.profileName ? ` • ${s.profileName}` : ''}
+                      </p>
+                      <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                        {s.title
+                          ? `Đang ${s.kind === 'manga' ? 'đọc' : 'xem'}: ${s.title}`
+                          : 'Trong app'}
+                        {' • '}
+                        {s.startedAt ? new Date(s.startedAt).toLocaleString('vi-VN') : ''}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleKickSession((s.slot || '1') as '1' | '2', `${s.deviceInfo}${s.profileName ? ` • ${s.profileName}` : ''}`)}
+                      disabled={kickingSlot === s.slot}
+                      className="shrink-0 px-3 py-1.5 rounded-xl bg-red-950/80 hover:bg-red-900 border border-red-800/60 text-red-300 text-xs font-bold transition cursor-pointer disabled:opacity-50"
+                    >
+                      {kickingSlot === s.slot ? 'Đang ngắt...' : 'Ngắt phiên'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Quick Recent Activities Preview */}

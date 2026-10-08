@@ -73,7 +73,6 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
   const [newProfileAvatar, setNewProfileAvatar] = useState(DEFAULT_AVATARS[0]);
   const [newProfileColor, setNewProfileColor] = useState(COLOR_PRESETS[0]);
   const [newProfilePin, setNewProfilePin] = useState('');
-  const [newProfileIsKid, setNewProfileIsKid] = useState(false);
   const [isCreatingProfile, setIsCreatingProfile] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -165,13 +164,11 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
         name: newProfileName.trim(),
         avatar: newProfileAvatar,
         color: newProfileColor,
-        isKid: newProfileIsKid,
         pin: newProfilePin ? newProfilePin.trim() : undefined,
       });
       setIsAddProfileOpen(false);
       setNewProfileName('');
       setNewProfilePin('');
-      setNewProfileIsKid(false);
     } catch (err: any) {
       setCreateError(err?.message || 'Không thể tạo hồ sơ mới');
     } finally {
@@ -195,7 +192,7 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
     }
   };
 
-  const canAddProfile = profiles.length < 5;
+  const canAddProfile = profiles.length < 2;
   const activeSelectedProfile = profiles.find((p) => p.id === selectedProfileId);
 
   // Animation variants
@@ -329,7 +326,7 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
                 <p className="text-[11px] sm:text-sm text-slate-400 mb-6 sm:mb-8 max-w-lg px-2 leading-relaxed">
                   {isManaging
                     ? 'Nhấp vào hồ sơ để đổi tên, ảnh đại diện, đổi mã PIN hoặc xóa hồ sơ phụ.'
-                    : `Tài khoản @${currentAccount.username} (${profiles.length}/5 hồ sơ). Dữ liệu lịch sử và danh sách xem hoàn toàn riêng biệt.`}
+                    : `Tài khoản @${currentAccount.username} (${profiles.length}/2 hồ sơ). Dữ liệu lịch sử và danh sách xem hoàn toàn riêng biệt.`}
                 </p>
               </motion.div>
             )}
@@ -441,13 +438,6 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
                         CHÍNH
                       </div>
                     )}
-
-                    {/* Kid Badge */}
-                    {profile.isKid && !profile.isPrimary && !isManaging && !isThisSelected && (
-                      <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 bg-indigo-600 text-white font-bold text-[8px] sm:text-[9px] px-1.5 py-0.5 rounded shadow">
-                        KIDS
-                      </div>
-                    )}
                   </div>
 
                   <span
@@ -480,7 +470,6 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
                   setNewProfileAvatar(allAvatars[profiles.length % allAvatars.length]);
                   setNewProfileColor(COLOR_PRESETS[profiles.length % COLOR_PRESETS.length]);
                   setNewProfilePin('');
-                  setNewProfileIsKid(false);
                   setCreateError(null);
                   setIsAddProfileOpen(true);
                 }}
@@ -491,7 +480,7 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
                 <div className="relative w-20 h-20 sm:w-28 sm:h-28 md:w-32 md:h-32 rounded-2xl sm:rounded-3xl border-2 border-dashed border-slate-700 hover:border-sky-400 bg-slate-900/40 hover:bg-slate-800/60 flex flex-col items-center justify-center transition-all duration-300 group-hover:shadow-[0_0_20px_rgba(56,189,248,0.3)]">
                   <Plus className="w-6 h-6 sm:w-8 sm:h-8 text-slate-400 group-hover:text-sky-300 transition-colors" />
                   <span className="text-[9px] sm:text-[10px] text-slate-400 group-hover:text-slate-200 mt-0.5 font-semibold">
-                    ({profiles.length}/5)
+                    ({profiles.length}/2)
                   </span>
                 </div>
                 <span className="text-xs sm:text-sm md:text-base font-medium text-slate-400 group-hover:text-sky-300 mt-2 sm:mt-3 transition-colors">
@@ -529,7 +518,7 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
           transition={{ delay: 0.3 }}
           className="text-[10px] sm:text-[11px] text-slate-500 text-center pb-2 shrink-0"
         >
-          Bảo mật dữ liệu đám mây Firebase • Tối đa 5 hồ sơ / tài khoản
+          Bảo mật dữ liệu đám mây Firebase • Tối đa 2 hồ sơ / tài khoản
         </motion.div>
       </div>
 
@@ -644,20 +633,6 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
                     onChange={(e) => setNewProfilePin(e.target.value.replace(/\D/g, ''))}
                     className="w-full bg-[#131f37] border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500 font-mono tracking-widest"
                   />
-                </div>
-
-                {/* Kids Mode */}
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    type="checkbox"
-                    id="new-kid-checkbox"
-                    checked={newProfileIsKid}
-                    onChange={(e) => setNewProfileIsKid(e.target.checked)}
-                    className="w-4 h-4 rounded text-blue-600 accent-blue-600"
-                  />
-                  <label htmlFor="new-kid-checkbox" className="text-xs text-slate-300 cursor-pointer">
-                    Hồ sơ dành riêng cho Trẻ em (Kids Mode)
-                  </label>
                 </div>
 
                 {/* Actions */}
@@ -786,22 +761,6 @@ export const ProfileSelector: React.FC<ProfileSelectorProps> = ({
                     }
                     className="w-full bg-[#131f37] border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-blue-500 font-mono tracking-widest"
                   />
-                </div>
-
-                {/* Is Kid Profile */}
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    type="checkbox"
-                    id="kid-checkbox"
-                    checked={!!editingProfile.isKid}
-                    onChange={(e) =>
-                      setEditingProfile({ ...editingProfile, isKid: e.target.checked })
-                    }
-                    className="w-4 h-4 rounded text-blue-600 accent-blue-600"
-                  />
-                  <label htmlFor="kid-checkbox" className="text-xs text-slate-300 cursor-pointer">
-                    Hồ sơ dành cho trẻ em (Kids mode)
-                  </label>
                 </div>
 
                 {/* Action Buttons & Delete */}

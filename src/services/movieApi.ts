@@ -110,20 +110,8 @@ export const API_SOURCES: SourceOption[] = [
   },
 ];
 
-// Base fetchers using dynamic active base URLs
-const getKKPhimUrl = (endpoint: string) => {
-  const base = systemApiService.getActiveBaseUrl('movie', 'kkphim', 'https://phimapi.com');
-  return `${base.replace(/\/$/, '')}/${endpoint.replace(/^\//, '')}`;
-};
-
-const getOPhimUrl = (endpoint: string) => {
-  const base = systemApiService.getActiveBaseUrl('movie', 'ophim', 'https://ophim1.com');
-  return `${base.replace(/\/$/, '')}/${endpoint.replace(/^\//, '')}`;
-};
-
-const getNguonCUrl = (endpoint: string) => {
-  return `https://phim.nguonc.com/api/${endpoint.replace(/^\//, '')}`;
-};
+// Base fetchers: CHỈ qua backend proxy đã xác thực (Prompt 4 B8 đã gỡ toàn bộ
+// fallback gọi thẳng phimapi/ophim/nguonc). Không còn URL direct nào ở đây.
 
 // Current active source preference stored in memory/localStorage
 let activeApiSource: ApiSource = (typeof window !== 'undefined' && (localStorage.getItem('qtb_api_source') as ApiSource)) || 'all';
@@ -995,15 +983,8 @@ async function fetchKKPhim<T>(endpoint: string, params?: Record<string, any>): P
     }
   } catch {}
 
-  // 2. Try direct
-  try {
-    const directUrl = `${getKKPhimUrl(clean)}${query}`;
-    const res = await fetch(directUrl);
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch {}
-
+  // Prompt 4 B8: GỠ BỎ fallback gọi thẳng API bên thứ ba (đi vòng qua kiểm
+  // tra slot). Backend lỗi thì báo lỗi, không tự đi đường vòng.
   return { status: false, items: [], msg: 'KKPhim fetch failed' } as unknown as T;
 }
 
@@ -1021,15 +1002,7 @@ async function fetchOPhim<T>(endpoint: string, params?: Record<string, any>): Pr
     }
   } catch {}
 
-  // 2. Try direct
-  try {
-    const directUrl = `${getOPhimUrl(clean)}${query}`;
-    const res = await fetch(directUrl);
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch {}
-
+  // Prompt 4 B8: GỠ BỎ fallback gọi thẳng (xem fetchKKPhim).
   return { status: false, items: [], msg: 'OPhim fetch failed' } as unknown as T;
 }
 
@@ -1047,17 +1020,11 @@ async function fetchNguonC<T>(endpoint: string, params?: Record<string, any>): P
     }
   } catch {}
 
-  // 2. Try direct (only for detail, not for list that is known to 404)
+  // 2. Trường hợp genre rỗng đã biết: trả rỗng ngay, không gọi direct
+  // (Prompt 4 B8: gỡ fallback gọi thẳng, xem fetchKKPhim).
   if (clean.includes('phim-chieu-rap') || clean.includes('vien-tuong')) {
     return { status: 'success', items: [], msg: 'NguonC empty genre' } as unknown as T;
   }
-  try {
-    const directUrl = `${getNguonCUrl(clean)}${query}`;
-    const res = await fetch(directUrl);
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch {}
 
   return { status: 'success', items: [], msg: 'NguonC fetch failed' } as unknown as T;
 }

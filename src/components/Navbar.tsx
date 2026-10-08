@@ -680,7 +680,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
                 <div className="pb-3 mb-3 border-b border-slate-800">
                   <div className="text-xs text-sky-400 uppercase font-bold tracking-wider px-2 mb-2">
-                    Chuyển hồ sơ ({profiles.length}/5)
+                    Chuyển hồ sơ ({profiles.length}/2)
                   </div>
                   <div className="space-y-1 max-h-40 overflow-y-auto">
                     {profiles.map((p) => (
@@ -705,11 +705,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                           {p.isPrimary && (
                             <span className="text-[9px] bg-blue-900/60 text-blue-300 px-1 rounded font-bold shrink-0">
                               Chính
-                            </span>
-                          )}
-                          {p.isKid && (
-                            <span className="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1 rounded shrink-0">
-                              Kids
                             </span>
                           )}
                         </div>

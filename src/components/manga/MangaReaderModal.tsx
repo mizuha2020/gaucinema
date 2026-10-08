@@ -562,6 +562,22 @@ export const MangaReaderModal: React.FC<MangaReaderModalProps> = ({
       apiSourceUsed: currentChapter.source || 'otruyen',
     });
 
+    // B4b: cập nhật slot thiết bị (App nghe để ghi vào sessions/{uid})
+    try {
+      window.dispatchEvent(
+        new CustomEvent('gau:watch-activity', {
+          detail: {
+            kind: 'manga',
+            title: currentChapter.title
+              ? `${manga.title} — Ch.${currentChapter.chapterNumber}: ${currentChapter.title}`
+              : `${manga.title} — Ch.${currentChapter.chapterNumber}`,
+          },
+        })
+      );
+    } catch {
+      // ignore
+    }
+
     return () => {
       presenceService.stopSession();
     };
