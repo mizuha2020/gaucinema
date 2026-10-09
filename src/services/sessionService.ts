@@ -29,11 +29,26 @@ export interface SessionSlot {
   /** Refcount tab trên cùng máy (F6): mỗi tab 1 tabId, đóng tab nào dọn tab đó.
    *  Slot chỉ trống khi hết tab. Row legacy (không có tabs) giữ hành vi cũ. */
   tabs?: Record<string, number>;
+  /** Lock phát kiểu Netflix D7020: 1 máy chỉ 1 tab phát tại 1 thời điểm.
+   *  Tab khác cùng máy bấm phát khi lock còn hiệu lực -> ăn màn hình chặn.
+   *  Lock hợp lệ khi holder tabId còn trong tabs; tab holder chết (đóng tab
+   *  mà chưa kịp nhả) -> tab khác được chiếm lại ngay, không kẹt. */
+  playing?: PlaybackLock;
+}
+
+/** Ai đang giữ quyền phát trong slot. Không bao giờ chứa undefined (RTDB kỵ). */
+export interface PlaybackLock {
+  tabId: string;
+  profileId?: string;
+  profileName?: string;
+  kind?: 'movie' | 'manga' | '';
+  title?: string;
+  startedAt: number;
 }
 
 export type ClaimResult =
   | { ok: true; slot: '1' | '2' }
-  | { ok: false; sessions: SessionSlot[]; reason: 'occupied' | 'timeout' };
+  | { ok: false; sessions: SessionSlot[]; reason: 'occupied' | 'timeout' | 'tab-limit' };
 
 const SESSIONS_PATH = 'sessions';
 const DEVICE_KEY = 'qtb_device_id';
@@ -41,6 +56,9 @@ const DEVICE_KEY = 'qtb_device_id';
  *  reload cùng tab giữ nguyên, tab mới id mới, đóng tab là mất. */
 const TAB_KEY = 'qtb_tab_id';
 const CLAIM_TIMEOUT_MS = 10000;
+/** Ngân sách cho transaction xóa slot lúc logout (ngắn hơn claim để tổng
+ *  release không vượt race ở handleLogout). */
+const RELEASE_TX_TIMEOUT_MS = 5000;
 /** Tab ẩn liên tục quá 30 phút -> nhả slot (tránh chiếm chỗ khi để quên). */
 const HIDDEN_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -50,8 +68,72 @@ let currentSlot: { uid: string; slot: string } | null = null;
 let hiddenTimer: ReturnType<typeof setTimeout> | null = null;
 let hiddenHandler: (() => void) | null = null;
 
-/** Định danh thiết bị: ngẫu nhiên lần đầu, lưu localStorage, dùng lại các lần sau. */
+/** Persist slot đang giữ vào sessionStorage (dự phòng currentSlot in-memory
+ *  bị mất, vd HMR/reload lỗi giữa chừng): logout vẫn biết cần xóa uid/slot
+ *  nào thay vì return sớm và kẹt node RTDB. */
+const SLOT_KEY = 'qtb_slot';
+
+function persistSlot(uid: string, slot: string): void {
+  try {
+    window.sessionStorage.setItem(SLOT_KEY, JSON.stringify({ uid, slot }));
+  } catch {
+    // ignore
+  }
+}
+
+function readPersistedSlot(): { uid: string; slot: string } | null {
+  try {
+    const raw = window.sessionStorage.getItem(SLOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { uid?: unknown; slot?: unknown };
+    if (
+      typeof parsed.uid === 'string' &&
+      (parsed.slot === '1' || parsed.slot === '2')
+    ) {
+      return { uid: parsed.uid, slot: parsed.slot };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function clearPersistedSlot(): void {
+  try {
+    window.sessionStorage.removeItem(SLOT_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/** Chờ socket RTDB nối lại sau goOnlineDb (tối đa timeoutMs). Release gọi
+ *  transaction ngay khi socket chưa nối sẽ ăn RTDB_TIMEOUT rồi rớt vào
+ *  fallback trong lúc offline -> kẹt node mà không một dòng log nào. */
+async function waitForConnected(timeoutMs = 2000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const snap = await withTimeoutReject(
+        get(ref(rtdb, '.info/connected')),
+        500
+      );
+      if (snap.val() === true) return true;
+    } catch {
+      // ignore — thử lại tới hết deadline
+    }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return false;
+}
+
+/** Định danh thiết bị: ngẫu nhiên lần đầu, lưu localStorage, dùng lại các lần sau.
+ *  Fallback BẮT BUỘC ổn định trong phiên (biến module): nếu storage ném lỗi
+ *  (vd chặn cookie), mỗi lần gọi sinh id mới sẽ làm claim và release lệch
+ *  nhau -> slot kẹt vĩnh viễn mà không một dòng log nào. */
+let memDeviceId: string | null = null;
+
 export function getDeviceId(): string {
+  if (memDeviceId) return memDeviceId;
   try {
     let id = window.localStorage.getItem(DEVICE_KEY);
     if (!id) {
@@ -61,14 +143,22 @@ export function getDeviceId(): string {
           : `dev_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
       window.localStorage.setItem(DEVICE_KEY, id);
     }
+    memDeviceId = id;
     return id;
   } catch {
-    return `dev_${Date.now()}_fallback`;
+    if (!memDeviceId) {
+      memDeviceId = `dev_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    }
+    return memDeviceId;
   }
 }
 
-/** Định danh tab hiện tại ( Ổn định khi reload, khác nhau giữa các tab). */
+/** Định danh tab hiện tại ( Ổn định khi reload, khác nhau giữa các tab).
+ *  Fallback ổn định trong phiên như getDeviceId (lý do tương tự). */
+let memTabId: string | null = null;
+
 export function getTabId(): string {
+  if (memTabId) return memTabId;
   try {
     let id = window.sessionStorage.getItem(TAB_KEY);
     if (!id) {
@@ -78,9 +168,13 @@ export function getTabId(): string {
           : `tab_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
       window.sessionStorage.setItem(TAB_KEY, id);
     }
+    memTabId = id;
     return id;
   } catch {
-    return `tab_${Date.now()}_fallback`;
+    if (!memTabId) {
+      memTabId = `tab_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    }
+    return memTabId;
   }
 }
 
@@ -113,15 +207,32 @@ function withTimeoutReject<T>(promise: Promise<T>, ms: number): Promise<T> {
   ]);
 }
 
+/** Row nào coi như TRỐNG và được thu hồi/purge:
+ *  - chưa tồn tại / mất deviceId (zombie, vd bị kick rồi update tái tạo), hoặc
+ *  - không có tabs / tabs rỗng (các tab đã đóng hết — onDisconnect chỉ xóa
+ *    leaf tabs/{tabId}, node cha còn lại).
+ *  Row legacy (client cũ, không tabs) giờ cũng coi như trống: toàn bộ client
+ *  đã cùng bản có tabs nên không còn phiên legacy sống để bảo vệ. */
+function isRowFree(row: SessionSlot | null | undefined): boolean {
+  if (!row) return true;
+  if (!row.deviceId) return true;
+  const tabs = row.tabs ? Object.keys(row.tabs) : [];
+  return tabs.length === 0;
+}
+
 /**
  * Chiếm slot NGAY KHI VÀO APP (trong onAuthStateChanged), không phải khi bấm xem.
  * Dùng TRANSACTION nguyên tử (đọc+sửa 1 bước ở server): nhiều máy claim cùng
  * lúc cũng chỉ 1 bên thắng mỗi slot — đọc-rồi-ghi thường sẽ cùng thấy "trống"
  * rồi ghi đè nhau (3 máy cùng vào được).
- * Thứ tự trong transaction (F6/F3):
- *  1. Slot máy này đang giữ (theo deviceId, cả row legacy) -> thêm tabId, giữ.
- *  2. Slot trống: chưa tồn tại, HOẶC zombie (mất deviceId, vd bị kick rồi
- *     update tái tạo), HOẶC hết tab (tabs rỗng — các tab đã đóng hết).
+ *  Thứ tự trong transaction (F6/F3):
+ *  1. Slot máy này đang giữ (theo deviceId, còn tab sống) -> thêm tabId, giữ.
+ *     1 MÁY CHỈ 1 TAB: tabId lạ mà slot còn tab sống -> abort để caller hiện
+ *     màn hình chặn tab (kiểu Netflix), không gộp tab, không chiếm slot khác.
+ *  2. Slot trống: chưa tồn tại, HOẶC zombie (mất deviceId), HOẶC hết tab
+ *     (tabs rỗng HOẶC mất hẳn — các tab đã đóng hết, onDisconnect chỉ xóa
+ *     leaf tabs/{tabId} nên node cha còn lại) -> chiếm mới.
+ *  Orphan trống khác (nếu còn) cũng bị purge trong cùng transaction.
  *  3. Còn lại -> abort (hết slot).
  * Hết slot -> KHÔNG đăng xuất, trả về danh sách 2 phiên để hiện màn hình chặn.
  */
@@ -148,32 +259,42 @@ export async function claimSession(
       runTransaction(
         ref(rtdb, `${SESSIONS_PATH}/${uid}`),
         (current: Record<string, SessionSlot> | null) => {
-          const data: Record<string, SessionSlot> = current || {};
-          // 1. Slot của chính máy này
+          const data: Record<string, SessionSlot> = { ...(current || {}) };
+          // Purge orphan trống (zombie / hết tab) để DB không tích node chết.
+          for (const s of SLOTS) {
+            if (data[s] && isRowFree(data[s])) {
+              delete (data as Record<string, unknown>)[s];
+            }
+          }
+          // 1. Slot của chính máy này — nhưng 1 MÁY CHỈ 1 TAB: tabId lạ mà
+          // slot còn tab sống -> abort (caller map thành tab-limit), không
+          // gộp tab, không chiếm slot khác. Reload cùng tab (tabId cũ còn)
+          // hoặc slot đã hết tab -> gộp/chiếm như thường.
+          let tabLimited = false;
           for (const s of SLOTS) {
             if (data[s]?.deviceId === deviceId) {
-              data[s] = {
-                ...basePayload,
-                startedAt: data[s].startedAt || now,
-                tabs: { ...(data[s].tabs || {}), [tabId]: now },
-              };
-              return data;
+              const liveTabs = data[s].tabs ? Object.keys(data[s].tabs) : [];
+              if (liveTabs.includes(tabId) || liveTabs.length === 0) {
+                data[s] = {
+                  ...basePayload,
+                  startedAt: data[s].startedAt || now,
+                  tabs: { ...(data[s].tabs || {}), [tabId]: now },
+                };
+                return data;
+              }
+              tabLimited = true;
+              break;
             }
           }
-          // 2. Slot trống / zombie / hết tab
+          if (tabLimited) return undefined; // abort -> tab-limit
+          // 2. Slot trống đầu tiên
           for (const s of SLOTS) {
-            const row = data[s];
-            if (!row || !row.deviceId) {
-              data[s] = { ...basePayload, tabs: { [tabId]: now } };
-              return data;
-            }
-            if (row.tabs && Object.keys(row.tabs).length === 0) {
+            if (!data[s]) {
               data[s] = { ...basePayload, tabs: { [tabId]: now } };
               return data;
             }
           }
-          // Row legacy có deviceId của máy khác (không tabs): KHÔNG cướp.
-          return undefined; // abort: hết slot
+          return undefined; // abort: hết slot (cả 2 đều là máy khác còn sống)
         }
       ),
       CLAIM_TIMEOUT_MS
@@ -186,6 +307,17 @@ export async function claimSession(
 
   if (!result.committed) {
     const data = (result.snapshot.val() as Record<string, SessionSlot>) || {};
+    // Tab-limit: row của máy mình còn tab sống mà không có tabId này ->
+    // máy đã mở tab khác, tab này ăn màn hình chặn (kiểu Netflix).
+    for (const s of SLOTS) {
+      const row = data?.[s];
+      if (row?.deviceId === deviceId) {
+        const liveTabs = row.tabs ? Object.keys(row.tabs) : [];
+        if (liveTabs.length > 0 && !liveTabs.includes(tabId)) {
+          return { ok: false, sessions: [{ ...row, slot: s }], reason: 'tab-limit' };
+        }
+      }
+    }
     const list: SessionSlot[] = [];
     for (const s of SLOTS) {
       const cur = data?.[s];
@@ -217,6 +349,7 @@ export async function claimSession(
   const tabRef = ref(rtdb, `${SESSIONS_PATH}/${uid}/${won}/tabs/${tabId}`);
   await onDisconnect(tabRef).remove().catch(() => {});
   currentSlot = { uid, slot: won };
+  persistSlot(uid, won);
   return { ok: true, slot: won };
 }
 
@@ -236,54 +369,255 @@ export async function updateSessionActivity(
   }
 }
 
-/** Nhả tab hiện tại khỏi slot (khi đăng xuất). Hết tab thì xóa cả node.
- *  Dùng transaction để 2 tab cùng logout không rò rỉ node rỗng. */
-export async function releaseSession(): Promise<void> {
-  try {
-    if (!currentSlot) return;
-    const { uid, slot } = currentSlot;
-    const tabId = getTabId();
-    const tabRef = ref(rtdb, `${SESSIONS_PATH}/${uid}/${slot}/tabs/${tabId}`);
-    await onDisconnect(tabRef).cancel().catch(() => {});
+/** Nhả slot khi đăng xuất: xóa CẢ slot của máy này (mọi tabId cùng deviceId),
+ *  vì signOut Firebase lan sang mọi tab cùng browser — tab còn lại không còn
+ *  auth để tự dọn (rules yêu cầu auth) nên chỉ xóa 1 tabId sẽ rò rỉ.
+ *  Dùng transaction để 2 tab cùng logout không rò rỉ node rỗng.
+ *  Trả về true khi slot của mình đã sạch (hoặc vốn đã sạch), false khi
+ *  thất bại để caller retry + toast — KHÔNG im lặng như trước. */
+export async function releaseSession(): Promise<boolean> {
+  const target = currentSlot || readPersistedSlot();
+  if (!target) {
     try {
-      await withTimeoutReject(
-        runTransaction(ref(rtdb, `${SESSIONS_PATH}/${uid}`), (current: Record<string, SessionSlot> | null) => {
-          const data: Record<string, SessionSlot> = current || {};
-          const row = data[slot];
-          if (!row) return undefined;
-          // Chỉ dọn slot của chính máy này (đề phòng state lệch)
-          if (row.deviceId && row.deviceId !== getDeviceId()) return undefined;
-          if (row.tabs) {
-            const tabs = { ...row.tabs };
-            delete tabs[tabId];
-            if (Object.keys(tabs).length === 0) {
-              delete (data as Record<string, unknown>)[slot];
-            } else {
-              row.tabs = tabs;
-            }
-          } else {
-            // Row legacy (không tabs): hành vi cũ — nhả cả node
-            delete (data as Record<string, unknown>)[slot];
-          }
-          return data;
-        }),
-        CLAIM_TIMEOUT_MS
-      );
+      console.warn('[session] release skip: no currentSlot');
     } catch {
-      // Fallback khi transaction treo/lỗi: xóa thẳng tabId của mình. Không bao
-      // giờ xóa node hay tab của người khác. Node rỗng còn sót (nếu có) sẽ
-      // được claim sau thu hồi theo luật empty-tabs/zombie.
-      await remove(tabRef).catch(() => {});
+      // ignore
     }
+    return true;
+  }
+  const { uid, slot } = target;
+  const deviceId = getDeviceId();
+  const tabId = getTabId();
+  const tabRef = ref(rtdb, `${SESSIONS_PATH}/${uid}/${slot}/tabs/${tabId}`);
+  const slotRef = ref(rtdb, `${SESSIONS_PATH}/${uid}/${slot}`);
+  try {
+    rtdbGoOnline(rtdb);
   } catch {
     // ignore
-  } finally {
+  }
+  const t0 = Date.now();
+  const slog = (msg: string, extra?: unknown) => {
+    try {
+      console.warn(`[session] ${msg} (+${Date.now() - t0}ms)`, extra ?? '');
+    } catch {
+      // ignore
+    }
+  };
+  // 1. Đo online (chẩn đoán, tối đa 1s — không chặn release).
+  const connected = await waitForConnected(1000);
+  if (!connected) {
+    slog('release: socket chưa online sau goOnline 1s (vẫn thử xóa tiếp)');
+  }
+  // 2. Hủy onDisconnect — BẮT BUỘC có timeout: offline mà await trần sẽ treo
+  // vĩnh viễn, race ở handleLogout nổ rồi signOut giết write đang queue.
+  try {
+    await withTimeoutReject(onDisconnect(tabRef).cancel(), 1500);
+  } catch {
+    // ignore — tiếp tục xóa (bản ghi onDisconnect sót sẽ tự xóa leaf, vô hại)
+  }
+  try {
+    const result = await withTimeoutReject(
+      runTransaction(
+        ref(rtdb, `${SESSIONS_PATH}/${uid}`),
+        (current: Record<string, SessionSlot> | null) => {
+          if (!current) return undefined; // đã sạch — abort, coi như xong
+          const data: Record<string, SessionSlot> = { ...current };
+          const row = data[slot];
+          if (!row) {
+            // Slot đã mất: abort, caller check snapshot để coi như xong.
+            return undefined;
+          }
+          const mine =
+            !!row.deviceId && row.deviceId === deviceId;
+          // Chỉ dọn slot của chính máy này, hoặc orphan trống (không tab sống
+          // — vd các tab đóng hết chỉ còn node cha). Slot máy khác còn sống
+          // thì không đụng.
+          if (!mine && !isRowFree(row)) return undefined;
+          delete (data as Record<string, unknown>)[slot];
+          // Purge luôn orphan trống còn lại (nếu có) cho sạch DB.
+          for (const s of SLOTS) {
+            if (s !== slot && data[s] && isRowFree(data[s])) {
+              delete (data as Record<string, unknown>)[s];
+            }
+          }
+          // Trả null để xóa hẳn sessions/{uid} khi hết slot (tránh node {} rỗng).
+          if (Object.keys(data).length === 0) return null as unknown as Record<string, SessionSlot>;
+          return data;
+        }
+      ),
+      RELEASE_TX_TIMEOUT_MS
+    );
+    const snapVal = result.snapshot.val() as Record<string, SessionSlot> | null;
+    if (!result.committed) {
+      // Abort: hoặc đã sạch, hoặc slot máy khác còn sống — đọc snapshot.
+      const gone = !snapVal || !snapVal[slot];
+      if (gone) {
+        currentSlot = null;
+        clearPersistedSlot();
+        return true;
+      }
+      slog('release: transaction abort, slot còn trên RTDB', {
+        slot,
+        rtdbDeviceId: snapVal?.[slot]?.deviceId,
+        localDeviceId: deviceId,
+        rtdbTabs: snapVal?.[slot]?.tabs ? Object.keys(snapVal[slot].tabs || {}) : null,
+        localTabId: tabId,
+      });
+      return false;
+    }
+    try {
+      console.info(`[session] released slot ${slot} (+${Date.now() - t0}ms)`);
+    } catch {
+      // ignore
+    }
     currentSlot = null;
+    clearPersistedSlot();
+    return true;
+  } catch (err) {
+    // Fallback khi transaction treo/lỗi: xóa thẳng cả slot nếu là của máy
+    // mình hoặc orphan trống. Mọi await đều có bound để không treo logout.
+    slog('release: transaction lỗi, fallback xóa thẳng slot', {
+      slot,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    try {
+      const snap = await withTimeoutReject(get(slotRef), 2000);
+      const val = snap.val() as SessionSlot | null;
+      // Slot của máy mình hoặc orphan trống (kể cả mất hẳn tabs) -> xóa cả
+      // node cho sạch; slot máy khác còn sống thì không đụng.
+      if (!val || (val.deviceId && val.deviceId === deviceId) || isRowFree(val)) {
+        await withTimeoutReject(remove(slotRef), 2000);
+        try {
+          console.info(`[session] released slot ${slot} via fallback (+${Date.now() - t0}ms)`);
+        } catch {
+          // ignore
+        }
+      } else {
+        slog('release: fallback giữ nguyên (slot máy khác còn sống)');
+        return false;
+      }
+      currentSlot = null;
+      clearPersistedSlot();
+      return true;
+    } catch (err2) {
+      slog('release: fallback thất bại', {
+        message: err2 instanceof Error ? err2.message : String(err2),
+      });
+      return false;
+    }
+  }
+}
+
+export type PlaybackClaimResult =
+  | { ok: true }
+  | { ok: false; playing?: PlaybackLock; reason: 'busy' | 'no-slot' | 'timeout' };
+
+/**
+ * Chiếm quyền phát trong slot của máy mình (kiểu Netflix D7020: duyệt bao
+ * nhiêu tab tùy thích, nhưng 1 máy chỉ 1 tab phát tại 1 thời điểm).
+ * Transaction nguyên tử trên sessions/{uid}/{slot}: tab khác cùng máy đang
+ * giữ lock CÒN HIỆU LỰC (holder tabId còn trong tabs) -> abort, caller hiện
+ * màn hình chặn. Holder chết (tab đóng mà chưa nhả) -> chiếm lại ngay.
+ * Máy khác nhau (slot khác nhau) phát song song bình thường — đúng nghĩa
+ * gói 2 thiết bị.
+ */
+export async function claimPlayback(
+  uid: string,
+  info: { profileId?: string; profileName?: string; kind?: 'movie' | 'manga' | ''; title?: string }
+): Promise<PlaybackClaimResult> {
+  const target = currentSlot || readPersistedSlot();
+  if (!target || target.uid !== uid) {
+    return { ok: false, reason: 'no-slot' };
+  }
+  const { slot } = target;
+  const deviceId = getDeviceId();
+  const tabId = getTabId();
+  const now = Date.now();
+  try {
+    const result = await withTimeoutReject(
+      runTransaction(
+        ref(rtdb, `${SESSIONS_PATH}/${uid}/${slot}`),
+        (current: SessionSlot | null) => {
+          if (!current) return undefined; // slot mất (bị kick/logout) -> abort
+          if (current.deviceId && current.deviceId !== deviceId) return undefined;
+          const p = current.playing;
+          const tabs = current.tabs ? Object.keys(current.tabs) : [];
+          const holderAlive = !!p && tabs.includes(p.tabId);
+          if (p && holderAlive && p.tabId !== tabId) return undefined; // tab khác đang phát
+          const next: PlaybackLock = {
+            tabId,
+            startedAt: p && p.tabId === tabId && p.startedAt ? p.startedAt : now,
+          };
+          if (info.profileId) next.profileId = info.profileId;
+          if (info.profileName) next.profileName = info.profileName;
+          if (info.kind) next.kind = info.kind;
+          if (info.title) next.title = info.title;
+          return { ...current, playing: next };
+        }
+      ),
+      5000
+    );
+    if (!result.committed) {
+      const cur = result.snapshot.val() as SessionSlot | null;
+      if (!cur) return { ok: false, reason: 'no-slot' };
+      return { ok: false, playing: cur.playing, reason: 'busy' };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: 'timeout' };
+  }
+}
+
+/**
+ * Nhả quyền phát (đóng/chuyển tập). Chỉ xóa khi lock đang là của chính tab
+ * này — không bao giờ cướp lock của tab khác.
+ */
+export async function releasePlayback(): Promise<boolean> {
+  try {
+    const target = currentSlot || readPersistedSlot();
+    if (!target) return true;
+    const { uid, slot } = target;
+    const tabId = getTabId();
+    const result = await withTimeoutReject(
+      runTransaction(ref(rtdb, `${SESSIONS_PATH}/${uid}/${slot}`), (current: SessionSlot | null) => {
+        if (!current) return undefined; // đã sạch
+        const p = current.playing;
+        if (!p) return undefined; // đã nhả
+        if (p.tabId !== tabId) return undefined; // lock của tab khác — không đụng
+        const rest: Record<string, unknown> = { ...current };
+        delete rest.playing;
+        return rest as unknown as SessionSlot;
+      }),
+      5000
+    );
+    if (!result.committed) {
+      const cur = result.snapshot.val() as SessionSlot | null;
+      if (!cur || !cur.playing || cur.playing.tabId !== tabId) return true;
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Tab sắp đóng (pagehide): xóa nhanh leaf tab của mình (fire-and-forget,
+ *  không await vì browser không cho nhiều thời gian). onDisconnect đã đăng ký
+ *  lúc claim là lưới an toàn phía server. Node cha còn lại (nếu hết tab) sẽ
+ *  được claim/logout sau purge — xem isRowFree. */
+export function notifyTabClosing(): void {
+  try {
+    const target = currentSlot || readPersistedSlot();
+    if (!target) return;
+    const tabId = getTabId();
+    void remove(ref(rtdb, `${SESSIONS_PATH}/${target.uid}/${target.slot}/tabs/${tabId}`)).catch(() => {});
+  } catch {
+    // ignore
   }
 }
 
 export function getCurrentSlot(): { uid: string; slot: string } | null {
-  return currentSlot;
+  return currentSlot || readPersistedSlot();
 }
 
 /** Thiết bị bị chặn phải ngắt websocket để không tốn connect (trần 100). */

@@ -22,17 +22,25 @@ import {
 } from "./services/progressService";
 import {
   claimSession,
+  claimPlayback,
   fetchSessions,
+  getCurrentSlot,
   getDeviceId,
+  getTabId,
   goOfflineDb,
   goOnlineDb,
+  notifyTabClosing,
   releaseSession,
+  releasePlayback,
   startHiddenWatch,
   stopHiddenWatch,
   updateSessionActivity,
   type SessionSlot,
+  type PlaybackLock,
 } from "./services/sessionService";
 import { SessionBlockedScreen } from "./components/SessionBlockedScreen";
+import { PlaybackBlockedModal } from "./components/PlaybackBlockedModal";
+import { startTabElection } from "./services/tabElection";
 import { movieApi } from "./services/movieApi";
 import { presenceService } from "./services/presenceService";
 import { appConfigService } from "./services/appConfigService";
@@ -139,12 +147,18 @@ export default function App() {
     account: Account;
     sessions: SessionSlot[];
     timeout: boolean;
+    /** true khi bị chặn vì máy đã mở tab khác (1 máy 1 tab, kiểu Netflix) */
+    tabLimit?: boolean;
   } | null>(null);
   const [retryingClaim, setRetryingClaim] = useState<boolean>(false);
+  const [isLoggingOut, setIsLoggingOut] = useState<boolean>(false);
+  const isLoggingOutRef = useRef<boolean>(false);
   const pendingAccountRef = useRef<Account | null>(null);
   const currentAccountRef = useRef<Account | null>(null);
   const activeProfileRef = useRef<UserProfile | null>(null);
   const hiddenStopRef = useRef<(() => void) | null>(null);
+  const pagehideHandlerRef = useRef<(() => void) | null>(null);
+  const electionStopRef = useRef<(() => void) | null>(null);
   // Profiles đã tải trong runClaimFlow cho account nào (tránh tải lại 2 lần)
   const claimedProfilesForRef = useRef<string | null>(null);
 
@@ -155,6 +169,20 @@ export default function App() {
       // ignore
     }
     hiddenStopRef.current = null;
+    try {
+      electionStopRef.current?.();
+    } catch {
+      // ignore
+    }
+    electionStopRef.current = null;
+    try {
+      if (pagehideHandlerRef.current) {
+        window.removeEventListener("pagehide", pagehideHandlerRef.current);
+      }
+    } catch {
+      // ignore
+    }
+    pagehideHandlerRef.current = null;
     stopHiddenWatch();
   };
 
@@ -199,7 +227,13 @@ export default function App() {
       return false;
     }
     if (!claim.ok) {
-      if (claim.reason === "occupied") {
+      if (claim.reason === "tab-limit") {
+        // 1 MÁY CHỈ 1 TAB: máy này đã mở tab khác — tab này GIỮ ĐĂNG NHẬP,
+        // hiện màn hình chặn kiểu Netflix, ngắt websocket cho đỡ tốn connect.
+        // Đóng tab kia rồi bấm Thử lại là vào ngay, không cần mật khẩu.
+        setBlockedInfo({ account, sessions: claim.sessions, timeout: false, tabLimit: true });
+        goOfflineDb();
+      } else if (claim.reason === "occupied") {
         // Hết slot: GIỮ ĐĂNG NHẬP, hiện màn hình chặn, ngắt websocket.
         setBlockedInfo({ account, sessions: claim.sessions, timeout: false });
         goOfflineDb();
@@ -242,13 +276,61 @@ export default function App() {
       stopSessionWatch();
       authService.logout().catch(() => {});
     });
+    // Đóng tab (X / reload): xóa nhanh leaf tab của mình; onDisconnect là
+    // lưới an toàn phía server. Node cha còn lại sẽ được purge ở claim sau.
+    try {
+      const onPageHide = () => {
+        notifyTabClosing();
+      };
+      pagehideHandlerRef.current = onPageHide;
+      window.addEventListener("pagehide", onPageHide);
+    } catch {
+      // ignore
+    }
+    // Bầu chọn chống Duplicate Tab (copy cả sessionStorage nên chung tabId,
+    // claim RTDB không phân biệt được): tab mở sau tự rút vào màn hình chặn.
+    try {
+      electionStopRef.current?.();
+      electionStopRef.current = startTabElection(getTabId(), () => {
+        // Tab này mở sau -> nhường tab gốc, GIỮ ĐĂNG NHẬP như tab-limit.
+        try {
+          electionStopRef.current?.();
+        } catch {
+          // ignore
+        }
+        electionStopRef.current = null;
+        // Đã logout/chuyển acc giữa chừng thì thôi (tránh hiện chặn đè login).
+        if (currentAccountRef.current?.id !== account.id) return;
+        void (async () => {
+          let sessions: SessionSlot[] = [];
+          try {
+            sessions = await fetchSessions(account.uid);
+          } catch {
+            // ignore
+          }
+          if (currentAccountRef.current?.id !== account.id) return;
+          setBlockedInfo({ account, sessions, timeout: false, tabLimit: true });
+          try {
+            goOfflineDb();
+          } catch {
+            // ignore
+          }
+        })();
+      });
+    } catch {
+      // ignore — thiếu election thì vẫn như cũ (fail-open)
+    }
     return true;
   };
 
   useEffect(() => {
     const unsub = authService.subscribeAuth(async (account, notice) => {
       if (!account) {
-        // Dọn slot còn sót (vd bị đá do hết hạn giữa chừng) rồi về login.
+        // Auth đã mất (signOut xong / token revoke): KHÔNG gọi releaseSession
+        // ở đây vì rules sessions/$uid yêu cầu auth.uid === $uid nên chắc
+        // chắn deny. Slot đã được nhả TRƯỚC signOut trong handleLogout /
+        // handleBlockedLogout / handleAccountCutoff; orphan còn sót (nếu có)
+        // sẽ được claim sau thu hồi theo luật empty-tabs/zombie.
         // Chỉ dọn media khi đang rớt TỪ một acc xuống (giữ deep-link cho lần mở lạnh).
         const hadAccount = currentAccountRef.current !== null;
         pendingAccountRef.current = null;
@@ -260,11 +342,6 @@ export default function App() {
             // ignore
           }
           sanitizeMediaOnAccountExit();
-        }
-        try {
-          await releaseSession();
-        } catch {
-          // ignore
         }
         stopSessionWatch();
         goOnlineDb();
@@ -355,6 +432,9 @@ export default function App() {
   };
 
   const handleBlockedLogout = async () => {
+    if (isLoggingOutRef.current) return;
+    isLoggingOutRef.current = true;
+    setIsLoggingOut(true);
     const acc = blockedInfo?.account || pendingAccountRef.current;
     try {
       saveFinalProgress();
@@ -369,23 +449,44 @@ export default function App() {
         // ignore
       }
     }
+    // Chặn claim đua trong lúc nhả slot.
     pendingAccountRef.current = null;
     currentAccountRef.current = null;
     setBlockedInfo(null);
+    // Nhả slot TRƯỚC khi signOut (rules yêu cầu auth) — chờ tối đa ~8s để
+    // không treo UI khi mạng chậm; thất bại vẫn cho signOut, lần login sau
+    // tự thu hồi theo luật empty-tabs/zombie.
     goOnlineDb();
+    stopSessionWatch();
+    let released = false;
+    try {
+      released = await Promise.race([
+        releaseSession(),
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => resolve(false), 12000)
+        ),
+      ]);
+    } catch {
+      released = false;
+    }
+    if (!released) {
+      try {
+        console.warn('[session] blocked-logout: chưa xóa phiên, sẽ thu hồi ở lần đăng nhập sau');
+      } catch {
+        // ignore
+      }
+      showToast("Đã đăng xuất, nhưng phiên cũ chưa xóa được — lần đăng nhập sau sẽ tự thu hồi.", "warning");
+    }
     setCurrentAccount(null);
     setAuthNotice(null);
     setActiveProfile(null);
     setShowProfileSelector(true);
     setShowAdminDashboard(false);
-    // F7: nhả slot khi còn phiên (xem handleLogout)
-    try {
-      await releaseSession();
-    } catch {
-      // ignore
-    }
-    stopSessionWatch();
+    setPlaybackBlocked(null);
+    setPendingPlayback(null);
     await authService.logout().catch(() => {});
+    isLoggingOutRef.current = false;
+    setIsLoggingOut(false);
   };
 
   // App Switcher State
@@ -1366,6 +1467,9 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    if (isLoggingOutRef.current) return;
+    isLoggingOutRef.current = true;
+    setIsLoggingOut(true);
     // Cô lập tài khoản: lưu nốt tiến độ cho ĐÚNG acc cũ, rồi dọn sạch player
     // + URL media để acc sau không mở tiếp phim của acc trước (kể cả resume).
     try {
@@ -1377,35 +1481,55 @@ export default function App() {
     if (currentAccount) {
       firestoreStorage.clearActiveProfileId(currentAccount.id);
     }
-    // Nhả slot TRƯỚC khi signOut (F7): release sau signOut sẽ rớt quyền
-    // (rules yêu cầu auth) và kẹt slot tới 30 phút/onDisconnect.
-    // Dọn UI NGAY LẬP TỨC (không chờ mạng): app treo ở trạng thái login trong
-    // lúc chờ release sẽ tiếp tục fetch nền và ăn 401 hàng loạt sau signOut.
+    // Chặn claim/fetch nền đua trong lúc nhả slot.
     pendingAccountRef.current = null;
     currentAccountRef.current = null;
     claimedProfilesForRef.current = null;
     setBlockedInfo(null);
+    // Nhả slot TRƯỚC khi signOut (F7): release sau signOut sẽ rớt quyền
+    // (rules yêu cầu auth) và kẹt slot tới 30 phút/onDisconnect.
+    // Chờ tối đa ~8s để không treo UI khi mạng chậm.
     goOnlineDb();
+    stopSessionWatch();
+    let released = false;
+    try {
+      released = await Promise.race([
+        releaseSession(),
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => resolve(false), 12000)
+        ),
+      ]);
+    } catch {
+      released = false;
+    }
     setCurrentAccount(null);
     setAuthNotice(null);
     setActiveProfile(null);
     setShowProfileSelector(true);
     setShowAdminDashboard(false);
     setPlayingMovie(null);
-    showToast("Đã đăng xuất khỏi tài khoản.");
-    try {
-      await releaseSession();
-    } catch {
-      // ignore — null-branch subscribeAuth dọn nốt
+    setPlaybackBlocked(null);
+    setPendingPlayback(null);
+    if (released) {
+      showToast("Đã đăng xuất khỏi tài khoản.");
+    } else {
+      try {
+        console.warn('[session] logout: chưa xóa phiên, sẽ thu hồi ở lần đăng nhập sau');
+      } catch {
+        // ignore
+      }
+      showToast("Đã đăng xuất, nhưng phiên cũ chưa xóa được — lần đăng nhập sau sẽ tự thu hồi.", "warning");
     }
-    stopSessionWatch();
     await authService.logout().catch(() => {});
+    isLoggingOutRef.current = false;
+    setIsLoggingOut(false);
   };
 
   // TV: session lưu localStorage nên restart app vẫn giữ login (nhớ lâu).
   // Remote dễ bấm nhầm Đăng xuất -> hỏi confirm trước khi xóa session.
   const [showLogoutConfirm, setShowLogoutConfirm] = useState<boolean>(false);
   const handleLogoutRequest = () => {
+    if (isLoggingOut || isLoggingOutRef.current) return;
     try {
       if (document.documentElement.classList.contains("tv-mode")) {
         setShowLogoutConfirm(true);
@@ -1999,6 +2123,99 @@ export default function App() {
     [currentAccount, activeProfile],
   );
 
+  // Playback lock kiểu Netflix D7020: mở player là chiếm quyền phát trong slot
+  // của máy; tab cùng máy khác đang phát -> đóng player + hiện modal chặn.
+  // Máy khác nhau (slot khác nhau) phát song song bình thường.
+  const [playbackBlocked, setPlaybackBlocked] = useState<{
+    wantedTitle: string;
+    holder?: PlaybackLock;
+  } | null>(null);
+  const [pendingPlayback, setPendingPlayback] = useState<{
+    movie: Movie;
+    episode: MovieEpisode;
+    server: EpisodeServer;
+    servers: EpisodeServer[];
+    resumeTime: number;
+  } | null>(null);
+  const [claimingPlayback, setClaimingPlayback] = useState<boolean>(false);
+  // Nối tiếp nhả-cũ/chiếm-mới khi chuyển tập: cleanup kick release, body chờ
+  // xong mới claim để 2 transaction không đảo thứ tự.
+  const pendingReleaseRef = useRef<Promise<unknown> | null>(null);
+
+  useEffect(() => {
+    if (!playingMovie || !playingEpisode || !playingServer || !currentAccount) return;
+    // Luồng TV ghép mã (paired) không chiếm session slot -> không chặn phát.
+    if (!getCurrentSlot()) return;
+    const movie = playingMovie;
+    const episode = playingEpisode;
+    const server = playingServer;
+    const servers = allServers;
+    const resumeTime = initialResumeTime;
+    const uid = currentAccount.uid;
+    let cancelled = false;
+    setClaimingPlayback(true);
+    void (async () => {
+      try {
+        await pendingReleaseRef.current;
+      } catch {
+        // ignore
+      }
+      pendingReleaseRef.current = null;
+      if (cancelled) return;
+      const prof = activeProfileRef.current;
+      const title = episode.name
+        ? `${movie.name} — ${episode.name}`
+        : movie.name;
+      let res: Awaited<ReturnType<typeof claimPlayback>>;
+      try {
+        res = await claimPlayback(uid, {
+          profileId: prof?.id || '',
+          profileName: prof?.name || '',
+          kind: 'movie',
+          title,
+        });
+      } catch {
+        res = { ok: false, reason: 'timeout' };
+      }
+      if (cancelled) {
+        if (res.ok) releasePlayback().catch(() => {});
+        return;
+      }
+      if (!res.ok) {
+        setPendingPlayback({ movie, episode, server, servers, resumeTime });
+        // Đóng player (kèm navigate khỏi URL /xem/ để route effect không mở
+        // lại) rồi hiện modal — GauPlayer không mount nên không rò presence/
+        // progress của phim chưa được phát.
+        closePlayer();
+        setPlaybackBlocked({
+          wantedTitle: title,
+          holder: (res as { playing?: PlaybackLock }).playing,
+        });
+      } else {
+        setPlaybackBlocked(null);
+        setPendingPlayback(null);
+      }
+    })().finally(() => {
+      if (!cancelled) setClaimingPlayback(false);
+    });
+    return () => {
+      cancelled = true;
+      pendingReleaseRef.current = releasePlayback().catch(() => false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playingMovie?.slug, playingEpisode?.slug, playingServer?.server_name, currentAccount?.id]);
+
+  // Bấm "Thử lại" ở modal chặn phát: mở lại đúng phim/tập/server đã stash.
+  const handleRetryPlayback = () => {
+    const p = pendingPlayback;
+    if (!p || claimingPlayback) return;
+    playerReturnRef.current = selectedMovieForDetail
+      ? buildPhimUrl(selectedMovieForDetail.slug)
+      : buildTabUrl(activeTab);
+    applyPlayerOpen(p.movie, p.episode, p.server, p.servers, p.resumeTime);
+    appNavigate(buildXemUrl(p.movie.slug, p.episode.slug, p.server.server_name));
+  };
+
   // Lightweight live-time forwarder so the exit save uses the real final time
   const handlePlayerTimeUpdate = useCallback((t: number, d: number) => {
     videoTimeRef.current = t;
@@ -2263,6 +2480,7 @@ export default function App() {
         account={blockedInfo.account}
         sessions={blockedInfo.sessions}
         timeout={blockedInfo.timeout}
+        tabLimit={!!blockedInfo.tabLimit}
         retrying={retryingClaim}
         onRetry={handleRetryClaim}
         onLogout={handleBlockedLogout}
@@ -2387,6 +2605,20 @@ export default function App() {
             />
           )}
         </AnimatePresence>
+
+        {/* Chặn phát kiểu Netflix D7020: tab cùng máy khác đang giữ quyền phát */}
+        {playbackBlocked && (
+          <PlaybackBlockedModal
+            wantedTitle={playbackBlocked.wantedTitle}
+            holder={playbackBlocked.holder}
+            retrying={claimingPlayback}
+            onRetry={handleRetryPlayback}
+            onClose={() => {
+              setPlaybackBlocked(null);
+              setPendingPlayback(null);
+            }}
+          />
+        )}
 
         {/* 3. Main Navigation Header */}
         {!playingMovie && !showProfileSelector && (

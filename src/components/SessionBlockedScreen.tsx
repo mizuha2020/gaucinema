@@ -8,6 +8,8 @@ interface SessionBlockedScreenProps {
   sessions: SessionSlot[];
   /** true khi lỗi kết nối/timeout RTDB (thay vì hết slot) */
   timeout: boolean;
+  /** true khi bị chặn vì máy đã mở tab khác (1 máy 1 tab, kiểu Netflix) */
+  tabLimit?: boolean;
   retrying: boolean;
   onRetry: () => void;
   onLogout: () => void;
@@ -30,6 +32,7 @@ export const SessionBlockedScreen: React.FC<SessionBlockedScreenProps> = ({
   account,
   sessions,
   timeout,
+  tabLimit,
   retrying,
   onRetry,
   onLogout,
@@ -46,6 +49,17 @@ export const SessionBlockedScreen: React.FC<SessionBlockedScreenProps> = ({
           </h1>
           <p className="text-xs sm:text-sm text-slate-400 max-w-md mb-6 leading-relaxed">
             Hệ thống đang có quá nhiều người truy cập. Vui lòng thử lại sau ít phút.
+          </p>
+        </>
+      ) : tabLimit ? (
+        <>
+          <h1 className="text-xl sm:text-2xl font-bold text-white mb-2">
+            Đã mở ở tab khác
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-400 max-w-md mb-6 leading-relaxed">
+            Có vẻ bạn đang mở Gấu Cinema trên nhiều tab cùng lúc. Mỗi máy chỉ dùng
+            được 1 tab tại 1 thời điểm — hãy đóng tab kia rồi bấm Thử lại.
+            Bạn vẫn đang đăng nhập, không cần nhập mật khẩu.
           </p>
         </>
       ) : (
@@ -86,13 +100,15 @@ export const SessionBlockedScreen: React.FC<SessionBlockedScreenProps> = ({
               ))}
             </div>
           )}
-          <p className="text-[11px] text-slate-500 max-w-md mb-6">
-            Tắt app trên 1 thiết bị kia rồi bấm Thử lại — không cần nhập mật khẩu.
-            Bạn vẫn đang đăng nhập, không bị đăng xuất.
-            {sessions.length < 2 && (
-              <> Có vẻ đã trống slot — cứ bấm Thử lại là vào ngay.</>
-            )}
-          </p>
+          {!tabLimit && (
+            <p className="text-[11px] text-slate-500 max-w-md mb-6">
+              Tắt app trên 1 thiết bị kia rồi bấm Thử lại — không cần nhập mật khẩu.
+              Bạn vẫn đang đăng nhập, không bị đăng xuất.
+              {sessions.length < 2 && (
+                <> Có vẻ đã trống slot — cứ bấm Thử lại là vào ngay.</>
+              )}
+            </p>
+          )}
         </>
       )}
       <div className="flex flex-col sm:flex-row items-center gap-3">
@@ -104,13 +120,17 @@ export const SessionBlockedScreen: React.FC<SessionBlockedScreenProps> = ({
           <RefreshCw className={`w-4 h-4 ${retrying ? 'animate-spin' : ''}`} />
           <span>{retrying ? 'Đang thử lại...' : 'Thử lại'}</span>
         </button>
-        <button
-          onClick={onLogout}
-          className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-semibold text-xs transition-colors cursor-pointer flex items-center justify-center gap-2"
-        >
-          <LogOut className="w-4 h-4" />
-          <span>Đăng xuất</span>
-        </button>
+        {/* Tab-limit: ẩn Đăng xuất vì Auth dùng chung mọi tab — đăng xuất ở tab
+            này sẽ đá luôn tab đang xem dở. Đóng tab kia rồi Thử lại là đủ. */}
+        {!tabLimit && (
+          <button
+            onClick={onLogout}
+            className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-semibold text-xs transition-colors cursor-pointer flex items-center justify-center gap-2"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Đăng xuất</span>
+          </button>
+        )}
       </div>
     </div>
   );
