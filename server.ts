@@ -3336,6 +3336,26 @@ setTimeout(seedInitialCastIndex, 2000);
     });
   });
 
+  // Prompt 7 PHẦN B1: phiên bản app cho bản native — PUBLIC (chưa login vẫn
+  // phải check được, và client dùng nó làm probe kết nối lúc khởi động).
+  // Đọc từ ENV (đổi là restart backend, không tốn Firestore reads):
+  //   APP_LATEST_VERSION_CODE (mặc định 1 = versionCode hiện tại trong
+  //     android/app/build.gradle -> chưa có gì để báo),
+  //   APP_LATEST_VERSION_NAME, APP_MIN_SUPPORTED_VERSION_CODE,
+  //   APP_APK_URL (fallback link GitHub Releases như client).
+  app.get("/api/app/version", (req, res) => {
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    const latestVersionCode = Math.max(1, parseInt(process.env.APP_LATEST_VERSION_CODE || '1', 10) || 1);
+    const minSupportedVersionCode = Math.max(1, parseInt(process.env.APP_MIN_SUPPORTED_VERSION_CODE || '1', 10) || 1);
+    return res.json({
+      latestVersionCode,
+      latestVersionName: (process.env.APP_LATEST_VERSION_NAME || '1.0').trim() || '1.0',
+      minSupportedVersionCode,
+      apkUrl: (process.env.APP_APK_URL || '').trim() || 'https://github.com/mizuha2020/qtb-movie/releases/download/tv-apk/app-debug.apk',
+      releaseNotes: (process.env.APP_RELEASE_NOTES || '').trim(),
+    });
+  });
+
   // Admin Hero Banner Assets Listing & Selection
   app.get("/api/hero/admin/list", requireAuth, requireActiveSlot, requireAdmin, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');

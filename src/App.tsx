@@ -35,7 +35,15 @@ import {
   type SessionSlot,
 } from "./services/sessionService";
 import { SessionBlockedScreen } from "./components/SessionBlockedScreen";
+import { AppUpdateGate } from "./components/AppUpdateGate";
 import { startTabElection } from "./services/tabElection";
+import { getApkDownloadUrl } from "./utils/apkDownload";
+import {
+  checkAppUpdate,
+  dismissUpdate,
+  openApkDownload,
+  type AppVersionInfo,
+} from "./services/appUpdateService";
 import { movieApi } from "./services/movieApi";
 import { presenceService } from "./services/presenceService";
 import { appConfigService } from "./services/appConfigService";
@@ -146,6 +154,12 @@ export default function App() {
     tabLimit?: boolean;
   } | null>(null);
   const [retryingClaim, setRetryingClaim] = useState<boolean>(false);
+  // Prompt 7 PHẦN B: trạng thái cập nhật bản native (null = bản mới/không cần).
+  const [updateGate, setUpdateGate] = useState<{
+    mode: 'forced' | 'optional' | 'offline';
+    info?: AppVersionInfo;
+  } | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState<boolean>(false);
   const [isLoggingOut, setIsLoggingOut] = useState<boolean>(false);
   const isLoggingOutRef = useRef<boolean>(false);
   const pendingAccountRef = useRef<Account | null>(null);
@@ -367,6 +381,33 @@ export default function App() {
       stopSessionWatch();
       unsub();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Prompt 7 PHẦN B2: bản native check cập nhật 1 lần lúc khởi động (bản web
+  // bỏ qua trong service). Đồng thời là probe kết nối cho màn hình lỗi A2.
+  const runUpdateCheck = useCallback(() => {
+    setCheckingUpdate(true);
+    checkAppUpdate()
+      .then((res) => {
+        if (res.state === 'forced' || res.state === 'offline') {
+          setUpdateGate({ mode: res.state, info: (res as { info?: AppVersionInfo }).info });
+        } else if (res.state === 'optional') {
+          setUpdateGate({ mode: 'optional', info: res.info });
+        } else {
+          setUpdateGate(null);
+        }
+      })
+      .catch(() => {
+        // ignore — check lỗi thì coi như chưa cần cập nhật, không chặn app
+      })
+      .finally(() => {
+        setCheckingUpdate(false);
+      });
+  }, []);
+
+  useEffect(() => {
+    runUpdateCheck();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -2370,6 +2411,24 @@ export default function App() {
     );
   }
 
+  // 0a. Prompt 7: bản native bắt buộc cập nhật / mất kết nối -> chặn toàn
+  // trang (trump mọi màn hình khác). Bản 'optional' render modal ở cuối.
+  if (updateGate && (updateGate.mode === 'forced' || updateGate.mode === 'offline')) {
+    return (
+      <AppUpdateGate
+        mode={updateGate.mode}
+        info={updateGate.info}
+        checking={checkingUpdate}
+        onRetry={runUpdateCheck}
+        onUpdate={() => {
+          const url = (updateGate.info?.apkUrl || '').trim() || getApkDownloadUrl();
+          if (url) openApkDownload(url);
+        }}
+        onDismiss={() => {}}
+      />
+    );
+  }
+
   // 0b. Hết slot thiết bị: GIỮ ĐĂNG NHẬP, hiện màn hình chặn (không signOut).
   // Thiết bị này đã goOffline: không tốn kết nối, không đọc Firestore.
   if (blockedInfo) {
@@ -3496,6 +3555,23 @@ export default function App() {
         cancelText="Ở lại"
         type="warning"
       />
+      {/* Prompt 7: cập nhật tùy chọn (bản native) — modal phủ, không chặn luồng */}
+      {updateGate?.mode === 'optional' && updateGate.info && (
+        <AppUpdateGate
+          mode="optional"
+          info={updateGate.info}
+          checking={checkingUpdate}
+          onRetry={runUpdateCheck}
+          onUpdate={() => {
+            const url = (updateGate.info?.apkUrl || '').trim() || getApkDownloadUrl();
+            if (url) openApkDownload(url);
+          }}
+          onDismiss={() => {
+            dismissUpdate(updateGate.info?.latestVersionCode || 0);
+            setUpdateGate(null);
+          }}
+        />
+      )}
       <ToastContainer toasts={toasts} onRemove={() => {}} />
     </>
   );
