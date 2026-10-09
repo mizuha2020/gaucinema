@@ -29,21 +29,6 @@ export interface SessionSlot {
   /** Refcount tab trên cùng máy (F6): mỗi tab 1 tabId, đóng tab nào dọn tab đó.
    *  Slot chỉ trống khi hết tab. Row legacy (không có tabs) giữ hành vi cũ. */
   tabs?: Record<string, number>;
-  /** Lock phát kiểu Netflix D7020: 1 máy chỉ 1 tab phát tại 1 thời điểm.
-   *  Tab khác cùng máy bấm phát khi lock còn hiệu lực -> ăn màn hình chặn.
-   *  Lock hợp lệ khi holder tabId còn trong tabs; tab holder chết (đóng tab
-   *  mà chưa kịp nhả) -> tab khác được chiếm lại ngay, không kẹt. */
-  playing?: PlaybackLock;
-}
-
-/** Ai đang giữ quyền phát trong slot. Không bao giờ chứa undefined (RTDB kỵ). */
-export interface PlaybackLock {
-  tabId: string;
-  profileId?: string;
-  profileName?: string;
-  kind?: 'movie' | 'manga' | '';
-  title?: string;
-  startedAt: number;
 }
 
 export type ClaimResult =
@@ -505,99 +490,6 @@ export async function releaseSession(): Promise<boolean> {
       });
       return false;
     }
-  }
-}
-
-export type PlaybackClaimResult =
-  | { ok: true }
-  | { ok: false; playing?: PlaybackLock; reason: 'busy' | 'no-slot' | 'timeout' };
-
-/**
- * Chiếm quyền phát trong slot của máy mình (kiểu Netflix D7020: duyệt bao
- * nhiêu tab tùy thích, nhưng 1 máy chỉ 1 tab phát tại 1 thời điểm).
- * Transaction nguyên tử trên sessions/{uid}/{slot}: tab khác cùng máy đang
- * giữ lock CÒN HIỆU LỰC (holder tabId còn trong tabs) -> abort, caller hiện
- * màn hình chặn. Holder chết (tab đóng mà chưa nhả) -> chiếm lại ngay.
- * Máy khác nhau (slot khác nhau) phát song song bình thường — đúng nghĩa
- * gói 2 thiết bị.
- */
-export async function claimPlayback(
-  uid: string,
-  info: { profileId?: string; profileName?: string; kind?: 'movie' | 'manga' | ''; title?: string }
-): Promise<PlaybackClaimResult> {
-  const target = currentSlot || readPersistedSlot();
-  if (!target || target.uid !== uid) {
-    return { ok: false, reason: 'no-slot' };
-  }
-  const { slot } = target;
-  const deviceId = getDeviceId();
-  const tabId = getTabId();
-  const now = Date.now();
-  try {
-    const result = await withTimeoutReject(
-      runTransaction(
-        ref(rtdb, `${SESSIONS_PATH}/${uid}/${slot}`),
-        (current: SessionSlot | null) => {
-          if (!current) return undefined; // slot mất (bị kick/logout) -> abort
-          if (current.deviceId && current.deviceId !== deviceId) return undefined;
-          const p = current.playing;
-          const tabs = current.tabs ? Object.keys(current.tabs) : [];
-          const holderAlive = !!p && tabs.includes(p.tabId);
-          if (p && holderAlive && p.tabId !== tabId) return undefined; // tab khác đang phát
-          const next: PlaybackLock = {
-            tabId,
-            startedAt: p && p.tabId === tabId && p.startedAt ? p.startedAt : now,
-          };
-          if (info.profileId) next.profileId = info.profileId;
-          if (info.profileName) next.profileName = info.profileName;
-          if (info.kind) next.kind = info.kind;
-          if (info.title) next.title = info.title;
-          return { ...current, playing: next };
-        }
-      ),
-      5000
-    );
-    if (!result.committed) {
-      const cur = result.snapshot.val() as SessionSlot | null;
-      if (!cur) return { ok: false, reason: 'no-slot' };
-      return { ok: false, playing: cur.playing, reason: 'busy' };
-    }
-    return { ok: true };
-  } catch {
-    return { ok: false, reason: 'timeout' };
-  }
-}
-
-/**
- * Nhả quyền phát (đóng/chuyển tập). Chỉ xóa khi lock đang là của chính tab
- * này — không bao giờ cướp lock của tab khác.
- */
-export async function releasePlayback(): Promise<boolean> {
-  try {
-    const target = currentSlot || readPersistedSlot();
-    if (!target) return true;
-    const { uid, slot } = target;
-    const tabId = getTabId();
-    const result = await withTimeoutReject(
-      runTransaction(ref(rtdb, `${SESSIONS_PATH}/${uid}/${slot}`), (current: SessionSlot | null) => {
-        if (!current) return undefined; // đã sạch
-        const p = current.playing;
-        if (!p) return undefined; // đã nhả
-        if (p.tabId !== tabId) return undefined; // lock của tab khác — không đụng
-        const rest: Record<string, unknown> = { ...current };
-        delete rest.playing;
-        return rest as unknown as SessionSlot;
-      }),
-      5000
-    );
-    if (!result.committed) {
-      const cur = result.snapshot.val() as SessionSlot | null;
-      if (!cur || !cur.playing || cur.playing.tabId !== tabId) return true;
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
   }
 }
 

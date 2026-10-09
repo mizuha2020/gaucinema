@@ -22,24 +22,19 @@ import {
 } from "./services/progressService";
 import {
   claimSession,
-  claimPlayback,
   fetchSessions,
-  getCurrentSlot,
   getDeviceId,
   getTabId,
   goOfflineDb,
   goOnlineDb,
   notifyTabClosing,
   releaseSession,
-  releasePlayback,
   startHiddenWatch,
   stopHiddenWatch,
   updateSessionActivity,
   type SessionSlot,
-  type PlaybackLock,
 } from "./services/sessionService";
 import { SessionBlockedScreen } from "./components/SessionBlockedScreen";
-import { PlaybackBlockedModal } from "./components/PlaybackBlockedModal";
 import { startTabElection } from "./services/tabElection";
 import { movieApi } from "./services/movieApi";
 import { presenceService } from "./services/presenceService";
@@ -482,8 +477,6 @@ export default function App() {
     setActiveProfile(null);
     setShowProfileSelector(true);
     setShowAdminDashboard(false);
-    setPlaybackBlocked(null);
-    setPendingPlayback(null);
     await authService.logout().catch(() => {});
     isLoggingOutRef.current = false;
     setIsLoggingOut(false);
@@ -1508,8 +1501,6 @@ export default function App() {
     setShowProfileSelector(true);
     setShowAdminDashboard(false);
     setPlayingMovie(null);
-    setPlaybackBlocked(null);
-    setPendingPlayback(null);
     if (released) {
       showToast("Đã đăng xuất khỏi tài khoản.");
     } else {
@@ -2123,99 +2114,6 @@ export default function App() {
     [currentAccount, activeProfile],
   );
 
-  // Playback lock kiểu Netflix D7020: mở player là chiếm quyền phát trong slot
-  // của máy; tab cùng máy khác đang phát -> đóng player + hiện modal chặn.
-  // Máy khác nhau (slot khác nhau) phát song song bình thường.
-  const [playbackBlocked, setPlaybackBlocked] = useState<{
-    wantedTitle: string;
-    holder?: PlaybackLock;
-  } | null>(null);
-  const [pendingPlayback, setPendingPlayback] = useState<{
-    movie: Movie;
-    episode: MovieEpisode;
-    server: EpisodeServer;
-    servers: EpisodeServer[];
-    resumeTime: number;
-  } | null>(null);
-  const [claimingPlayback, setClaimingPlayback] = useState<boolean>(false);
-  // Nối tiếp nhả-cũ/chiếm-mới khi chuyển tập: cleanup kick release, body chờ
-  // xong mới claim để 2 transaction không đảo thứ tự.
-  const pendingReleaseRef = useRef<Promise<unknown> | null>(null);
-
-  useEffect(() => {
-    if (!playingMovie || !playingEpisode || !playingServer || !currentAccount) return;
-    // Luồng TV ghép mã (paired) không chiếm session slot -> không chặn phát.
-    if (!getCurrentSlot()) return;
-    const movie = playingMovie;
-    const episode = playingEpisode;
-    const server = playingServer;
-    const servers = allServers;
-    const resumeTime = initialResumeTime;
-    const uid = currentAccount.uid;
-    let cancelled = false;
-    setClaimingPlayback(true);
-    void (async () => {
-      try {
-        await pendingReleaseRef.current;
-      } catch {
-        // ignore
-      }
-      pendingReleaseRef.current = null;
-      if (cancelled) return;
-      const prof = activeProfileRef.current;
-      const title = episode.name
-        ? `${movie.name} — ${episode.name}`
-        : movie.name;
-      let res: Awaited<ReturnType<typeof claimPlayback>>;
-      try {
-        res = await claimPlayback(uid, {
-          profileId: prof?.id || '',
-          profileName: prof?.name || '',
-          kind: 'movie',
-          title,
-        });
-      } catch {
-        res = { ok: false, reason: 'timeout' };
-      }
-      if (cancelled) {
-        if (res.ok) releasePlayback().catch(() => {});
-        return;
-      }
-      if (!res.ok) {
-        setPendingPlayback({ movie, episode, server, servers, resumeTime });
-        // Đóng player (kèm navigate khỏi URL /xem/ để route effect không mở
-        // lại) rồi hiện modal — GauPlayer không mount nên không rò presence/
-        // progress của phim chưa được phát.
-        closePlayer();
-        setPlaybackBlocked({
-          wantedTitle: title,
-          holder: (res as { playing?: PlaybackLock }).playing,
-        });
-      } else {
-        setPlaybackBlocked(null);
-        setPendingPlayback(null);
-      }
-    })().finally(() => {
-      if (!cancelled) setClaimingPlayback(false);
-    });
-    return () => {
-      cancelled = true;
-      pendingReleaseRef.current = releasePlayback().catch(() => false);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playingMovie?.slug, playingEpisode?.slug, playingServer?.server_name, currentAccount?.id]);
-
-  // Bấm "Thử lại" ở modal chặn phát: mở lại đúng phim/tập/server đã stash.
-  const handleRetryPlayback = () => {
-    const p = pendingPlayback;
-    if (!p || claimingPlayback) return;
-    playerReturnRef.current = selectedMovieForDetail
-      ? buildPhimUrl(selectedMovieForDetail.slug)
-      : buildTabUrl(activeTab);
-    applyPlayerOpen(p.movie, p.episode, p.server, p.servers, p.resumeTime);
-    appNavigate(buildXemUrl(p.movie.slug, p.episode.slug, p.server.server_name));
-  };
-
   // Lightweight live-time forwarder so the exit save uses the real final time
   const handlePlayerTimeUpdate = useCallback((t: number, d: number) => {
     videoTimeRef.current = t;
@@ -2605,20 +2503,6 @@ export default function App() {
             />
           )}
         </AnimatePresence>
-
-        {/* Chặn phát kiểu Netflix D7020: tab cùng máy khác đang giữ quyền phát */}
-        {playbackBlocked && (
-          <PlaybackBlockedModal
-            wantedTitle={playbackBlocked.wantedTitle}
-            holder={playbackBlocked.holder}
-            retrying={claimingPlayback}
-            onRetry={handleRetryPlayback}
-            onClose={() => {
-              setPlaybackBlocked(null);
-              setPendingPlayback(null);
-            }}
-          />
-        )}
 
         {/* 3. Main Navigation Header */}
         {!playingMovie && !showProfileSelector && (
