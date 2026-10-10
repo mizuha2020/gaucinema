@@ -2,6 +2,5 @@
   "name": "Gấu Cinema HD",
   "description": "Rạp phim cá nhân Gấu trực tuyến chất lượng cao không quảng cáo, giao diện xanh than hiện đại, phát video HLS .m3u8 mượt mà và hỗ trợ 5 hồ sơ người xem.",
   "icon": "/icon.jpg",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": []
 }
